@@ -22,7 +22,7 @@ beside this pass's stamp; ``fold-today`` prints the scheduler's line for it
 (``fold ran at HH:MM, N batches[, M folded into open issues]`` or
 ``no fold today``). Neither reads the network.
 
-``run`` executes twelve steps in order, each under its own timeout and each
+``run`` executes thirteen steps in order, each under its own timeout and each
 **best-effort**: a failure is a report line, never an abort of later steps.
 The one exception is step 1 — running from anywhere but the base checkout
 refuses the whole pass, since every later step assumes it.
@@ -59,7 +59,10 @@ refuses the whole pass, since every later step assumes it.
     reconcile figure and the settled day's ``fleet_cost rates`` read, and its
     CI section (``--ci``) read from the merge queue over the same window;
 12. the memory scan gate, then the memory audit when due;
-13. the transcript-purge dry-run manifest.
+13. the transcript-purge dry-run manifest;
+14. the dependency advisories (``deps_audit --json``): one line, by severity,
+    with the delta against the previous run's ids kept beside the stamp.
+    Report-only — never a CI gate.
 
 **Arming.** Step 6 runs as a dry run and touches nothing unless
 ``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. Step 7 is
@@ -126,6 +129,9 @@ FOLD_STAMP_NAME = ".fold-last-run.json"
 # The seat allowance's sample log, at most one reading per pass — machine-local beside
 # the stamp, since the allowance is one operator's subscription.
 SAMPLES_NAME = ".allowance-samples.jsonl"
+# The last dependency audit's advisory ids, the deps line's delta baseline —
+# machine-local beside the stamp, never the repo.
+DEPS_STATE_NAME = ".deps-audit-last.json"
 
 # Roughly 1.5k tokens. The section is replaced every run, so the cap bounds what
 # every planning bootstrap pays to read it, not just this run's write.
@@ -143,6 +149,8 @@ TIMEOUT_DISMISS = 300
 # The digest's transcript walk plus its CI read: a cold job cache is one
 # `gh api` read per merge-queue run of the past week, a few hundred.
 TIMEOUT_DIGEST = 600
+# Both audits, plus cargo-audit's one-time source build on a fresh machine.
+TIMEOUT_DEPS = 1200
 
 # How many recent digests the refresh gate mines — an upper bound: the purge
 # ages digests out on the transcripts' two-day rule, so once it is applied
@@ -875,6 +883,24 @@ def step_purge(ctx: Ctx) -> None:
     ctx.record("purge", f"purge dry-run: {total} to free (apply is the launcher's ask)")
 
 
+def step_deps(ctx: Ctx) -> None:
+    # Exit 1 is advisories found and 2 a failed scanner; both still print the
+    # JSON, whose line names the failure.
+    data = _json_tool(
+        ctx,
+        "deps",
+        "deps_audit.py",
+        "--json",
+        "--state",
+        str(deps_state_path(ctx.base)),
+        ok_rcs=(0, 1, 2),
+        timeout=TIMEOUT_DEPS,
+    )
+    if data is None:
+        return
+    ctx.record("deps", f"deps-audit: {data['line']}", ok=not data.get("errors"))
+
+
 STEPS = (
     ("pull", step_pull),
     ("cli", step_cli),
@@ -888,6 +914,7 @@ STEPS = (
     ("digest", step_digest),
     ("memory", step_memory),
     ("purge", step_purge),
+    ("deps", step_deps),
 )
 
 # What each step's progress line names, and the timeout bounding its slowest
@@ -914,6 +941,7 @@ STEP_LABELS = {
     "digest": ("session digest", f"per-call timeout {TIMEOUT_DIGEST}s"),
     "memory": ("memory scan gate and audit", f"per-call timeout {TIMEOUT_TOOL}s"),
     "purge": ("transcript-purge dry run", f"per-call timeout {TIMEOUT_TOOL}s"),
+    "deps": ("dependency advisories", f"timeout {TIMEOUT_DEPS}s"),
 }
 
 
@@ -1133,6 +1161,10 @@ def previous_run(path: Path) -> str | None:
     except (OSError, ValueError, AttributeError):
         return None
     return last if isinstance(last, str) and last else None
+
+
+def deps_state_path(base: Path) -> Path:
+    return base / ".claude" / DEPS_STATE_NAME
 
 
 def fold_stamp_path(base: Path) -> Path:

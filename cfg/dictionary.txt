@@ -116,6 +116,7 @@ forex
 frankfurter
 frontmatter
 getpid
+ghsa
 gifs
 globbable
 gpgsig
@@ -274,6 +275,7 @@ rustdoc
 rustdocflags
 rustflags
 rustls
+rustsec
 rustup
 samp
 sbpf

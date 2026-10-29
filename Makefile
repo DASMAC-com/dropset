@@ -1475,6 +1475,16 @@ TOOLS_PY_UV := uv run --quiet --no-project --with pyyaml \
 	--python $(shell command -v python3) python
 TOOLS_PY := $(if $(shell command -v uv),$(TOOLS_PY_UV),python3)
 
+# Dependency advisories: `cargo audit` (installed on first use) and
+# `pnpm audit --prod`, ranked by severity with the top five shown; `ARGS=--full`
+# lists every one. Standing exceptions live in cfg/audit.toml and
+# cfg/pnpm-audit.toml, one reason per id. Deliberately no CI gate: the Solana
+# crate graph carries standing unfixable RustSec warnings. The daily upkeep
+# pass prints its one-line summary with the delta since the last run.
+.PHONY: deps-audit
+deps-audit:
+	python3 .claude/tools/deps_audit.py $(ARGS)
+
 # Run every Python skill-tool's unit tests (stdlib `unittest`; PyYAML for one
 # cross-check, above). Covers the `.claude/tools/` skill helpers (tests under
 # `.claude/tools/tests/`) plus the Python under `.claude/scripts/` (the iTerm

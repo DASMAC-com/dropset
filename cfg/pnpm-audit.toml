@@ -1,0 +1,6 @@
+# Standing exceptions for `pnpm audit --prod`, read by
+# .claude/tools/deps_audit.py — the same shape as cfg/audit.toml, keyed by
+# GHSA id. One id per line, each with a trailing `# reason`; an id without one
+# fails the tool's tests.
+[advisories]
+ignore = []
