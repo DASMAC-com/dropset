@@ -278,7 +278,8 @@ the document's state sections.
    body) is refused only on the total, memory, pressure or load —
    never swap. Builds share the pool's
    `DS_CARGO_LANES` lanes. On no reading (exit 3) fall back to the
-   total and say so. The digest's `## Wait` section measures whether
+   total and say so — unless the total itself is unset, which holds
+   the batch. The digest's `## Wait` section measures whether
    the budget is right.
 1. **Cost**: the spend cap is the standing fleet guard, and
    `fleet_cost.py` reconciles telemetry against the bill.

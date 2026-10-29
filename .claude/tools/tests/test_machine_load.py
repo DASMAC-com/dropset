@@ -328,6 +328,19 @@ class Main(unittest.TestCase):
         self.assertIn("would free a slot: memory headroom; the longest wait", out)
         self.assertIn("free: refused on memory (headroom 0.0 GiB)", out)
 
+    def test_the_total_and_load_refusals_render_their_numbers(self):
+        code, out, _, _ = self.call(
+            "--class",
+            "free",
+            env={"DS_FLEET_TOTAL": "2", "DS_FLEET_CPU_LOAD_MAX": "10"},
+        )
+        self.assertEqual(code, ml.RED)
+        self.assertIn("free: refused on load (10.8, limit 10); clients (2 of 2)", out)
+        self.assertIn(
+            "would free a slot: load falling under 10; a session closing (total 2)",
+            out,
+        )
+
     def test_a_crash_is_no_reading_not_amber(self):
         def boom(cmd):
             raise RuntimeError("unexpected")
@@ -411,6 +424,13 @@ class LaunchRecord(unittest.TestCase):
         self.assertEqual((rec["in_use"], rec["compressed"]), (35 * GIB, 10 * GIB))
         self.assertEqual((rec["load1"], rec["swap_used"], rec["live"]), (10.8, 0, 2))
         self.assertEqual(rec["verdict"], {"slots": 14, "reasons": []})
+
+    def test_the_raw_swap_figure_rides_the_record_and_admits(self):
+        _, lines = self.record(
+            "--class", "free", fake=runner(ctl=sysctl(swap="43.00M"))
+        )
+        self.assertEqual(lines[0]["swap_used"], 43 * 1024**2)
+        self.assertEqual(lines[0]["status"], "green")
 
     def test_the_verdict_is_the_launching_class(self):
         _, lines = self.record()

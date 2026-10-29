@@ -952,12 +952,19 @@ class Seating(unittest.TestCase):
             ],
         )
 
-    def test_swap_in_a_reading_holds_nothing(self):
-        # A reading with swap in use and no refusal: the probe no longer
-        # vetoes on swap, and the gate adds no check of its own.
-        result, _ = gate(batch(), reading())
-        self.assertEqual(len(result.seated), 5)
-        self.assertEqual(result.held, [])
+    def test_a_builder_the_total_holds_is_held_on_the_total(self):
+        # No build waits, so the building slots equal the room: the third
+        # builder is out of total, not out of building slots.
+        builders = [seat(["task", n]) for n in ("1", "2", "3")]
+        result, _ = gate(builders, reading(slots=2, total=4, building=2))
+        self.assertEqual(names(result.seated), ["task 1", "task 2"])
+        self.assertEqual(
+            session_dispatch.held_lines(result),
+            [
+                "held  task 3: 2 clients of the total 4",
+                "would free a slot: any session closing",
+            ],
+        )
 
     def test_over_budget_seats_past_the_machine_and_says_what_it_overrode(self):
         refused = reading(slots=0, reasons=["wait"], longest=465, waiting=1)

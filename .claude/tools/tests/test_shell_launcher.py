@@ -111,6 +111,29 @@ class SharedLauncherTest(unittest.TestCase):
                 self.assertNotIn("in", sections(got.stdout))
                 self.assertIn(f"{var} is unset", got.stderr)
 
+    def test_a_malformed_fleet_knob_refuses_as_the_probe_would(self) -> None:
+        for var, raw in (
+            ("DS_FLEET_TOTAL", " "),
+            ("DS_FLEET_TOTAL", "2.5"),
+            ("DS_FLEET_CPU_LOAD_MAX", "lots"),
+        ):
+            with self.subTest(var=var, raw=raw):
+                got = run('_ds_claude "claude-adv-1[1m]"', **TIERS, **{var: raw})
+                self.assertEqual(got.returncode, 1)
+                self.assertNotIn("in", sections(got.stdout))
+                self.assertIn(f"{var} ('{raw}') is not", got.stderr)
+
+    def test_the_fleet_knobs_reach_the_session_exported(self) -> None:
+        # Plain shell assignments, as a profile might make them: the probe the
+        # session runs reads its environment, so the launch must export them.
+        got = run(
+            "DS_FLEET_TOTAL=12; DS_FLEET_CPU_LOAD_MAX=9.5; "
+            '_ds_claude m; print -r -- "EXPORTED=$(printenv DS_FLEET_TOTAL)"',
+            **{k: "" for k in FLEET},
+        )
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertIn("EXPORTED=12", got.stdout.splitlines())
+
 
 #: A stub `op` and `claude` that append each call to `$OP_LOG`, in order; the
 #: reads run in a `$(…)` substitution, so a file is the one shared record.

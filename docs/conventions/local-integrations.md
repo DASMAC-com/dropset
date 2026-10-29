@@ -1259,9 +1259,11 @@ its reading, under the class its `<key>.class` record carries,
 to `sessions/<id>.load` and its sample line to `fleet-load.log`, both
 beside the substrate markers, and the daily digest's `## Wait` section
 reads them back. The probe's knobs sit in the same file. The first two
-are **required**: unset, the probe answers no reading naming the
-variable and the launcher refuses the launch, as it does an unset
-model tier.
+are **required**: unset or malformed, the probe answers no reading
+naming the variable and the launcher refuses the launch, as it does an
+unset model tier. The launcher exports both once they pass, since the
+probe reads its environment and a plain profile assignment would not
+reach it.
 
 | Knob                    | Default      | Bounds                                                               |
 | ----------------------- | ------------ | -------------------------------------------------------------------- |

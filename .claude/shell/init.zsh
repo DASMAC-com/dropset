@@ -697,27 +697,6 @@ _ds_daily_sid() {
 # Code addresses it by; anything else resumes from the base checkout as before
 # (whether `--resume <id>` from there reaches a copy under some THIRD slug is
 # unverified, but the create branch on an existing id was no better).
-# Internal: refuse a launch while either fleet knob the machine-load probe
-# requires is unset, naming the variable — the same refusal an unset model tier
-# gets. `DS_FLEET_TOTAL` is the ceiling on top-level sessions of every class,
-# `DS_FLEET_CPU_LOAD_MAX` the one-minute load average above which nothing new
-# starts; both are per machine, so the repo carries no default. A shell opened
-# before the runtime config gained them refuses here until it is reopened.
-_ds_fleet_knobs() {
-  local var rc=0
-  for var in DS_FLEET_TOTAL DS_FLEET_CPU_LOAD_MAX; do
-    if [[ -z "${(P)var}" ]]; then
-      print -u2 "dropset: $var is unset — set it in the runtime config (the" \
-        'repo pins no fleet ceiling). Refusing to launch.'
-      rc=1
-    fi
-  done
-  [[ -n "$DS_FLEET_CAP" || -n "$DS_FLEET_LOAD_PER_CORE" ]] &&
-    print -u2 'dropset: DS_FLEET_CAP and DS_FLEET_LOAD_PER_CORE are retired —' \
-      'DS_FLEET_TOTAL and DS_FLEET_CPU_LOAD_MAX replace them.'
-  return $rc
-}
-
 # Internal: THE shared launcher — every managed `claude` start or resume goes
 # through here. $1 the session's model, the rest `claude`'s own arguments.
 #
@@ -768,6 +747,38 @@ _ds_claude() {
   else
     claude "$@"
   fi
+}
+
+# Internal: refuse a launch while either fleet knob the machine-load probe
+# requires is unset or not a number, naming the variable — the same refusal an
+# unset model tier gets. `DS_FLEET_TOTAL` is the ceiling on top-level sessions
+# of every class, `DS_FLEET_CPU_LOAD_MAX` the one-minute load average above
+# which nothing new starts; both are per machine, so the repo carries no
+# default. A shell opened before the runtime config gained them refuses here
+# until it is reopened.
+#
+# EXPORTED ON SUCCESS. The probe is Python and reads its environment, so a
+# plain assignment in the profile would pass this check and still read as
+# unset to every dispatch the session makes.
+_ds_fleet_knobs() {
+  local var rc=0
+  for var in DS_FLEET_TOTAL DS_FLEET_CPU_LOAD_MAX; do
+    if [[ -z "${(P)var}" ]]; then
+      print -u2 "dropset: $var is unset — set it in the runtime config (the" \
+        'repo pins no fleet ceiling). Refusing to launch.'
+      rc=1
+    elif [[ "${(P)var}" != <->(|.<->) || \
+      ( $var == DS_FLEET_TOTAL && "${(P)var}" != <-> ) ]]; then
+      print -ru2 -- "dropset: $var ('${(P)var}') is not a non-negative" \
+        'number. Refusing to launch.'
+      rc=1
+    fi
+  done
+  [[ -n "$DS_FLEET_CAP" || -n "$DS_FLEET_LOAD_PER_CORE" ]] &&
+    print -u2 'dropset: DS_FLEET_CAP and DS_FLEET_LOAD_PER_CORE are retired —' \
+      'DS_FLEET_TOTAL and DS_FLEET_CPU_LOAD_MAX replace them.'
+  (( rc )) || export DS_FLEET_TOTAL DS_FLEET_CPU_LOAD_MAX
+  return $rc
 }
 
 # Internal: `_ds_claude` ($2…) with the cargo pool keyed for worktree $1 (a

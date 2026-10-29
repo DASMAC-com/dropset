@@ -521,10 +521,14 @@ def _admit(
         spent = "slots"
     seated, held, taken, built = [], [], 0, 0
     for seat in seats:
-        if seat.cls == BUILDING and built >= b_slots:
+        # The total first: a builder it holds is held on the total, not on
+        # the building slots, and so is freed by any session closing. A
+        # builder's own reasons are a superset of free's (they add the wait).
+        if taken >= f_slots:
+            why = b_reasons if seat.cls == BUILDING else f_reasons
+            held.append((seat, why or ["total"]))
+        elif seat.cls == BUILDING and built >= b_slots:
             held.append((seat, b_reasons or [spent]))
-        elif taken >= f_slots:
-            held.append((seat, f_reasons or ["total"]))
         else:
             taken += 1
             built += seat.cls == BUILDING
