@@ -23,11 +23,15 @@
 //! run first waits out every transaction it may still have in flight (see
 //! `outlast_in_flight`), then retries the handoff (`HANDOFF_ATTEMPTS`),
 //! re-reading the writer's balance and the buffer's authority each time, so a
-//! buffer handed over is one [`close_buffers`] can reclaim. A handoff that
-//! never lands, or a run killed before it, abandons the buffer's rent and the
-//! writer's lamports for good: nobody holds the writer's key. Both addresses
-//! are in the ceremony log (`writer` at `publish-start`, and a
-//! `buffer-handoff-failed` line when the retries run out).
+//! buffer handed over is one [`close_buffers`] can reclaim. A handoff whose
+//! retries run out keeps the writer in [`Stranded`] — session memory, never
+//! written anywhere — and [`close_buffers`] retries its handoff first, so the
+//! buffer stays reachable until the TUI exits. A run killed before its
+//! handoff, or a session that exits still holding a stranded writer, abandons
+//! the buffer's rent and the writer's lamports for good: nobody holds the
+//! writer's key. Both addresses are in the ceremony log (`writer` at
+//! `publish-start`, and a `buffer-handoff-failed` line when the retries run
+//! out).
 //!
 //! Which of the two a run does is decided from the chain, never chosen by the
 //! operator: no program account means first publish (which needs the program
@@ -65,7 +69,7 @@ use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::{pubkey, Pubkey};
 use solana_signer::Signer;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// The upgradeable BPF loader (v3).
@@ -425,15 +429,57 @@ fn holds(code: &[u8], bytes: &[u8]) -> bool {
         && code[bytes.len()..].iter().all(|&b| b == 0)
 }
 
+/// The writers whose handoff ran out of retries this session, each with the
+/// buffer it still holds. Held in memory only — a writer's secret is never
+/// persisted — and shared by every job, so [`close_buffers`] can retry the
+/// handoff a failed [`publish`] gave up on.
+#[derive(Clone, Default)]
+pub struct Stranded(Arc<Mutex<Vec<(Pubkey, Keypair)>>>);
+
+impl Stranded {
+    /// Keep `writer`, which still holds `buffer` or lamports, for a retry.
+    pub fn keep(&self, buffer: Pubkey, writer: Keypair) {
+        self.lock().push((buffer, writer));
+    }
+
+    /// Each kept `(buffer, writer)` pair, by address.
+    pub fn addresses(&self) -> Vec<(Pubkey, Pubkey)> {
+        self.lock().iter().map(|(b, w)| (*b, w.pubkey())).collect()
+    }
+
+    /// Retry each kept writer's handoff to `admin`, dropping those that land
+    /// and keeping the rest. Fails naming the first writer still kept.
+    fn hand_back(&self, client: &RpcClient, admin: &Pubkey, log: &Logger) -> Result<()> {
+        let kept = std::mem::take(&mut *self.lock());
+        let mut first = None;
+        for (buffer, writer) in kept {
+            match hand_off(client, &buffer, &writer, admin, log) {
+                Ok(_) => {}
+                Err(e) => {
+                    first.get_or_insert(e);
+                    self.keep(buffer, writer);
+                }
+            }
+        }
+        first.map_or(Ok(()), Err)
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<(Pubkey, Keypair)>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 /// Publish `artifact` to `rpc_url` as `admin` — a first publish (signed by
 /// `program_key`) or an upgrade, whichever the chain calls for — and verify the
-/// deployed bytes against it.
+/// deployed bytes against it. A writer whose handoff fails is kept in
+/// `stranded`.
 pub fn publish(
     rpc_url: &str,
     artifact: &Artifact,
     cluster: Cluster,
     admin: &dyn Signer,
     program_key: Option<&RoleKey>,
+    stranded: &Stranded,
     log: &Logger,
 ) -> Result<String> {
     let client = Arc::new(client(rpc_url));
@@ -499,15 +545,21 @@ pub fn publish(
     if written.is_err() {
         outlast_in_flight(&client, log);
     }
-    let handoff = hand_off(&client, &buffer.pubkey(), &writer, &admin.pubkey(), log);
-    // A failed handoff is reported first: it is the one failure the stranded
-    // buffer recovery cannot undo.
-    handoff.map_err(|e| match &written {
-        Err(first) => e.context(format!(
-            "hand the buffer to the admin, after the publish failed ({first:#})"
-        )),
-        Ok(()) => e.context("hand the buffer to the admin"),
-    })?;
+    if let Err(e) = hand_off(&client, &buffer.pubkey(), &writer, &admin.pubkey(), log) {
+        // A failed handoff is reported first: only this session can still
+        // undo it, so the writer is kept for "Close stranded buffers".
+        stranded.keep(buffer.pubkey(), writer);
+        let e = e.context(
+            "the writer is kept for this session — \"Close stranded buffers\" retries the \
+             handoff; exiting the TUI first abandons the buffer",
+        );
+        return Err(match &written {
+            Err(first) => e.context(format!(
+                "hand the buffer to the admin, after the publish failed ({first:#})"
+            )),
+            Ok(()) => e.context("hand the buffer to the admin"),
+        });
+    }
     // The handoff landed, so any buffer is now the admin's to reclaim.
     written.context(
         "the buffer, if created, is the admin's — close it with \"Close stranded buffers\"",
@@ -759,7 +811,7 @@ fn hand_off(
         .unwrap_or_else(|| anyhow!("no handoff attempt ran"))
         .context(format!(
             "the handoff failed {HANDOFF_ATTEMPTS} times — buffer {buffer} and its rent stay \
-             with the writer {}, whose key this run held only in memory",
+             with the writer {}, whose key exists only in this session's memory",
             writer.pubkey()
         )))
 }
@@ -877,11 +929,25 @@ fn buffer_filters(authority: &Pubkey) -> Vec<RpcFilterType> {
     ]
 }
 
-/// Close every buffer [`stranded_buffers`] finds for `admin`, returning the
-/// rent to it.
-pub fn close_buffers(client: &RpcClient, admin: &dyn Signer, log: &Logger) -> Result<String> {
+/// Retry the handoff of every writer `stranded` kept, then close every buffer
+/// [`stranded_buffers`] finds for `admin`, returning the rent to it. A writer
+/// whose handoff fails again stays kept, and fails the job once the buffers
+/// the admin already holds are closed.
+pub fn close_buffers(
+    client: &RpcClient,
+    admin: &dyn Signer,
+    stranded: &Stranded,
+    log: &Logger,
+) -> Result<String> {
+    let kept = stranded.addresses().len();
+    let handed_back = stranded.hand_back(client, &admin.pubkey(), log);
     let buffers = stranded_buffers(client, &admin.pubkey())?;
     if buffers.is_empty() {
+        handed_back?;
+        if kept > 0 {
+            log.accounts_changed();
+            return Ok(format!("Handed back {kept} writer(s); no buffer was left"));
+        }
         bail!(
             "refused — no stranded buffers for {}; nothing was sent",
             admin.pubkey()
@@ -896,6 +962,7 @@ pub fn close_buffers(client: &RpcClient, admin: &dyn Signer, log: &Logger) -> Re
         reclaimed += lamports;
     }
     log.accounts_changed();
+    handed_back.context("a kept writer's handoff failed again")?;
     Ok(format!(
         "Closed {} buffer(s), reclaimed {}",
         buffers.len(),

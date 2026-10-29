@@ -799,6 +799,9 @@ pub struct JobContext {
     /// The program key (`--program-key`), needed only by a first
     /// [`Action::Publish`] — an upgrade is signed by the admin alone.
     pub program_key: Option<RoleKey>,
+    /// The publish writers whose buffer handoff failed, kept in memory for
+    /// [`Action::CloseBuffers`] to retry.
+    pub stranded: publish::Stranded,
     /// The ceremony record every write job appends to — always open on
     /// mainnet, optional on localnet.
     pub ceremony_log: Option<Arc<CeremonyLog>>,
@@ -846,6 +849,7 @@ pub fn dispatch(
     let operator_leader = ctx.leader.clone();
     let operator_quote = ctx.quote.clone();
     let program_key = ctx.program_key.clone();
+    let stranded = ctx.stranded.clone();
     let record = ctx.ceremony_log.clone();
     let explorer_state = ctx.explorer_state.clone();
     let explorer_lock = ctx.explorer_lock.clone();
@@ -879,6 +883,7 @@ pub fn dispatch(
                     cluster,
                     &wallet,
                     program_key.as_ref(),
+                    &stranded,
                     log,
                 )
             });
@@ -886,7 +891,7 @@ pub fn dispatch(
         Action::CloseBuffers => {
             job::spawn_recorded(tx, "Close buffers", record, move |log| {
                 let client = chain::rpc(&rpc_url);
-                publish::close_buffers(&client, &wallet, log)
+                publish::close_buffers(&client, &wallet, &stranded, log)
             });
         }
         Action::InitRegistry => {
@@ -1462,6 +1467,11 @@ pub fn ceremony_plan(
             return Ok((plan.lines(), None));
         }
         Action::CloseBuffers => {
+            // A kept writer's buffer is handed back first, then closed below.
+            for (buffer, writer) in ctx.stranded.addresses() {
+                lines.push(format!("hand back {buffer}  (writer {writer})"));
+                work += 1;
+            }
             for (buffer, lamports) in publish::stranded_buffers(&client, &admin)? {
                 lines.push(format!("close {buffer}  ({})", publish::sol(lamports)));
                 work += 1;

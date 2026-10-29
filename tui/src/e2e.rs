@@ -1,3 +1,5 @@
+// cspell:word rodata
+
 //! The ceremony end to end against a live `solana-test-validator`.
 //!
 //! The same functions the mainnet menu dispatches — publish, the stranded
@@ -84,6 +86,22 @@ fn taken(keys: &[&Counting]) -> Vec<usize> {
     keys.iter().map(|k| k.take()).collect()
 }
 
+/// The file range of `elf`'s `.rodata` section, read from its section headers.
+fn rodata(elf: &[u8]) -> std::ops::Range<usize> {
+    let u16_at = |at: usize| usize::from(u16::from_le_bytes(elf[at..at + 2].try_into().unwrap()));
+    let u64_at = |at: usize| u64::from_le_bytes(elf[at..at + 8].try_into().unwrap()) as usize;
+    let u32_at = |at: usize| u32::from_le_bytes(elf[at..at + 4].try_into().unwrap()) as usize;
+    // The ELF64 header's section-header offset, count and name-table index.
+    let (headers_at, count, names_index) = (u64_at(0x28), u16_at(0x3c), u16_at(0x3e));
+    let header = |i: usize| headers_at + 64 * i;
+    let names = u64_at(header(names_index) + 24);
+    (0..count)
+        .map(header)
+        .find(|&h| elf[names + u32_at(h)..].starts_with(b".rodata\0"))
+        .map(|h| u64_at(h + 24)..u64_at(h + 24) + u64_at(h + 32))
+        .expect("the artifact has a .rodata section")
+}
+
 fn wait_for(client: &solana_client::rpc_client::RpcClient) {
     let deadline = Instant::now() + Duration::from_secs(60);
     while client.get_slot().is_err() {
@@ -119,21 +137,31 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
     // The localnet deployment is the committed key's: what every PDA below
     // is derived from.
     assert_eq!(program.pubkey(), L.program_id());
-    let published =
-        publish::publish(&url, &artifact, L, &*admin, Some(&program_key), &log).unwrap();
+    let stranded = publish::Stranded::default();
+    let run_publish = |artifact: &Artifact, program_key: Option<&RoleKey>| {
+        publish::publish(&url, artifact, L, &*admin, program_key, &stranded, &log)
+    };
+    let published = run_publish(&artifact, Some(&program_key)).unwrap();
     assert!(published.contains(&artifact.sha256), "{published}");
     // The admin funds the writer and signs the deploy; the program key signs
     // the deploy alone. Every chunk write is the writer's.
     assert_eq!(taken(&[&admin, &program]), [2, 1], "first publish");
-    let again =
-        publish::publish(&url, &artifact, L, &*admin, Some(&program_key), &log).unwrap_err();
+    let again = run_publish(&artifact, Some(&program_key)).unwrap_err();
     assert!(format!("{again:#}").contains("refused"), "{again:#}");
     assert_eq!(taken(&[&admin, &program]), [0, 0], "refused publish");
 
-    // A changed binary against the live program plans as an upgrade, signed
-    // by the admin alone — no program key.
+    // A changed binary against the live program publishes as an upgrade,
+    // signed by the admin alone — no program key. One `.rodata` byte outside
+    // the embedded id differs, so the ELF stays loadable; the upgrade back to
+    // the built binary leaves the steps below running the real program.
     let mut changed = artifact.bytes.clone();
-    *changed.last_mut().unwrap() ^= 0xFF;
+    let id = L.program_id();
+    let id_at = changed.windows(32).position(|w| w == id.as_ref()).unwrap();
+    let byte = rodata(&changed)
+        .rev()
+        .find(|i| !(id_at..id_at + 32).contains(i))
+        .unwrap();
+    changed[byte] ^= 0xFF;
     let changed = Artifact {
         path: artifact.path,
         sha256: publish::sha256_hex(&changed),
@@ -143,8 +171,16 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
     };
     let plan = publish::plan(&publish::client(&url), &changed, L, &admin.pubkey(), None).unwrap();
     assert_eq!(plan.mode, Mode::Upgrade);
+    for (binary, step) in [(&changed, "upgrade"), (&artifact, "upgrade back")] {
+        let upgraded = run_publish(binary, None).unwrap();
+        assert!(upgraded.contains(&binary.sha256), "{upgraded}");
+        // The admin funds the writer and signs the upgrade.
+        assert_eq!(taken(&[&admin, &program]), [2, 0], "{step}");
+    }
+    assert!(stranded.addresses().is_empty());
 
-    // A stranded buffer is found and reclaimed.
+    // A stranded buffer is found and reclaimed, and so is one still held by
+    // a writer whose handoff failed: the recovery hands it back first.
     let buffer = Keypair::new();
     let rent = client
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(16))
@@ -153,14 +189,24 @@ fn the_ceremony_runs_end_to_end_on_localnet() {
         .unwrap();
     chain::send(&client, &*admin, &[&*admin, &buffer], &ixs).unwrap();
     admin.take();
+    let (writer, held) = (Keypair::new(), Keypair::new());
+    chain::airdrop(&client, &writer.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    let ixs = loader::create_buffer(&writer.pubkey(), &held.pubkey(), &writer.pubkey(), rent, 16)
+        .unwrap();
+    chain::send(&client, &writer, &[&writer, &held], &ixs).unwrap();
+    let writer_address = writer.pubkey();
+    stranded.keep(held.pubkey(), writer);
     assert_eq!(
         publish::stranded_buffers(&client, &admin.pubkey())
             .unwrap()
             .len(),
         1
     );
-    publish::close_buffers(&client, &*admin, &log).unwrap();
-    assert_eq!(taken(&[&admin]), [1], "close one stranded buffer");
+    publish::close_buffers(&client, &*admin, &stranded, &log).unwrap();
+    // The handoff is the writer's to sign; the admin signs each close.
+    assert_eq!(taken(&[&admin]), [2], "close two stranded buffers");
+    assert!(stranded.addresses().is_empty());
+    assert_eq!(client.get_balance(&writer_address).unwrap(), 0);
     assert!(publish::stranded_buffers(&client, &admin.pubkey())
         .unwrap()
         .is_empty());
