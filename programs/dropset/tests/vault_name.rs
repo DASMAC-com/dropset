@@ -332,3 +332,39 @@ fn reclaim_and_reuse_reset_name_and_lock() {
     assert_eq!(name_of(&f, 0), "Ghost");
     assert!(!f.vault(0).name_locked.get());
 }
+
+#[test]
+fn override_rejects_stale_seq() {
+    let mut f = fixture_named("Alpha");
+    let admin = f.authority.insecure_clone();
+    let seq = f.vault(0).seq.get();
+    let err = f
+        .override_vault_name_with_seq(&admin, 0, seq + 1, "Beta", true)
+        .expect_err("a seq the sector does not carry must reject");
+    common::assert_program_error(&err, DropsetError::VaultSeqMismatch);
+    assert_eq!(name_of(&f, 0), "Alpha");
+    assert!(!f.vault(0).name_locked.get());
+}
+
+#[test]
+fn override_refuses_a_reused_sector() {
+    // The admin reads sector 0's vault, it closes and a stranger's vault
+    // reopens on the sector, then the override arrives with the old seq.
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    let admin = f.authority.insecure_clone();
+    let read_seq = f.close_and_reuse_sector_0();
+
+    let err = f
+        .override_vault_name_with_seq(&admin, 0, read_seq, "Ghost", true)
+        .expect_err("the old vault's seq must not rename the new one");
+    common::assert_program_error(&err, DropsetError::VaultSeqMismatch);
+    assert_eq!(name_of(&f, 0), "");
+    assert!(!f.vault(0).name_locked.get());
+
+    let live_seq = f.vault(0).seq.get();
+    let meta = f
+        .override_vault_name_with_seq(&admin, 0, live_seq, "Ghost", true)
+        .expect("the live seq renames the vault the sector now holds");
+    assert_eq!(name_of(&f, 0), "Ghost");
+    assert_eq!(events::override_vault_name(&meta).vault_seq, live_seq);
+}

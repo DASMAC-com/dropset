@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { addDecoderSizePrefix, addEncoderSizePrefix, combineCodec, fixDecoderSize, fixEncoderSize, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getUtf8Decoder, getUtf8Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type Codec, type Decoder, type Encoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
+import { addDecoderSizePrefix, addEncoderSizePrefix, combineCodec, fixDecoderSize, fixEncoderSize, getBooleanDecoder, getBooleanEncoder, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, getUtf8Decoder, getUtf8Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type Codec, type Decoder, type Encoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -17,16 +17,16 @@ export function getOverrideVaultNameDiscriminatorBytes() { return fixEncoderSize
 export type OverrideVaultNameInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountAdmin extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
 Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAdmin extends string ? ReadonlySignerAccount<TAccountAdmin> & AccountSignerMeta<TAccountAdmin> : TAccountAdmin, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
-export type OverrideVaultNameInstructionData = { discriminator: ReadonlyUint8Array; vaultIdx: number; name: string; lock: boolean;  };
+export type OverrideVaultNameInstructionData = { discriminator: ReadonlyUint8Array; vaultIdx: number; expectedSeq: bigint; name: string; lock: boolean;  };
 
-export type OverrideVaultNameInstructionDataArgs = { vaultIdx: number; name: string; lock: boolean;  };
+export type OverrideVaultNameInstructionDataArgs = { vaultIdx: number; expectedSeq: number | bigint; name: string; lock: boolean;  };
 
 export function getOverrideVaultNameInstructionDataEncoder(): Encoder<OverrideVaultNameInstructionDataArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['vaultIdx', getU32Encoder()], ['name', addEncoderSizePrefix(getUtf8Encoder(), getU32Encoder())], ['lock', getBooleanEncoder()]]), (value) => ({ ...value, discriminator: OVERRIDE_VAULT_NAME_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['vaultIdx', getU32Encoder()], ['expectedSeq', getU64Encoder()], ['name', addEncoderSizePrefix(getUtf8Encoder(), getU32Encoder())], ['lock', getBooleanEncoder()]]), (value) => ({ ...value, discriminator: OVERRIDE_VAULT_NAME_DISCRIMINATOR }));
 }
 
 export function getOverrideVaultNameInstructionDataDecoder(): Decoder<OverrideVaultNameInstructionData> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['vaultIdx', getU32Decoder()], ['name', addDecoderSizePrefix(getUtf8Decoder(), getU32Decoder())], ['lock', getBooleanDecoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['vaultIdx', getU32Decoder()], ['expectedSeq', getU64Decoder()], ['name', addDecoderSizePrefix(getUtf8Decoder(), getU32Decoder())], ['lock', getBooleanDecoder()]]);
 }
 
 export function getOverrideVaultNameInstructionDataCodec(): Codec<OverrideVaultNameInstructionDataArgs, OverrideVaultNameInstructionData> {
@@ -45,6 +45,7 @@ eventAuthority?: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
 program: Address<TAccountProgram>;
 vaultIdx: OverrideVaultNameInstructionDataArgs["vaultIdx"];
+expectedSeq: OverrideVaultNameInstructionDataArgs["expectedSeq"];
 name: OverrideVaultNameInstructionDataArgs["name"];
 lock: OverrideVaultNameInstructionDataArgs["lock"];
 }
@@ -83,6 +84,7 @@ eventAuthority: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
 program: Address<TAccountProgram>;
 vaultIdx: OverrideVaultNameInstructionDataArgs["vaultIdx"];
+expectedSeq: OverrideVaultNameInstructionDataArgs["expectedSeq"];
 name: OverrideVaultNameInstructionDataArgs["name"];
 lock: OverrideVaultNameInstructionDataArgs["lock"];
 }

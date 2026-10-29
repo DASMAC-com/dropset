@@ -72,6 +72,7 @@ impl SetMinLeaderShare {
     pub fn set_min_leader_share(
         &mut self,
         vault_idx: u32,
+        expected_seq: u64,
         min_leader_share: u32,
     ) -> Result<SetMinLeaderShareEvent> {
         // Admin-only — gated at the dispatcher via `#[access_control]`
@@ -86,21 +87,23 @@ impl SetMinLeaderShare {
             DropsetError::InvalidMinLeaderShare
         );
         let market_addr = *self.market.address();
-        // Validate the sector is live through an immutable borrow before
-        // taking the mutable one — the house pattern shared with the
-        // other vault setters (`set_outside_deposits_approved`,
-        // `freeze_vault`). `is_occupied` is the free-list marker check.
-        let vault_seq = {
+        // Validate the sector is live, and still holds the vault the
+        // caller read, through an immutable borrow before taking the
+        // mutable one — the house pattern shared with the other vault
+        // setters (`set_outside_deposits_approved`, `freeze_vault`).
+        // `is_occupied` is the free-list marker check; the `seq` pin
+        // refuses a sector closed and reused since the admin's read.
+        {
             let v = self.market.read_vault(vault_idx)?;
             require!(v.is_occupied(), DropsetError::VaultEmpty);
-            v.seq.get()
-        };
+            require!(v.seq.get() == expected_seq, DropsetError::VaultSeqMismatch);
+        }
         self.market.mutate_vault(vault_idx)?.min_leader_share = min_leader_share.into();
 
         Ok(SetMinLeaderShareEvent {
             market: market_addr,
             sector_idx: vault_idx,
-            vault_seq,
+            vault_seq: expected_seq,
             min_leader_share,
         })
     }

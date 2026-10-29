@@ -1593,7 +1593,7 @@ authoritative.
 | `SetQuoteAuthority` names the current quote authority       | `SameQuoteAuthority`           |
 | `CreateVault` / `SetPerfFeeRate` rate above 1,000,000 ppm   | `InvalidPerfFeeRate`           |
 | `SetPerfFeeRate` names the current rate                     | `SamePerfFeeRate`              |
-| `SetOutsideDepositsApproved` seq ≠ the sector's `Vault.seq` | `VaultSeqMismatch`             |
+| Admin vault setter seq ≠ the sector's `Vault.seq`           | `VaultSeqMismatch`             |
 | Reference price unset where a basis read needs it           | `ReferencePriceNotSet`         |
 | Swap `limit_price` bits not a well-formed `Price`           | `InvalidPrice`                 |
 | Swap `amount_in == 0`                                       | `InvalidAmountIn`              |
@@ -2214,6 +2214,13 @@ the name for the market and refusing a leader rename. Emits
 `FreezeVaultEvent` (`market`, `sector_idx`, `vault_seq`, `leader`, and
 the `name` it blanked).
 
+The ix carries `expected_seq` beside `vault_idx` and reverts with
+`VaultSeqMismatch` unless the sector's `Vault.seq` equals it. A sector
+index can be reused once its vault closes, so without the pin a freeze
+read against one vault could land on whichever vault reopened in that
+sector. `OverrideVaultName` and `SetMinLeaderShare`, the other admin
+setters that address a vault by sector, carry the same pin.
+
 ### SetVaultName
 
 Leader-only. Writes `Vault.name` from a `name: String` argument under
@@ -2230,9 +2237,10 @@ name and the lock is final), and on an admin-locked name
 
 ### OverrideVaultName
 
-Admin-only, in the `FreezeVault` account shape. Takes `name: String`
-and `lock: bool`: writes the name (blank allowed) under the same
-validity and uniqueness rules as `SetVaultName`, and sets
+Admin-only, in the `FreezeVault` account shape and with its
+`expected_seq` pin. Takes `name: String` and `lock: bool`: writes the
+name (blank allowed) under the same validity and uniqueness rules as
+`SetVaultName`, and sets
 `Vault.name_locked = lock`. A locked name refuses the leader's
 `SetVaultName` until an admin unlocks it. Not refused on a frozen
 vault, so the admin path reaches where the leader's does not. Emits
@@ -2267,7 +2275,8 @@ leader free to keep quoting and managing inventory.
 
 ### SetMinLeaderShare
 
-Admin-only. Writes `Vault.min_leader_share = value` (ppm), overriding
+Admin-only, with the `FreezeVault` `expected_seq` pin. Writes
+`Vault.min_leader_share = value` (ppm), overriding
 the floor stamped from `MarketHeader.default_min_leader_share` at
 `CreateVault`. This is the per-vault skin-in-the-game lever: lowering it
 lets a vault run with a smaller leader stake — e.g. seating an

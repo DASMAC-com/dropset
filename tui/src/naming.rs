@@ -476,6 +476,9 @@ pub fn execute(
                 &ticket.signer,
                 &ticket.market,
                 ticket.vault_idx,
+                // Pinned to the previewed vault: a sector reused between
+                // the read above and the send makes the program refuse.
+                ticket.vault_seq,
                 &ticket.name,
                 ticket.lock,
             ),

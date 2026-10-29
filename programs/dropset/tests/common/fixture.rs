@@ -1319,10 +1319,24 @@ impl Fixture {
         vault_idx: u32,
         min_leader_share: u32,
     ) -> Result<TransactionMetadata, String> {
+        let expected_seq = self.sector_seq(vault_idx);
+        self.set_min_leader_share_with_seq(admin, vault_idx, expected_seq, min_leader_share)
+    }
+
+    /// `set_min_leader_share` with a caller-chosen `expected_seq`, for the
+    /// stale-seq refusal tests.
+    pub fn set_min_leader_share_with_seq(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+        expected_seq: u64,
+        min_leader_share: u32,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &SetMinLeaderShareIx {
                 vault_idx,
+                expected_seq,
                 min_leader_share,
             }
             .data(),
@@ -2096,6 +2110,28 @@ impl Fixture {
         send_ixn_meta(&mut self.svm, signer, ix)
     }
 
+    /// The sector-reuse race the seq-pinned admin setters close: closes the
+    /// vault on sector 0, drains it so the sector is reclaimed, and opens a
+    /// new vault there. Returns the first vault's `seq` — the pin an admin
+    /// who read before the reuse would still send. Needs a seeded fixture
+    /// ([`Self::seeded`]) whose authority leads sector 0.
+    pub fn close_and_reuse_sector_0(&mut self) -> u64 {
+        let leader = self.authority.insecure_clone();
+        let read_seq = self.vault(0).seq.get();
+        self.close_vault(&leader, 0).expect("tombstone");
+        let shares = self.vault(0).leader_shares.get();
+        self.withdraw_leader(0, shares, 0, 0)
+            .expect("full exit reclaims");
+        self.create_vault(1, self.authority.pubkey(), false, Pubkey::default())
+            .expect("re-create on the freed sector");
+        assert_ne!(
+            self.vault(0).seq.get(),
+            read_seq,
+            "reuse stamps a new identity"
+        );
+        read_seq
+    }
+
     /// `freeze_vault` — admin freezes a vault in place.
     pub fn freeze_vault(&mut self, admin: &Keypair, vault_idx: u32) -> Result<(), String> {
         self.freeze_vault_meta(admin, vault_idx).map(|_| ())
@@ -2108,9 +2144,25 @@ impl Fixture {
         admin: &Keypair,
         vault_idx: u32,
     ) -> Result<TransactionMetadata, String> {
+        let expected_seq = self.sector_seq(vault_idx);
+        self.freeze_vault_with_seq(admin, vault_idx, expected_seq)
+    }
+
+    /// `freeze_vault` with a caller-chosen `expected_seq`, for the
+    /// stale-seq refusal tests.
+    pub fn freeze_vault_with_seq(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+        expected_seq: u64,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
-            &FreezeVaultIx { vault_idx }.data(),
+            &FreezeVaultIx {
+                vault_idx,
+                expected_seq,
+            }
+            .data(),
             vec![
                 AccountMeta::new_readonly(admin.pubkey(), true),
                 AccountMeta::new_readonly(self.registry, false),
@@ -2156,10 +2208,25 @@ impl Fixture {
         name: &str,
         lock: bool,
     ) -> Result<TransactionMetadata, String> {
+        let expected_seq = self.sector_seq(vault_idx);
+        self.override_vault_name_with_seq(admin, vault_idx, expected_seq, name, lock)
+    }
+
+    /// `override_vault_name` with a caller-chosen `expected_seq`, for the
+    /// stale-seq refusal tests.
+    pub fn override_vault_name_with_seq(
+        &mut self,
+        admin: &Keypair,
+        vault_idx: u32,
+        expected_seq: u64,
+        name: &str,
+        lock: bool,
+    ) -> Result<TransactionMetadata, String> {
         let ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &OverrideVaultNameIx {
                 vault_idx,
+                expected_seq,
                 name: name.to_owned(),
                 lock,
             }
@@ -2577,6 +2644,17 @@ impl Fixture {
 
     pub fn market_header(&self) -> MarketHeader {
         read_market_header(&self.svm, &self.market)
+    }
+
+    /// The sector's current `Vault::seq` — the pin every honest
+    /// seq-pinned admin setter sends. An out-of-range sector reads `0`,
+    /// leaving the program's own bounds check to refuse it.
+    pub fn sector_seq(&self, sector_idx: u32) -> u64 {
+        let acct = self.svm.get_account(&self.market).expect("market");
+        let off = vault_byte_offset(sector_idx);
+        acct.data
+            .get(off..off + core::mem::size_of::<Vault>())
+            .map_or(0, |b| bytemuck::pod_read_unaligned::<Vault>(b).seq.get())
     }
 
     pub fn vault(&self, sector_idx: u32) -> Vault {
