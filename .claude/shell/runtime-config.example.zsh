@@ -50,6 +50,7 @@ export CARGO_BUILD_JOBS=8
 # DS_FLEET_BUILD_WAIT_S=120        # a pool-lock wait refusing another builder
 # DS_FLEET_RESERVE_GB=6            # memory headroom; default physical ÷ 8
 # DS_BEDROCK_REGION='us-west-2'
+# DS_PR_POLL_S=20                  # seconds between every PR / queue poll
 # DS_CARGO_POOL=0                  # turn the cargo pool off
 # DS_PLAN_TAB_RIGHTMOST=0          # leave the scheduler tab where it opens
 # export DS_UPKEEP_ARMED=1         # let the upkeep pass prune and wipe

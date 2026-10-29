@@ -319,6 +319,16 @@
       ]
     },
     {
+      "anchor": ".claude/skills/review-pr/SKILL.md",
+      "default": "20",
+      "kind": "knob",
+      "name": "DS_PR_POLL_S",
+      "required": false,
+      "verbs": [
+        "review-pr"
+      ]
+    },
+    {
       "anchor": "docs/conventions/local-integrations.md \u2192 Session helpers (`.claude/shell/init.zsh`)",
       "default": null,
       "kind": "toggle",
