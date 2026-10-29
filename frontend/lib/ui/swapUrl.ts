@@ -12,17 +12,27 @@ export const swapHref = (from: string, to: string): string => {
   return `/swap?${params.toString()}`;
 };
 
+// The query key the Vaults tab's pin carries a vault's number (`seq`) under.
+// Keyed on the number, never the leader, so a pinned link survives a leader
+// rotation.
+export const VAULT_PIN_PARAM = "vault";
+
+// The pre-number pin key, a leader pubkey or prefix. Read for one release so
+// an old shared link still resolves to the vault it named (see
+// resolveLegacyLeaderPin), never written.
+export const LEGACY_LEADER_PARAM = "leader";
+
 // Canonical URL for the Vaults tab filtered to a pair (and optionally a single
-// leader). `base`/`quote` are stablecoin symbols; `leader` is a base58 pubkey
-// or prefix. The page reads these to pin its view, and they double as a
-// shareable deep link to a specific vault. Symmetric to `swapHref`.
+// vault, by its number). `base`/`quote` are stablecoin symbols. The page reads
+// these to pin its view, and they double as a shareable deep link to a
+// specific vault. Symmetric to `swapHref`.
 export const vaultsHref = (
   base: string,
   quote: string,
-  leader?: string,
+  vault?: bigint,
 ): string => {
   const params = new URLSearchParams({ base, quote });
-  if (leader) params.set("leader", leader);
+  if (vault !== undefined) params.set(VAULT_PIN_PARAM, vault.toString());
   return `/vaults?${params.toString()}`;
 };
 
@@ -68,11 +78,11 @@ export const replaceUrlParams = (
 export function useGoToVaultsForPair(): (
   base: string,
   quote: string,
-  leader?: string,
+  vault?: bigint,
 ) => void {
   const router = useRouter();
-  return (base, quote, leader) =>
-    router.push(vaultsHref(base, quote, leader) as Route);
+  return (base, quote, vault) =>
+    router.push(vaultsHref(base, quote, vault) as Route);
 }
 
 // Navigate to /swap with a resolved pair. Same-route writes use

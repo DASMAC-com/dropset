@@ -67,7 +67,7 @@ export type Vault = {
   allowOutsideDepositors: boolean;
   // The vault's display name, read from the vault account; null when unset
   // (never named, or blanked by freeze or close). The table falls back to
-  // `#<seq>` (see vaultLabel).
+  // the vault number (see vaultLabel).
   name: string | null;
 };
 
@@ -300,6 +300,26 @@ export const findVaultBySeq = (
   return null;
 };
 
+// The vault number an old leader-keyed pin (LEGACY_LEADER_PARAM) named: the
+// one vault in the base / quote market whose leader the pin prefixes,
+// case-insensitively, as the old filter matched. Null when none or several
+// match — a rotated leader names nothing, and an ambiguous prefix is left to
+// filter as it did. One-release fallback; drop it with the param.
+export const resolveLegacyLeaderPin = (
+  markets: VaultMarket[],
+  base: string,
+  quote: string,
+  leader: string,
+): bigint | null => {
+  if (!leader) return null;
+  const want = leader.toLowerCase();
+  const hits = markets
+    .filter((m) => m.base === base && m.quote === quote)
+    .flatMap((m) => m.vaults)
+    .filter((v) => v.leader.toLowerCase().startsWith(want));
+  return hits.length === 1 ? (hits[0]?.chain.seq ?? null) : null;
+};
+
 // Quote tokens per base token in the vault's current reserves. Deposits and
 // withdrawals must preserve this ratio (a pro-rata basket), so the UI fixes
 // one leg and derives the other from it. Returns null for an empty vault
@@ -403,10 +423,16 @@ export const groupVaultMarkets = (markets: VaultMarket[]): FxPairGroup[] => {
 // the view supplies the value.
 export type MetricKey = "tvl" | "position" | "name" | "pair";
 
+// The vault number every user surface names a vault by: `Vault #<seq>`, the
+// per-market number, as the TUI shows it. Never the sector index, which is
+// addressing (reused once a vault closes), nor the leader, which rotates.
+export const vaultNumberLabel = (vault: Vault): string =>
+  `Vault #${vault.chain.seq}`;
+
 // The table's handle for a vault, and its "name" sort value: its name, else
-// `#<seq>` (the per-market number, as the TUI shows an unnamed vault).
+// its vault number.
 export const vaultLabel = (vault: Vault): string =>
-  vault.name ?? `#${vault.chain.seq}`;
+  vault.name ?? vaultNumberLabel(vault);
 
 export const vaultMetric = (gv: GroupedVault, key: MetricKey): number | null =>
   key === "tvl" ? gv.vault.tvl : null;
