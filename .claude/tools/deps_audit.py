@@ -7,6 +7,7 @@ it for its one ``deps`` line.
 Usage (from the repo root):
 
     python3 .claude/tools/deps_audit.py [--full] [--json] [--top N] [--state PATH]
+                                        [--install]
     python3 .claude/tools/deps_audit.py check-ignores
 
 **Default output** is the count by severity and the top ``--top`` (5)
@@ -28,13 +29,19 @@ and an ignore matching nothing is reported ``stale`` so the list shrinks when a
 fix lands. The tool applies both lists itself, so the two audits share one rule.
 
 **Delta.** ``--state PATH`` reads the previous run's advisory ids from PATH and
-reports what is new and what resolved since, then rewrites PATH — but only when
-both audits ran, so a failed scanner never resets the baseline. The upkeep pass
-keeps PATH untracked beside its own stamp.
+reports what is new and what resolved since — an id that merely joined an
+ignore list is not counted resolved — then rewrites PATH, but only when both
+audits ran. A failed scanner never resets the baseline and reports no delta,
+since half the ids would read as resolved. A scanner fails when it exits
+outside 0 / 1 **or** prints JSON without its findings key: pnpm reports a
+registry failure as exit 1 with an ``error`` object, which would otherwise read
+as an all-clear. The upkeep pass keeps PATH untracked beside its own stamp.
 
-**Install on demand.** ``cargo-audit`` is not a toolchain prerequisite: when
-``cargo audit`` is absent the tool runs ``cargo install cargo-audit --locked``
-once, then audits.
+**Install on demand, never unattended.** ``cargo-audit`` is not a toolchain
+prerequisite. Under ``--install`` (which ``make deps-audit`` passes) an absent
+``cargo audit`` is built once at the pinned ``CARGO_AUDIT_VERSION`` with
+``--locked``; without it — the upkeep pass — absence is a failed-scanner line
+naming the make target, so no crate build script runs unwatched.
 
 Exit status: 0 no unignored advisory, 1 advisories found, 2 a scanner failed
 (the output names it; the other scanner's findings still print).
@@ -62,6 +69,9 @@ PNPM_IGNORES = Path("cfg/pnpm-audit.toml")
 # Ranked most-severe first; anything else sorts after `warning`.
 SEVERITIES = ("critical", "high", "moderate", "low", "info", "unrated", "warning")
 TOP = 5
+
+# The cargo-audit release `--install` builds; bump it deliberately, by hand.
+CARGO_AUDIT_VERSION = "0.22.2"
 
 # cargo-audit is built from source on first use, which takes minutes.
 TIMEOUT_INSTALL = 900
@@ -280,29 +290,53 @@ def _json_of(out: str) -> dict:
     return data
 
 
-def audit_cargo(run: Runner, root: Path) -> dict:
-    """``cargo audit --json``, installing cargo-audit first if it is absent.
-    Exit 1 means advisories found, not failure."""
+def _findings_of(out: str, key: str) -> dict:
+    """The audit's JSON, refused unless it carries its findings ``key``: exit 1
+    is also how pnpm reports its OWN failure, as ``{"error": ...}``, and reading
+    that as zero findings would be a silent all-clear."""
+    data = _json_of(out)
+    error = data.get("error")
+    if error is not None or not isinstance(data.get(key), dict):
+        detail = error.get("message") if isinstance(error, dict) else error
+        raise ValueError(f"no {key!r} in the audit's JSON: {first_line(str(detail))}")
+    return data
+
+
+def audit_cargo(run: Runner, root: Path, install: bool = False) -> dict:
+    """``cargo audit --json``; with ``install``, building the pinned cargo-audit
+    first if it is absent. Exit 1 means advisories found, not failure."""
     rc, _out, _err = run(["cargo", "audit", "--version"], 60, str(root))
     if rc != 0:
+        if not install:
+            raise RuntimeError("cargo-audit absent; `make deps-audit` installs it")
         rc, _out, err = run(
-            ["cargo", "install", "cargo-audit", "--locked"], TIMEOUT_INSTALL, str(root)
+            [
+                "cargo",
+                "install",
+                "cargo-audit",
+                "--version",
+                CARGO_AUDIT_VERSION,
+                "--locked",
+            ],
+            TIMEOUT_INSTALL,
+            str(root),
         )
         if rc != 0:
             raise RuntimeError(f"cargo-audit install failed: {first_line(err)}")
     rc, out, err = run(["cargo", "audit", "--json"], TIMEOUT_AUDIT, str(root))
     if rc not in (0, 1):
         raise RuntimeError(f"cargo audit exited {rc}: {first_line(err)}")
-    return _json_of(out)
+    return _findings_of(out, "vulnerabilities")
 
 
-def audit_pnpm(run: Runner, root: Path) -> dict:
+def audit_pnpm(run: Runner, root: Path, install: bool = False) -> dict:
     """``pnpm audit --prod --json`` at the workspace root, which covers every
-    workspace package. Exit 1 means advisories found, not failure."""
+    workspace package. Exit 1 means advisories found — or pnpm's own failure,
+    which ``_findings_of`` tells apart."""
     rc, out, err = run(["pnpm", "audit", "--prod", "--json"], TIMEOUT_AUDIT, str(root))
     if rc not in (0, 1):
         raise RuntimeError(f"pnpm audit exited {rc}: {first_line(err or out)}")
-    return _json_of(out)
+    return _findings_of(out, "advisories")
 
 
 # --- summary -----------------------------------------------------------------
@@ -313,7 +347,9 @@ def read_state(path: Path) -> list[str] | None:
         ids = json.loads(path.read_text("utf-8")).get("ids")
     except (OSError, ValueError, AttributeError):
         return None
-    return ids if isinstance(ids, list) else None
+    if not isinstance(ids, list):
+        return None
+    return [i for i in ids if isinstance(i, str)]
 
 
 def write_state(path: Path, ids: list[str], now: datetime) -> None:
@@ -335,11 +371,13 @@ def summarize(
     for f in live:
         counts[f["severity"]] = counts.get(f["severity"], 0) + 1
     ids = sorted({f["id"] for f in live})
+    # No delta over a partial run: the failed scanner's ids would all read as
+    # resolved. An id that only joined an ignore list did not resolve either.
     delta = None
-    if previous is not None:
+    if previous is not None and not errors:
         delta = {
             "new": sorted(set(ids) - set(previous)),
-            "resolved": sorted(set(previous) - set(ids)),
+            "resolved": sorted(set(previous) - set(ids) - set(ignores)),
         }
     summary = {
         "total": len(live),
@@ -364,7 +402,9 @@ def upkeep_line(summary: dict) -> str:
     """The upkeep report's one line: advisories by severity and the delta."""
     text = f"{summary['total']} advisories ({counts_text(summary['counts'])})"
     delta = summary["delta"]
-    if delta is None:
+    if summary["errors"]:
+        text += ", no delta over a partial run"
+    elif delta is None:
         text += ", no previous run"
     else:
         text += (
@@ -420,6 +460,7 @@ def run_audit(
     state: Path | None = None,
     now: datetime | None = None,
     top: int = TOP,
+    install: bool = False,
 ) -> dict:
     findings: list[dict] = []
     errors: list[str] = []
@@ -428,8 +469,9 @@ def run_audit(
         ("pnpm", audit_pnpm, parse_pnpm),
     ):
         try:
-            findings += parse(audit(run, root))
-        except (RuntimeError, ValueError) as e:
+            findings += parse(audit(run, root, install))
+        # An unexpected JSON shape is one scanner's failure, not the tool's.
+        except (RuntimeError, ValueError, AttributeError, TypeError) as e:
             errors.append(f"{name}: {first_line(str(e))}")
     ignores = {
         **load_ignores(root, CARGO_IGNORES)[0],
@@ -449,11 +491,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="print the JSON twin")
     parser.add_argument("--top", type=int, default=TOP)
     parser.add_argument("--state", type=Path, help="previous-run ids, for the delta")
+    parser.add_argument(
+        "--install", action="store_true", help="build cargo-audit if it is absent"
+    )
     parser.add_argument("--root", type=Path, default=REPO_ROOT)
     args = parser.parse_args(argv)
     if args.command == "check-ignores":
         return check_ignores(args.root)
-    summary = run_audit(args.root, state=args.state, top=args.top)
+    summary = run_audit(args.root, state=args.state, top=args.top, install=args.install)
     if args.json:
         if not args.full:
             summary.pop("findings")

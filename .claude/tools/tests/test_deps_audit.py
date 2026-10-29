@@ -1,7 +1,11 @@
 """Tests for deps_audit.py — run with `make tools-test T=test_deps_audit`."""
 
+# cspell:word ECONNREFUSED
+
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -110,19 +114,37 @@ ignore = [
 """
 
 
-def fake_run(cargo_rc=1, pnpm_rc=1, installed=True):
+# What `pnpm audit --prod --json` really prints, at exit 1, when the registry
+# is unreachable — the shape that must not read as an all-clear.
+PNPM_ERROR = {
+    "error": {
+        "code": "ECONNREFUSED",
+        "message": "request to http://127.0.0.1:9/-/npm/v1/security/audits/quick"
+        " failed, reason: connect ECONNREFUSED 127.0.0.1:9",
+    }
+}
+
+
+def fake_run(
+    cargo_rc=1,
+    pnpm_rc=1,
+    installed=True,
+    install_rc=0,
+    cargo_out=CARGO,
+    pnpm_out=PNPM,
+):
     calls = []
 
     def run(cmd, timeout, cwd=None):
         calls.append(cmd)
         if cmd[:3] == ["cargo", "audit", "--version"]:
-            return (0, "cargo-audit 0.22.1", "") if installed else (101, "", "no such")
+            return (0, "cargo-audit 0.22.2", "") if installed else (101, "", "no such")
         if cmd[:2] == ["cargo", "install"]:
-            return 0, "", ""
+            return install_rc, "", "error: failed to compile" if install_rc else ""
         if cmd[:2] == ["cargo", "audit"]:
-            return cargo_rc, json.dumps(CARGO), ""
+            return cargo_rc, json.dumps(cargo_out), ""
         if cmd[:2] == ["pnpm", "audit"]:
-            return pnpm_rc, json.dumps(PNPM), "ERR" if pnpm_rc > 1 else ""
+            return pnpm_rc, json.dumps(pnpm_out), "ERR" if pnpm_rc > 1 else ""
         return 127, "", "unexpected"
 
     run.calls = calls
@@ -245,7 +267,7 @@ class SummaryTests(unittest.TestCase):
 
 
 class RunTests(unittest.TestCase):
-    def run_in(self, tmp, **kw):
+    def run_in(self, tmp, install=False, **kw):
         state = Path(tmp) / "state.json"
         run = fake_run(**kw)
         s = run_audit(
@@ -253,6 +275,7 @@ class RunTests(unittest.TestCase):
             run=run,
             state=state,
             now=datetime(2026, 10, 29, tzinfo=timezone.utc),
+            install=install,
         )
         return s, state, run
 
@@ -266,25 +289,98 @@ class RunTests(unittest.TestCase):
 
     def test_a_failed_scanner_keeps_the_baseline_and_the_other_findings(self):
         with tempfile.TemporaryDirectory() as tmp:
+            self.run_in(tmp)
+            baseline = Path(tmp, "state.json").read_text()
             s, state, _ = self.run_in(tmp, pnpm_rc=2)
             self.assertEqual(s["errors"][0][:5], "pnpm:")
             self.assertTrue(all(f["source"] == "cargo" for f in s["findings"]))
-            self.assertFalse(state.exists())
+            self.assertEqual(state.read_text(), baseline)
+            self.assertIsNone(s["delta"])
+            self.assertIn("no delta over a partial run", s["line"])
             self.assertIn("FAILED", s["line"])
 
-    def test_cargo_audit_is_installed_on_demand(self):
+    def test_a_pnpm_error_object_at_exit_1_is_a_failure_not_an_all_clear(self):
         with tempfile.TemporaryDirectory() as tmp:
-            _s, _state, run = self.run_in(tmp, installed=False)
-            self.assertIn(["cargo", "install", "cargo-audit", "--locked"], run.calls)
-            _s, _state, run = self.run_in(tmp)
+            self.run_in(tmp)
+            baseline = Path(tmp, "state.json").read_text()
+            s, state, _ = self.run_in(tmp, pnpm_out=PNPM_ERROR)
+            self.assertEqual(len(s["errors"]), 1)
+            self.assertIn("ECONNREFUSED", s["errors"][0])
+            self.assertEqual(state.read_text(), baseline)
+
+    def test_cargo_json_without_its_findings_key_is_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s, state, _ = self.run_in(tmp, cargo_out={"database": {}})
+            self.assertTrue(s["errors"][0].startswith("cargo: no 'vulnerabilities'"))
+            self.assertFalse(state.exists())
+
+    def test_an_unexpected_shape_is_one_scanners_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s, _state, _ = self.run_in(tmp, pnpm_out={"advisories": {"1": "x"}})
+            self.assertEqual(s["errors"][0][:5], "pnpm:")
+            self.assertTrue(any(f["source"] == "cargo" for f in s["findings"]))
+
+    def test_cargo_audit_is_installed_pinned_only_under_install(self):
+        pinned = [
+            "cargo",
+            "install",
+            "cargo-audit",
+            "--version",
+            deps_audit.CARGO_AUDIT_VERSION,
+            "--locked",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            _s, _state, run = self.run_in(tmp, installed=False, install=True)
+            self.assertIn(pinned, run.calls)
+            _s, _state, run = self.run_in(tmp, install=True)
             self.assertFalse(any(c[:2] == ["cargo", "install"] for c in run.calls))
+
+    def test_without_install_an_absent_cargo_audit_is_a_failed_scanner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s, _state, run = self.run_in(tmp, installed=False)
+            self.assertFalse(any(c[:2] == ["cargo", "install"] for c in run.calls))
+            self.assertIn("make deps-audit", s["errors"][0])
+
+    def test_a_failed_install_is_a_failed_scanner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            s, _state, _ = self.run_in(
+                tmp, installed=False, install=True, install_rc=101
+            )
+            self.assertIn("install failed: error: failed to compile", s["errors"][0])
 
     def test_ignores_are_read_from_the_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "cfg").mkdir()
             (Path(tmp) / deps_audit.CARGO_IGNORES).write_text(IGNORES)
+            (Path(tmp) / deps_audit.PNPM_IGNORES).write_text(
+                'ignore = [\n  "GHSA-w5p7-h5w8-2hfq", # decks only\n]\n'
+            )
             s, _state, _run = self.run_in(tmp)
-            self.assertEqual(s["ignored"], ["RUSTSEC-2025-0111"])
+            self.assertEqual(s["ignored"], ["GHSA-w5p7-h5w8-2hfq", "RUSTSEC-2025-0111"])
+
+    def test_a_newly_ignored_id_is_not_counted_resolved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_in(tmp)
+            (Path(tmp) / "cfg").mkdir()
+            (Path(tmp) / deps_audit.CARGO_IGNORES).write_text(IGNORES)
+            s, _state, _run = self.run_in(tmp)
+            self.assertEqual(s["delta"], {"new": [], "resolved": []})
+
+    def test_check_ignores_fails_on_a_reasonless_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "cfg").mkdir()
+            (Path(tmp) / deps_audit.PNPM_IGNORES).write_text(
+                'ignore = [\n  "GHSA-x",\n]\n'
+            )
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(deps_audit.check_ignores(Path(tmp)), 1)
+            self.assertIn("GHSA-x", out.getvalue())
+
+    def test_read_state_drops_non_string_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text(json.dumps({"ids": ["A", [1], 2]}))
+            self.assertEqual(deps_audit.read_state(path), ["A"])
 
 
 if __name__ == "__main__":

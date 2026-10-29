@@ -149,8 +149,9 @@ TIMEOUT_DISMISS = 300
 # The digest's transcript walk plus its CI read: a cold job cache is one
 # `gh api` read per merge-queue run of the past week, a few hundred.
 TIMEOUT_DIGEST = 600
-# Both audits, plus cargo-audit's one-time source build on a fresh machine.
-TIMEOUT_DEPS = 1200
+# Both audits (300s each) plus the version probe; the pass never installs
+# cargo-audit, so no source build sits under this bound.
+TIMEOUT_DEPS = 900
 
 # How many recent digests the refresh gate mines — an upper bound: the purge
 # ages digests out on the transcripts' two-day rule, so once it is applied
@@ -885,7 +886,8 @@ def step_purge(ctx: Ctx) -> None:
 
 def step_deps(ctx: Ctx) -> None:
     # Exit 1 is advisories found and 2 a failed scanner; both still print the
-    # JSON, whose line names the failure.
+    # JSON, and on 2 its line names the failed scanner. No `--install`: an
+    # absent cargo-audit is a failed-scanner line, never an unwatched build.
     data = _json_tool(
         ctx,
         "deps",
