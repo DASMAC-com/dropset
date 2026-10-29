@@ -139,9 +139,10 @@ nor the Solana-toolchain layer:
 
 Cache entries are readable from the ref that saved them and from the default
 branch. `test.yml` runs on `push: main`, so the shared entry exists on the
-default branch and merge-queue runs restore it. `lint.yml` does **not** run
-on `push: main`, and `sdk.yml` no longer saves at all (see below) — which is
-the second reason both read the test jobs' key instead of keeping their own.
+default branch and merge-queue runs restore it. `lint.yml` runs on
+`push: main` only to warm the pre-commit hook cache (see below), skipping the
+Rust cache, and `sdk.yml` no longer saves at all — which is the second reason
+both read the test jobs' key instead of keeping their own.
 
 ### Only a push to main saves
 
@@ -183,9 +184,17 @@ What it does not cover:
   `pnpm`, `pre-commit` and `pip` caches belong to workflows this rule does
   not touch. They can still crowd main's entries under the limit.
 
-The `pre-commit` hook cache is still lint-only and still has no
-default-branch copy, so it remains cold on merge-queue runs and on the first
-run of a new PR. That costs the `install-hooks` step, measured at ~100s.
+The `pre-commit` hook cache is lint-only, and its default-branch copy comes
+from a dedicated `push: main` run of `lint.yml`. That run executes only the
+setup steps, the hook-cache restore, `install-hooks` and the save; every
+lint, test and build step carries `if: github.event_name != 'push'`. Without
+it the cache was cold on every merge-queue run and on the first run of each
+new PR, costing the `install-hooks` step: a median of 1.6 minutes across 86
+queue Lint jobs in 2026-10-12 to 2026-10-21, about a fifth of the queue's
+critical path, which Lint set on 77 of 88 entries. The warm-up costs about
+two runner-minutes per merge, after the merge and so off the critical path,
+and saves only when the key moves. A `schedule:` warm-up would also reach
+the default branch, at the staleness cost described above, and is not used.
 
 ### One shared key for the Rust caches
 

@@ -20,7 +20,12 @@ jobs:
     # below owns the key, and `rustflags`, which otherwise injects
     # `-D warnings` into every cargo invocation in the job (the clippy hook
     # passes its own, and a stray RUSTFLAGS also perturbs the rust-cache key).
-    - uses: >- # v1.17.0
+    #
+    # Every step a `push` run skips carries `if: github.event_name != 'push'`.
+    # That run only warms the pre-commit hook cache (see the restore step).
+    - if: >-
+        github.event_name != 'push'
+      uses: >- # v1.17.0
         actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
       with:
         cache: false
@@ -33,8 +38,8 @@ jobs:
     # and is gone, so the keys now coincide — measured, `full match: true` on
     # `v0-rust-rust-test-Linux-Linux-x64-cee1353d-…` in lint, sdk and the
     # test jobs alike. Two wins: one ~0.6 GB copy per ref stops being stored,
-    # and this job — which has no `push: main` trigger, so it never saved a
-    # default-branch entry — can finally restore one, warming merge-queue
+    # and this job — whose `push: main` run skips this step, so it never
+    # saves a default-branch entry — can restore one, warming merge-queue
     # runs and the first run of every new PR.
     # `save-if: false` makes this job a restore-only consumer of that entry,
     # and it is load-bearing rather than tidiness. rust-cache skips its save
@@ -56,9 +61,11 @@ jobs:
     # members but not of dependencies — the same asymmetry that makes deps
     # reusable across build and clippy in the first place — so clippy cannot
     # reuse workspace artifacts a test job compiled. Caching clippy's own would
-    # need this job to save under a key of its own, and that needs a
-    # default-branch run, which none of this workflow's triggers produce.
-    - uses: >- # v2.9.3
+    # need this job to save under a key of its own from a default-branch run
+    # that compiles the workspace; the `push: main` run only warms hooks.
+    - if: >-
+        github.event_name != 'push'
+      uses: >- # v2.9.3
         Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
         cache-on-failure: true
@@ -75,7 +82,9 @@ jobs:
         cache-dependency-path: 'pnpm-lock.yaml'
         node-version-file: 'frontend/.node-version'
     # Root install: the frontend + SDK packages share one pnpm workspace.
-    - run: 'pnpm install --frozen-lockfile'
+    - if: >-
+        github.event_name != 'push'
+      run: 'pnpm install --frozen-lockfile'
     - uses: 'actions/setup-python@v6'
       with:
         cache: 'pip'
@@ -91,17 +100,31 @@ jobs:
     # author happening to run `make tools-tests` on a Mac. The sibling
     # `test_iterm_heal.py` stays darwin-only and correctly keeps skipping:
     # iTerm2 and BSD `stat -f %m` have no Linux equivalent to test.
-    - run: 'sudo apt-get install -y --no-install-recommends zsh'
+    - if: >-
+        github.event_name != 'push'
+      run: 'sudo apt-get install -y --no-install-recommends zsh'
     # Python skill-tool unit tests (stdlib only, reuses the cached Python set up
     # above — no new cache). Folds in the old dedicated stage-backlog-tests job.
-    - run: 'make tools-tests'
+    - if: >-
+        github.event_name != 'push'
+      run: 'make tools-tests'
     # Production-build the decks. `decks` is a member of the pnpm workspace the
     # install above already provisioned, so this is one `next build` with no new
     # setup or cache. It runs here rather than in the Rust-gated test workflow
     # because that one path-filters decks/** out. The build's `prebuild` hook
     # hard-fails on a remote asset it can't mirror, so a deck with a broken
     # image can't reach main: this job gates both pull_request and merge_group.
-    - run: 'make decks-build'
+    - if: >-
+        github.event_name != 'push'
+      run: 'make decks-build'
+    # The hook cache needs a default-branch copy to be readable from a
+    # merge-queue ref or a new PR, and only the `push: main` trigger makes
+    # one: without it every queue entry paid a cold `install-hooks` (median
+    # 1.6 min, about a fifth of the queue's critical path). That run skips
+    # everything but this restore, `install-hooks` and the save, so it costs
+    # about two runner-minutes after each merge, off the critical path. A
+    # same-key restore on main hits and the save is skipped, so a push
+    # writes only when the config, pre-commit, Node or Python moves.
     - id: 'pre-commit-cache'
       uses: 'actions/cache/restore@v5'
       with:
@@ -111,7 +134,9 @@ jobs:
               }}-${{ hashFiles(env.CONFIG_PATH) }}'
         path: '~/.cache/pre-commit'
     - run: 'pre-commit install-hooks -c ${{ env.CONFIG_PATH }}'
-    - run: >-
+    - if: >-
+        github.event_name != 'push'
+      run: >-
         pre-commit run --all-files --color=always --show-diff-on-failure
         --config ${{ env.CONFIG_PATH }}
     - if: |
@@ -127,4 +152,7 @@ name: 'Lint'
 'on':
   merge_group: null
   pull_request: null
+  push:
+    branches:
+    - 'main'
 ...
