@@ -68,6 +68,7 @@ class FakeRun:
         self.gh_rc = 0
         self.gh_out = None
         self.parents = {1000: 999, 999: SESSION_PID, SESSION_PID: 1}
+        self.comms = {SESSION_PID: "/Users/x/.local/bin/claude", 999: "zsh"}
         self.remove_rc = 0
         self.unlock_rc = 0
         self.lock_rc = 0
@@ -77,6 +78,9 @@ class FakeRun:
 
     def __call__(self, cmd, cwd=None):
         self.calls.append(cmd)
+        if cmd[:3] == ["ps", "-o", "comm="]:
+            name = self.comms.get(int(cmd[-1]))
+            return (0, f"{name}\n", "") if name else (1, "", "")
         if cmd[:2] == ["ps", "-o"]:
             parent = self.parents.get(int(cmd[-1]))
             return (0, f"{parent}\n", "") if parent else (1, "", "")
@@ -710,6 +714,80 @@ class ParkTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("another live process", result["refused"])
 
+    def test_park_refuses_a_lock_naming_a_non_client_ancestor(self):
+        # A hand-edited lock naming the shell above the tool: an ancestor, but
+        # not the client, so never the kill target.
+        shell_lock = LOCK.replace(f"pid {SESSION_PID}", "pid 999")
+        rc, result, _, writer, appended = self._park(
+            session_id="s", porcelain=PORCELAIN.replace(LOCK, shell_lock)
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("runs 'zsh', not 'claude'", result["refused"])
+        self.assertEqual((writer.calls, appended), ([], []))
+
+    def test_no_exit_without_park_refuses(self):
+        rc, result, _, writer = run_close(ns(no_exit=True))
+        self.assertEqual(rc, 1)
+        self.assertIn("--no-exit applies only to --park", result["refused"])
+        self.assertEqual(writer.calls, [])
+
+    def test_a_failed_cost_append_keeps_the_client(self):
+        def boom(_issue, _line):
+            raise RuntimeError("linear down")
+
+        rc, result = close(
+            ns(state=None, park=True, session_id="s"),
+            run=FakeRun(prs=self.OPEN),
+            writer=Writer(),
+            pid=1000,
+            coster=lambda *_: "cost\n",
+            appender=boom,
+            body_reader=lambda _issue: self.BRIEF,
+        )
+        # rc 1 is what stops main() from killing the client.
+        self.assertEqual(rc, 1)
+        self.assertIsNone(result["cost_line"])
+        self.assertTrue(any("client left running" in n for n in result["notes"]))
+
+
+class BriefVerdictTests(unittest.TestCase):
+    def test_forms_that_name_the_pr(self):
+        for brief in (
+            "**Resume brief**: PR #715 held behind #717",
+            "Resume brief: [PR 715](https://github.com/o/r/pull/715)",
+            "resume brief — https://github.com/o/r/pull/715 waits on 717",
+        ):
+            close_session.brief_verdict(f"spec\n\n{brief}\n", 715)
+
+    def test_a_longer_number_does_not_match(self):
+        with self.assertRaisesRegex(Refusal, "does not name PR #715"):
+            close_session.brief_verdict("**Resume brief**: PR #7150\n", 715)
+
+    def test_a_later_paragraph_cannot_vouch_for_a_stale_brief(self):
+        body = "**Resume brief**: PR #600 held behind #599\n\n- [ ] reopened as #715\n"
+        with self.assertRaisesRegex(Refusal, "does not name PR #715"):
+            close_session.brief_verdict(body, 715)
+
+    def test_the_last_brief_wins(self):
+        body = "Resume brief: PR #715\n\nResume brief: PR #800\n"
+        close_session.brief_verdict(body, 800)
+        with self.assertRaises(Refusal):
+            close_session.brief_verdict(body, 715)
+
+
+class StillOursTests(unittest.TestCase):
+    def test_a_live_ancestor_client(self):
+        self.assertTrue(close_session.still_ours(SESSION_PID, FakeRun(), 1000))
+
+    def test_a_dead_client_whose_pid_was_reused(self):
+        # The client died and init adopted the tool: its pid is no
+        # longer an ancestor, whatever now runs under it.
+        run = FakeRun(parents={1000: 1})
+        self.assertFalse(close_session.still_ours(SESSION_PID, run, 1000))
+
+    def test_an_ancestor_that_is_not_the_client(self):
+        self.assertFalse(close_session.still_ours(999, FakeRun(), 1000))
+
 
 class EndClientTests(unittest.TestCase):
     def test_sigterm_then_bounded_wait(self):
@@ -738,29 +816,49 @@ class EndClientTests(unittest.TestCase):
 
         self.assertTrue(close_session.end_client(77, kill=gone))
 
-    def _main(self, rc, result):
-        out = mock.MagicMock()
+    def _main(self, rc, result, went=True, ours=True, want=None):
+        # One parent mock records stdout and the kill in call order.
+        order = mock.MagicMock()
+        order.end.return_value = went
+        err = mock.MagicMock()
         with (
             mock.patch.object(close_session, "close", return_value=(rc, result)),
             mock.patch.object(close_session, "parse_args"),
-            mock.patch.object(close_session, "end_client", return_value=True) as end,
-            mock.patch.object(close_session.sys, "stdout", out),
+            mock.patch.object(close_session, "end_client", order.end),
+            mock.patch.object(close_session, "still_ours", return_value=ours),
+            mock.patch.object(close_session.sys, "stdout", order.out),
+            mock.patch.object(close_session.sys, "stderr", err),
         ):
-            self.assertEqual(close_session.main(), rc)
-        return end, out
+            self.assertEqual(close_session.main(), rc if want is None else want)
+        return order, err
 
     def test_main_ends_the_client_after_printing(self):
-        result = {"dry_run": False, "client_pid": 4242}
-        end, out = self._main(0, result)
-        end.assert_called_once_with(4242)
-        out.flush.assert_called()
+        order, _ = self._main(0, {"dry_run": False, "client_pid": 4242})
+        names = [c[0] for c in order.mock_calls]
+        self.assertIn("out.flush", names)
+        self.assertEqual(names[-1], "end")
+        self.assertLess(names.index("out.flush"), names.index("end"))
+        order.end.assert_called_once_with(4242)
+
+    def test_main_reports_a_client_that_outlived_the_wait(self):
+        _, err = self._main(
+            0, {"dry_run": False, "client_pid": 4242}, went=False, want=1
+        )
+        self.assertIn("still running after SIGTERM", err.write.call_args[0][0])
+
+    def test_main_spares_a_pid_that_is_no_longer_ours(self):
+        order, err = self._main(
+            0, {"dry_run": False, "client_pid": 4242}, ours=False, want=1
+        )
+        order.end.assert_not_called()
+        self.assertIn("no longer this session's", err.write.call_args[0][0])
 
     def test_main_never_ends_the_client_on_a_dry_run_or_refusal(self):
         for rc, dry in ((0, True), (1, False)):
-            end, _ = self._main(rc, {"dry_run": dry, "client_pid": 4242})
-            end.assert_not_called()
-        end, _ = self._main(0, {"dry_run": False, "client_pid": None})
-        end.assert_not_called()
+            order, _ = self._main(rc, {"dry_run": dry, "client_pid": 4242})
+            order.end.assert_not_called()
+        order, _ = self._main(0, {"dry_run": False, "client_pid": None})
+        order.end.assert_not_called()
 
 
 class NotifyingRun(FakeRun):

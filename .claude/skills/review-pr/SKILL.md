@@ -1648,8 +1648,9 @@ migrations or generation inputs, and whether it spans crates.
    **A green PR held behind another PR is parked, not watched.** On a
    hold (the operator, planning, or the re-check above), leave the
    issue In Progress with the PR pushed and green, append a resume
-   brief (`linear_issue.py append`, headed `**Resume brief**`: PR
-   number, the PR waited on, gates still owed) and end the session — a
+   brief (`linear_issue.py append`, one paragraph opening
+   `**Resume brief**: PR #<N>` — then the PR waited on, gates still
+   owed) and end the session — a
    resident tail replays the whole review's prefix per rebase
    (`history.md` → "Held-PR tails"). The ending is one call, the
    session's last:
@@ -1663,7 +1664,9 @@ migrations or generation inputs, and whether it spans crates.
    result prints) so the fleet slot frees; `--no-exit` keeps the tab
    for a human-driven park. It refuses — naming what is missing — on a
    dirty or unpushed tree, no open PR, no brief naming this PR, or a
-   worktree lock that does not name this session. A fresh session
+   worktree lock that does not name this session's `claude` client; a
+   failed cost-line append exits 1 and leaves the client running, since
+   a killed client never reads the result. A fresh session
    resumes from the brief alone at step 2, re-running no lens unless
    the rebase overlaps.
 
