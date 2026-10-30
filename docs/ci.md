@@ -223,8 +223,9 @@ later run — slowing the critical path, which is the opposite of the point.
 
 The race is narrowed rather than removed: the three writers still contend,
 but their dependency builds are near-identical, so whichever wins, the
-stored entry is representative. Measured after the change: all five jobs
-restore one `v0-rust-rust-test-…` entry with `full match: true`.
+stored entry is representative. Measured after the change, before the
+`lint-rust` split: all five jobs restore one `v0-rust-rust-test-…` entry
+with `full match: true`.
 
 This was worth doing because the duplication was measured, not suspected: on
 a single PR ref there were four entries with identical dependency hashes —

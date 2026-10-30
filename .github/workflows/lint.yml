@@ -134,7 +134,8 @@ jobs:
   # The two cargo-backed hooks, one job each, beside `lint` rather than inside
   # it: run serially there they set the merge queue's critical path (clippy
   # about 1.9 min and rustdoc about 1.4 min of a 6.6 min job). Each is its own
-  # required check, `Lint (clippy)` and `Lint (rustdoc)`. Both hooks are
+  # check, `Lint (clippy)` and `Lint (rustdoc)`, required once the ruleset
+  # adds them (docs/conventions/github-mcp.md). Both hooks are
   # `language: system`, so `pre-commit run <hook>` installs no hook
   # environment and this job needs neither Node nor the hook cache; Python is
   # here only for pre-commit and the hooks' `cargo_scope.py` entry. A `push`
@@ -156,16 +157,17 @@ jobs:
         cache: false
         rustflags: ''
     # Shares the test jobs' dep-artifact cache rather than keeping a
-    # `rust-lint` key of its own. What used to keep this job on a separate
-    # entry was the `RUST_VERSION` variable defined only here: rust-cache
-    # hashes environment variables matching a `RUST` prefix into its key, so
-    # this job alone computed a different hash. That variable was dead config
-    # and is gone, so the keys now coincide — measured, `full match: true` on
-    # `v0-rust-rust-test-Linux-Linux-x64-cee1353d-…` in lint, sdk and the
-    # test jobs alike. Two wins: one ~0.6 GB copy per ref stops being stored,
-    # and this job — restore-only through `save-if: false` below, and never
-    # run on `push: main` — can restore one, warming merge-queue runs and the
-    # first run of every new PR.
+    # `rust-lint` key of its own. What used to keep the then-single lint job
+    # on a separate entry was the `RUST_VERSION` variable defined only in
+    # this file: rust-cache hashes environment variables matching a `RUST`
+    # prefix into its key, so that job alone computed a different hash. That
+    # variable was dead config and is gone, so the keys now coincide —
+    # measured, `full match: true` on
+    # `v0-rust-rust-test-Linux-Linux-x64-cee1353d-…`
+    # in the old lint job, sdk and the test jobs alike. Two wins: one ~0.6 GB
+    # copy per ref stops being stored, and this job — restore-only through
+    # `save-if: false` below, and never run on `push: main` — can restore one,
+    # warming merge-queue runs and the first run of every new PR.
     # `save-if: false` makes this job a restore-only consumer of that entry,
     # and it is load-bearing rather than tidiness. rust-cache skips its save
     # whenever the restore was an exact key match, so the FIRST job to finish
@@ -174,7 +176,8 @@ jobs:
     # dependency sets than the three test jobs, so letting either win that
     # race would freeze a thin entry that the program-building jobs then
     # restore on every later run — making the critical path slower, which is
-    # the opposite of the point. Only the test jobs write; lint and sdk read.
+    # the opposite of the point. Only the test jobs write; lint-rust and sdk
+    # read.
     #
     # A corollary worth stating, because it has been missed before: while
     # `save-if: false` stands below, every save-side rust-cache input here is
