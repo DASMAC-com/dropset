@@ -126,6 +126,7 @@ export type Submitted = {
 // failure as "rejected" (and prompt the user to retry) than classify a
 // real cancel as a generic wallet error. The DFlow route hands the wallet
 // `sendTransaction`; the eCLOB and vault routes prefer `signTransaction`, with
-// `sendTransaction` as the fallback. Both surface the same rejection wording.
+// `sendTransaction` as the fallback. Either method surfaces the same rejection
+// wording.
 export const CANCEL_PATTERN =
   /user (?:reject|cancel|denied|declined)|reject(?:ed)?(?: by user| the request)|cancelled in wallet|approval denied|transaction (?:was )?(?:declined|cancelled|rejected)/i;

@@ -70,7 +70,8 @@ export type EclobSwapInput = {
   userPublicKey: string;
   walletSession: WalletSession;
   rpc: Rpc;
-  // Called once the transaction is built, as it goes to the wallet.
+  // Called once the swap is built, just before submitInstructions compiles it
+  // and hands it to the wallet.
   onSigning?: () => void;
 };
 

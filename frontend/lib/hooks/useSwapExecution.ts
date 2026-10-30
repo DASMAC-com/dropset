@@ -32,7 +32,9 @@ export type SwapRequest = {
   walletSession: WalletSession;
   rpc: Rpc;
   // The route calls this once the transaction is built, as it goes to the
-  // wallet, so "preparing" covers the build and "signing" only the wallet.
+  // wallet, so "preparing" covers the build and "signing" the hand-off. On
+  // the eCLOB route "signing" also spans the blockhash read inside
+  // submitInstructions, as it does on the vault path.
   onSigning: () => void;
 };
 
