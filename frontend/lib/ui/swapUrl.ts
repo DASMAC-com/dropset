@@ -3,6 +3,7 @@
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import type { IsoCurrencyCode } from "@/lib/data/currencies";
+import type { VaultPin } from "@/lib/data/vaults";
 import { useSwapStoreApi } from "@/lib/store";
 
 // Canonical URL for a swap pair. Ordering is fixed (`from` then `to`) so the
@@ -12,17 +13,51 @@ export const swapHref = (from: string, to: string): string => {
   return `/swap?${params.toString()}`;
 };
 
+// The query key the Vaults tab's pin carries a vault's number (`seq`) under.
+// Keyed on the number, never the leader, so a pinned link survives a leader
+// rotation.
+export const VAULT_PIN_PARAM = "vault";
+
+// The pre-number pin key, a leader pubkey or prefix. Read for one release so
+// an old shared link still resolves to the vault it named (see
+// resolveLegacyLeaderPin); never newly set, only carried forward while
+// unresolved.
+export const LEGACY_LEADER_PARAM = "leader";
+
+// The pin a Vaults URL carries. A `vault` that isn't a decimal integer names
+// no vault, so it is dropped rather than shown in the pin's chip.
+export const vaultPinFromParams = (
+  params: Pick<URLSearchParams, "get">,
+): VaultPin => {
+  const vault = params.get(VAULT_PIN_PARAM) ?? "";
+  return {
+    base: params.get("base") ?? "",
+    quote: params.get("quote") ?? "",
+    vault: /^\d+$/.test(vault) ? vault : "",
+    leader: params.get(LEGACY_LEADER_PARAM) ?? "",
+  };
+};
+
+// The URL writes for a pin: every key, an empty one deleting its param (see
+// replaceUrlParams).
+export const vaultPinParams = (pin: VaultPin): Record<string, string> => ({
+  base: pin.base,
+  quote: pin.quote,
+  [VAULT_PIN_PARAM]: pin.vault,
+  [LEGACY_LEADER_PARAM]: pin.leader,
+});
+
 // Canonical URL for the Vaults tab filtered to a pair (and optionally a single
-// leader). `base`/`quote` are stablecoin symbols; `leader` is a base58 pubkey
-// or prefix. The page reads these to pin its view, and they double as a
-// shareable deep link to a specific vault. Symmetric to `swapHref`.
+// vault, by its number). `base`/`quote` are stablecoin symbols. The page reads
+// these to pin its view, and they double as a shareable deep link to a
+// specific vault. Symmetric to `swapHref`.
 export const vaultsHref = (
   base: string,
   quote: string,
-  leader?: string,
+  vault?: bigint,
 ): string => {
   const params = new URLSearchParams({ base, quote });
-  if (leader) params.set("leader", leader);
+  if (vault !== undefined) params.set(VAULT_PIN_PARAM, vault.toString());
   return `/vaults?${params.toString()}`;
 };
 
@@ -68,11 +103,11 @@ export const replaceUrlParams = (
 export function useGoToVaultsForPair(): (
   base: string,
   quote: string,
-  leader?: string,
+  vault?: bigint,
 ) => void {
   const router = useRouter();
-  return (base, quote, leader) =>
-    router.push(vaultsHref(base, quote, leader) as Route);
+  return (base, quote, vault) =>
+    router.push(vaultsHref(base, quote, vault) as Route);
 }
 
 // Navigate to /swap with a resolved pair. Same-route writes use

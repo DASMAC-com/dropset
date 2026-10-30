@@ -27,6 +27,7 @@ import {
   maxOutsideDepositValue,
   type Vault,
   type VaultMarket,
+  vaultNumberLabel,
   vaultRefPrice,
   vaultReserveRatio,
 } from "@/lib/data/vaults";
@@ -838,13 +839,12 @@ export function VaultActionDialog({
           </div>
 
           <div className="flex flex-col gap-4 p-5">
-            {/* The vault's name: one line, as text (React escapes it), never
-                a link. Renders nothing while `name` is null (unset). */}
-            {vault.name && (
-              <p className="truncate font-medium text-foreground text-sm">
-                {vault.name}
-              </p>
-            )}
+            {/* The vault's identity: its number, then its name when set — one
+                line, as text (React escapes the name), never a link. */}
+            <p className="flex items-baseline gap-2 font-medium text-foreground text-sm">
+              <span className="shrink-0">{vaultNumberLabel(vault)}</span>
+              {vault.name && <span className="truncate">{vault.name}</span>}
+            </p>
             <div className="flex items-center gap-2 text-muted-fg text-xs">
               <span>Leader</span>
               <span className="font-mono text-foreground">

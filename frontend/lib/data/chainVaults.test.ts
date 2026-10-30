@@ -6,7 +6,15 @@ import {
 } from "@dropset/sdk";
 import { address } from "@solana/kit";
 import { describe, expect, it } from "vitest";
-import { VAULT_SEQ_PARAM, vaultLinkHref } from "../ui/swapUrl";
+import {
+  LEGACY_LEADER_PARAM,
+  VAULT_PIN_PARAM,
+  VAULT_SEQ_PARAM,
+  vaultLinkHref,
+  vaultPinFromParams,
+  vaultPinParams,
+  vaultsHref,
+} from "../ui/swapUrl";
 import {
   chainPosition,
   chainVault,
@@ -18,9 +26,13 @@ import {
   contributeClosedReason,
   depositClosedReason,
   findVaultBySeq,
+  isVaultPinned,
+  resolveLegacyLeaderPin,
   resolveVaultMarket,
   tokenUsdPrice,
   vaultLabel,
+  vaultNumberLabel,
+  vaultPinMatches,
   vaultRefPrice,
 } from "./vaults";
 
@@ -78,7 +90,7 @@ describe("chainVault", () => {
     ).toBe("GBP Basis");
   });
 
-  it("labels a vault by its name, else #seq", () => {
+  it("labels a vault by its name, else its vault number", () => {
     const named = chainVault(
       summary({ name: "GBP Basis" }),
       MARKET,
@@ -86,9 +98,10 @@ describe("chainVault", () => {
       "USDC",
     );
     expect(vaultLabel(named)).toBe("GBP Basis");
+    expect(vaultNumberLabel(named)).toBe("Vault #5");
     // The per-market seq (5), not the sector index (2).
     const unnamed = chainVault(summary(), MARKET, "TGBP", "USDC");
-    expect(vaultLabel(unnamed)).toBe("#5");
+    expect(vaultLabel(unnamed)).toBe("Vault #5");
   });
 
   it("values TVL at the vault's own reference price", () => {
@@ -325,6 +338,115 @@ describe("the public vault link", () => {
     expect(findVaultBySeq(markets, "TGBP", "USDC", "6")).toBeNull();
     expect(findVaultBySeq(markets, "TGBP", "USDC", "5x")).toBeNull();
     expect(findVaultBySeq(markets, "TGBP", "USDC", "")).toBeNull();
+  });
+});
+
+describe("the vault pin", () => {
+  const OTHER = address("Vote111111111111111111111111111111111111111");
+  const live = chainVault(summary(), MARKET, "TGBP", "USDC");
+  const markets = [
+    resolveVaultMarket(MARKET, "TGBP", "USDC", [
+      chainVault(summary({ seq: 4n, leader: OTHER }), MARKET, "TGBP", "USDC"),
+      live,
+    ]),
+  ];
+
+  it("round-trips the pair and vault number through the URL", () => {
+    const params = new URL(
+      vaultsHref("TGBP", "USDC", 5n),
+      "https://dropset.example",
+    ).searchParams;
+    expect(params.get("base")).toBe("TGBP");
+    expect(params.get("quote")).toBe("USDC");
+    expect(params.get(VAULT_PIN_PARAM)).toBe("5");
+    // Keyed on the number alone: no leader is written.
+    expect(params.has(LEGACY_LEADER_PARAM)).toBe(false);
+    expect(
+      new URL(
+        vaultsHref("TGBP", "USDC"),
+        "https://dropset.example",
+      ).searchParams.has(VAULT_PIN_PARAM),
+    ).toBe(false);
+  });
+
+  it("reads the link back to a pin matching only the vault it names", () => {
+    const market = markets[0];
+    if (!market) throw new Error("fixture market missing");
+    const pin = vaultPinFromParams(
+      new URL(vaultsHref("TGBP", "USDC", 5n), "https://dropset.example")
+        .searchParams,
+    );
+    expect(pin).toEqual({
+      base: "TGBP",
+      quote: "USDC",
+      vault: "5",
+      leader: "",
+    });
+    expect(
+      market.vaults.filter((v) => vaultPinMatches(pin, market, v)),
+    ).toEqual([live]);
+    expect(market.vaults.filter((v) => isVaultPinned(pin, market, v))).toEqual([
+      live,
+    ]);
+    // The pin's own writes reproduce the link's params.
+    expect(vaultPinParams(pin)).toEqual({
+      base: "TGBP",
+      quote: "USDC",
+      [VAULT_PIN_PARAM]: "5",
+      [LEGACY_LEADER_PARAM]: "",
+    });
+    // Another market's vault #5 is not this one.
+    expect(vaultPinMatches(pin, { base: "USDC", quote: "TGBP" }, live)).toBe(
+      false,
+    );
+  });
+
+  it("drops a vault number that isn't a decimal integer", () => {
+    for (const raw of ["05x", "5.0", " 5", "-1", "Vault #5"]) {
+      const params = new URLSearchParams({
+        base: "TGBP",
+        [VAULT_PIN_PARAM]: raw,
+      });
+      expect(vaultPinFromParams(params).vault).toBe("");
+    }
+  });
+
+  it("keeps an unresolved legacy leader as a prefix filter", () => {
+    const market = markets[0];
+    if (!market) throw new Error("fixture market missing");
+    const pin = vaultPinFromParams(
+      new URLSearchParams({
+        base: "TGBP",
+        quote: "USDC",
+        [LEGACY_LEADER_PARAM]: "vote",
+      }),
+    );
+    expect(pin.vault).toBe("");
+    expect(
+      market.vaults.filter((v) => vaultPinMatches(pin, market, v)),
+    ).toHaveLength(1);
+  });
+
+  it("resolves an old leader-keyed link to the vault it named", () => {
+    expect(resolveLegacyLeaderPin(markets, "TGBP", "USDC", LEADER)).toBe(5n);
+    // A case-insensitive prefix, as the old filter matched.
+    expect(resolveLegacyLeaderPin(markets, "TGBP", "USDC", "so111")).toBe(5n);
+    expect(resolveLegacyLeaderPin(markets, "TGBP", "USDC", OTHER)).toBe(4n);
+  });
+
+  it("resolves nothing for a rotated leader, another pair, or an ambiguous prefix", () => {
+    const rotated = address("Stake11111111111111111111111111111111111111");
+    expect(resolveLegacyLeaderPin(markets, "TGBP", "USDC", rotated)).toBeNull();
+    expect(resolveLegacyLeaderPin(markets, "USDC", "TGBP", LEADER)).toBeNull();
+    expect(resolveLegacyLeaderPin(markets, "TGBP", "USDC", "")).toBeNull();
+    // One leader leading two vaults in the market names neither.
+    const twice = [
+      resolveVaultMarket(MARKET, "TGBP", "USDC", [
+        chainVault(summary({ seq: 4n }), MARKET, "TGBP", "USDC"),
+        live,
+      ]),
+    ];
+    expect(resolveLegacyLeaderPin(twice, "TGBP", "USDC", LEADER)).toBeNull();
   });
 });
 
