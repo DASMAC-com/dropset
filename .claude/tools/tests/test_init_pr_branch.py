@@ -219,6 +219,55 @@ class NodeModulesState(unittest.TestCase):
         self.assertEqual(ipb.node_modules_state(str(self.root)), "absent")
 
 
+class PnpmCommand(unittest.TestCase):
+    """A missing ``pnpm`` falls back to ``npx`` at the pinned version."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        (self.root / "frontend").mkdir()
+
+    def _pin(self, body: str) -> None:
+        (self.root / "frontend" / "package.json").write_text(body, encoding="utf-8")
+
+    def _command(self, *on_path: str):
+        return ipb.pnpm_command(
+            str(self.root), which=lambda name: name if name in on_path else None
+        )
+
+    def test_pnpm_on_path_is_used_as_is(self):
+        self.assertEqual(self._command("pnpm", "npx"), "pnpm")
+
+    def test_pnpm_absent_falls_back_to_npx_at_the_pin(self):
+        self._pin('{"packageManager": "pnpm@10.30.3"}')
+        self.assertEqual(self._command("npx"), "npx --yes pnpm@10.30.3")
+
+    def test_a_corepack_hash_suffix_is_dropped(self):
+        self._pin('{"packageManager": "pnpm@10.30.3+sha512.abc"}')
+        self.assertEqual(self._command("npx"), "npx --yes pnpm@10.30.3")
+
+    def test_no_package_json_is_no_command(self):
+        self.assertIsNone(self._command("npx"))
+
+    def test_no_npx_is_no_command(self):
+        self._pin('{"packageManager": "pnpm@10.30.3"}')
+        self.assertIsNone(self._command())
+
+    def test_no_pnpm_pin_is_no_command(self):
+        # An unpinned `npx pnpm` would fetch whatever is latest, which is not
+        # the version the lockfile was written with.
+        self._pin('{"packageManager": "yarn@4.0.0"}')
+        self.assertIsNone(self._command("npx"))
+        self._pin("not json")
+        self.assertIsNone(self._command("npx"))
+
+    def test_the_live_pin_resolves(self):
+        root = Path(__file__).resolve().parents[3]
+        command = ipb.pnpm_command(str(root), which=lambda n: n == "npx" or None)
+        self.assertRegex(command, r"\Anpx --yes pnpm@\d+\.\d+\.\d+\Z")
+
+
 class ProgramSoState(unittest.TestCase):
     """The built program artifact, measured the same way node_modules is.
 

@@ -27,6 +27,18 @@ manual `grep -nE '^.{81,}$'`: the manual grep just re-buys a result
 `docs/conventions/context-economy.md` → "Don't hand-run a check a hook
 already owns").
 
+**Rewrap the whole paragraph in one `Edit`, never the flagged line.**
+Neither markdownlint nor mdformat rewraps a long line, so a manual
+split of one line pushes the overflow onto the next, and each step
+costs another lint run. Measured: one paragraph took three runs, and a
+docs-heavy session failed MD013 on nine of fourteen scoped runs, in
+three- and four-step cascades. So an edit that lengthens or shortens a
+line in a wrapped paragraph rewraps it from the edit point to its end,
+in the same `Edit`. Select whole lines: an `old_string` that ends
+mid-line glues the rest of that line onto the replacement and builds
+the very overlong line the fix was for. The same holds for yamllint's
+line length.
+
 **Never place a line wrap inside an inline code span.** `mdformat`
 rejoins a line break that falls between backticks, and the rejoined
 line is then long enough for markdownlint to fail it on MD013 — so the

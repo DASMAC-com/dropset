@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word pygrep
 """``make lint`` file-set resolver — run pre-commit over every file in the
 working tree, **including the ones git doesn't track yet**.
 
@@ -62,17 +63,24 @@ check needs no hand-spelled ``pre-commit run --config … --files …`` (whose
 ``--config`` is mandatory and whose default name fails with
 ``InvalidConfigError``).
 
-Two failure shapes are handled here rather than in prose:
+Three failure shapes are handled here rather than in prose:
 
 * **A fix-then-fail hook** (``mdformat``, ``ruff format``, ``biome``, the
   dictionary sorter …) rewrites a file and fails by design. When the run fails
   and pre-commit says a hook modified files, the tool re-runs **once** and
   reports only that second result — a second failure is the real one.
-* **A missing ``biome`` / ``tsc``.** Both run through the frontend's
-  ``node_modules``; when a JS/TS/CSS path is in the set and the binary is
-  absent, the tool installs the frontend dependencies first. If the install
-  fails, those hooks are skipped and reported **unverifiable** — CI runs them —
-  so the remaining hooks still return a verdict.
+* **A missing ``biome`` / ``tsc`` / ``tsc-sdk``.** All three run through the
+  pnpm workspace's ``node_modules``; when a matching path is in the set and the
+  binary is absent, the tool installs the dependencies first. If the install
+  fails, or ``pnpm`` itself is not on PATH, those hooks are skipped and
+  reported **unverifiable** — CI runs them — so the remaining hooks still
+  return a verdict.
+* **A hook environment that will not install** (cfn-lint under a Python it
+  does not support, say). pre-commit installs every environment before running
+  any hook, so one broken install aborts the whole run with no verdict at all.
+  The tool reads which repo it was installing, skips that repo's hooks,
+  re-runs, and reports them **unverifiable** — one run instead of a hook-by-hook
+  sweep.
 
 Stdlib only. This is a Python skill-tool under ``.claude/tools/`` — deliberately
 **not** a Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").
@@ -82,6 +90,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import shutil
 import subprocess
 import sys
 
@@ -126,14 +136,47 @@ _LS_OTHERS = [
 # pre-commit's own line for a hook that rewrote a file.
 MODIFIED_MARKER = "files were modified by this hook"
 
-# The hooks that run through `frontend/node_modules`, each with the suffixes
-# that select it (its `types_or`, plus the module variants).
-FRONTEND_HOOKS = {
-    "biome": (".css", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"),
-    "tsc": (".ts", ".tsx"),
+# The hooks that run through the pnpm workspace's `node_modules`, each with the
+# binary it needs (repo-relative), the suffixes that select it (its `types_or`,
+# plus the module variants) and the path prefix its `files:` pattern adds.
+PNPM_HOOKS = {
+    "biome": (
+        "frontend/node_modules/.bin/biome",
+        (".css", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"),
+        "",
+    ),
+    "tsc": ("frontend/node_modules/.bin/tsc", (".ts", ".tsx"), ""),
+    "tsc-sdk": ("sdk/ts/node_modules/.bin/tsc", (".ts", ".tsx"), "sdk/ts/"),
 }
 
+# One install covers every package: the workspace root is the repo root, so a
+# `pnpm install` inside `frontend/` installs `sdk/ts/` too.
 _FRONTEND_INSTALL = ["pnpm", "--dir", "frontend", "install"]
+
+# pre-commit's lines for a hook environment that would not install. It installs
+# every selected hook's environment before running any hook, so one broken
+# environment aborts the whole run with no hook reporting; the last
+# "Installing environment for" line names the repo whose install failed.
+_ENV_INSTALL_PREFIX = "[INFO] Installing environment for "
+_ENV_FAILURE_MARKER = "An unexpected error has occurred: CalledProcessError"
+
+# A hook result line (`cspell......Passed`). One between the last install line
+# and the error means the hooks had started, so the error is not an install's.
+_HOOK_RESULT_RE = re.compile(r"\.{4,}")
+
+# `PRE_COMMIT_COLOR=always` wraps the `[INFO]` prefix in escape codes.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# The languages whose hooks need no environment of their own (`unsupported`
+# and `unsupported_script` are pre-commit 4's names for system and script). A
+# `local` repo's environment failure can only be one of its other hooks.
+_NO_ENV_LANGUAGES = frozenset(
+    {"system", "unsupported", "pygrep", "script", "unsupported_script", "fail"}
+)
+
+_HOOK_ID_RE = re.compile(r"^\s*(?:- )?id: '([^']+)'")
+_LANGUAGE_RE = re.compile(r"^\s*(?:- )?language: '([^']+)'")
+_REPO_RE = re.compile(r"^  repo: '([^']+)'")
 
 
 def repo_root() -> str:
@@ -259,36 +302,58 @@ def changed_files(root: str, base_ref: str = DEFAULT_BASE) -> list[str]:
     return existing(parse_ls_files(tracked + "\0" + untracked), root)
 
 
+def selected_pnpm_hooks(hook_args: list[str], files: list[str]) -> list[str]:
+    """The pnpm hooks this run would select, whether or not they can run.
+
+    Empty when no matching path is in the set, or when ``hook_args`` names a
+    hook that is not a pnpm one.
+    """
+    return [
+        hook
+        for hook, (_, suffixes, prefix) in PNPM_HOOKS.items()
+        if (not hook_args or hook in hook_args)
+        and any(f.startswith(prefix) and f.endswith(suffixes) for f in files)
+    ]
+
+
 def missing_frontend_hooks(
     root: str, hook_args: list[str], files: list[str]
 ) -> list[str]:
-    """The frontend hooks this run would select whose binary is absent.
-
-    Empty when no JS/TS/CSS path is in the set, or when ``hook_args`` names a
-    hook that is not a frontend one.
-    """
-    selected = [
-        hook
-        for hook, suffixes in FRONTEND_HOOKS.items()
-        if (not hook_args or hook in hook_args)
-        and any(f.endswith(suffixes) for f in files)
+    """The selected pnpm hooks whose binary is absent."""
+    return [
+        h
+        for h in selected_pnpm_hooks(hook_args, files)
+        if not os.path.exists(os.path.join(root, PNPM_HOOKS[h][0]))
     ]
-    bin_dir = os.path.join(root, "frontend", "node_modules", ".bin")
-    return [h for h in selected if not os.path.exists(os.path.join(bin_dir, h))]
 
 
 def ensure_frontend_hooks(
     root: str, hook_args: list[str], files: list[str]
-) -> list[str]:
+) -> tuple[list[str], str]:
     """Install the frontend dependencies if a selected hook's binary is absent.
 
-    Returns the hooks that still cannot run afterwards — the ones to skip and report
-    unverifiable. The install's output is captured: on success it is noise, and
-    on failure its last lines are all the diagnosis the caller needs.
+    Returns the hooks that still cannot run afterwards — the ones to skip and
+    report unverifiable — and why. The install's output is captured: on
+    success it is noise, and on failure its last lines are all the diagnosis
+    the caller needs.
+
+    A missing ``pnpm`` executable is checked first, and is unverifiable for
+    every selected hook even when ``node_modules`` is present: each hook's
+    entry is ``pnpm … exec``, so it would fail as "Executable `pnpm` not
+    found", a plain **Failed** that has to be inspected and dismissed every
+    run.
     """
+    if shutil.which("pnpm") is None:
+        selected = selected_pnpm_hooks(hook_args, files)
+        if selected:
+            print(
+                f"lint-paths: `pnpm` is not on PATH — skipping {', '.join(selected)}",
+                file=sys.stderr,
+            )
+        return selected, "pnpm not on PATH"
     missing = missing_frontend_hooks(root, hook_args, files)
     if not missing:
-        return []
+        return [], ""
     print(
         f"lint-paths: {', '.join(missing)} not installed — "
         f"running `{' '.join(_FRONTEND_INSTALL)}`",
@@ -305,15 +370,78 @@ def ensure_frontend_hooks(
     if failed:
         for line in tail:
             print(f"lint-paths:   {line}", file=sys.stderr)
-    return missing_frontend_hooks(root, hook_args, files)
+    return missing_frontend_hooks(root, hook_args, files), "frontend install failed"
+
+
+def env_hooks_by_repo(config_text: str) -> dict[str, list[str]]:
+    """Map each repo in a pre-commit config to the hook ids that need its
+    environment.
+
+    A line scan, not a YAML parse (the tool is stdlib-only). It leans on the
+    block style the repo's strict ``yamllint`` enforces on the config: a
+    ``- hooks:`` list at column 0, each hook item opened by ``  - ``, and the
+    block's ``repo:`` key after its hooks (keys are alphabetical). ``local``
+    repos accumulate, keeping only the hooks whose language builds an
+    environment.
+    """
+    repos: dict[str, list[str]] = {}
+    hooks: list[dict[str, str]] = []
+    for line in config_text.splitlines():
+        if line.startswith("- hooks:"):
+            hooks = []
+            continue
+        if line.startswith("  - "):
+            hooks.append({})
+        if not line.startswith(("  - ", "    ")) or not hooks:
+            if m := _REPO_RE.match(line):
+                repo = m.group(1)
+                repos.setdefault(repo, []).extend(
+                    h["id"]
+                    for h in hooks
+                    if "id" in h
+                    and (repo != "local" or h.get("language") not in _NO_ENV_LANGUAGES)
+                )
+            continue
+        if line.startswith("      "):
+            continue  # a nested value, never a hook's own key
+        if m := _HOOK_ID_RE.match(line):
+            hooks[-1]["id"] = m.group(1)
+        elif m := _LANGUAGE_RE.match(line):
+            hooks[-1]["language"] = m.group(1)
+    return repos
+
+
+def broken_env_repo(output: list[str]) -> str | None:
+    """The repo whose environment install aborted this run, if one did.
+
+    The last install line names it only when the error follows that line
+    with no hook result between them: otherwise every environment installed
+    and the error came from somewhere else, which stays a plain failure.
+    """
+    lines = [_ANSI_RE.sub("", line).strip() for line in output]
+    marker = next(
+        (i for i, line in enumerate(lines) if _ENV_FAILURE_MARKER in line), None
+    )
+    installs = [
+        i
+        for i, line in enumerate(lines[:marker])
+        if line.startswith(_ENV_INSTALL_PREFIX)
+    ]
+    if marker is None or not installs:
+        return None
+    if any(_HOOK_RESULT_RE.search(line) for line in lines[installs[-1] + 1 : marker]):
+        return None
+    return lines[installs[-1]][len(_ENV_INSTALL_PREFIX) :].rstrip(".")
 
 
 def run_pre_commit(
     cmd: list[str], root: str, env: dict | None = None
-) -> tuple[int, bool]:
+) -> tuple[int, bool, str | None]:
     """Run pre-commit, mirroring its output, and say whether a hook rewrote a
-    file. Returns ``(exit code, modified)``."""
+    file and which repo's environment failed to install. Returns
+    ``(exit code, modified, broken env repo or None)``."""
     modified = False
+    output: list[str] = []
     with subprocess.Popen(
         cmd,
         cwd=root,
@@ -326,20 +454,67 @@ def run_pre_commit(
         for line in proc.stdout:
             sys.stdout.write(line)
             modified = modified or MODIFIED_MARKER in line
+            output.append(line)
     sys.stdout.flush()
-    return proc.returncode, modified
+    return proc.returncode, modified, broken_env_repo(output)
+
+
+def _skip_env(unverifiable: dict[str, list[str]]) -> dict | None:
+    """The environment that adds every unverifiable hook to ``SKIP``."""
+    hooks = [h for hs in unverifiable.values() for h in hs]
+    if not hooks:
+        return None
+    skip = [s for s in os.environ.get("SKIP", "").split(",") if s]
+    return {**os.environ, "SKIP": ",".join(skip + hooks)}
+
+
+def _config_text(root: str, config: str) -> str:
+    try:
+        with open(os.path.join(root, config), encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+ENV_FAILURE_REASON = "its pre-commit environment failed to install"
 
 
 def lint(config: str, hook_args: list[str], files: list[str], root: str) -> int:
-    """Run the hooks over ``files``, absorbing the two by-design failures."""
-    env = None
-    unverifiable = ensure_frontend_hooks(root, hook_args, files)
-    if unverifiable:
-        skip = [s for s in os.environ.get("SKIP", "").split(",") if s]
-        env = {**os.environ, "SKIP": ",".join(skip + unverifiable)}
+    """Run the hooks over ``files``, absorbing the by-design failures."""
+    # Reason -> the hooks skipped for it, in the order they were found.
+    unverifiable: dict[str, list[str]] = {}
+    missing, reason = ensure_frontend_hooks(root, hook_args, files)
+    if missing:
+        unverifiable[reason] = missing
     cmd = pre_commit_cmd(config, hook_args, files)
 
-    code, modified = run_pre_commit(cmd, root, env)
+    # A broken hook environment aborts the run before any hook reports, so
+    # skip that repo's hooks and run again: one run then replaces a per-hook
+    # sweep. Bounded, since each pass skips at least one more hook; a failure
+    # it cannot attribute to a repo stands as the verdict.
+    repos: dict[str, list[str]] | None = None
+    while True:
+        env = _skip_env(unverifiable)
+        code, modified, broken = run_pre_commit(cmd, root, env)
+        if broken is None:
+            break
+        if repos is None:
+            repos = env_hooks_by_repo(_config_text(root, config))
+        skipped = {h for hs in unverifiable.values() for h in hs}
+        new = [h for h in repos.get(broken, []) if h not in skipped]
+        # A caller that named hooks skips only those; pre-commit installs
+        # nothing else. Every `local` environment reports one `src`, so a
+        # broken one there skips all of that repo's environment hooks.
+        new = [h for h in new if h in hook_args] or new
+        if not new:
+            break
+        print(
+            f"lint-paths: the {broken} environment failed to install — "
+            f"re-running without {', '.join(new)}",
+            file=sys.stderr,
+        )
+        unverifiable.setdefault(ENV_FAILURE_REASON, []).extend(new)
+
     if code != 0 and modified:
         # The same hook set again — on a full sweep, a second full sweep; the
         # fix-then-fail shape is why, and it is one sweep, never a loop.
@@ -348,7 +523,7 @@ def lint(config: str, hook_args: list[str], files: list[str], root: str) -> int:
             "failure is real",
             file=sys.stderr,
         )
-        code, _ = run_pre_commit(cmd, root, env)
+        code, _, _ = run_pre_commit(cmd, root, env)
         # The rewrite is in the working tree, not a commit: CI lints what is
         # committed, so a pass here still leaves the fix to stage and commit.
         print(
@@ -357,10 +532,10 @@ def lint(config: str, hook_args: list[str], files: list[str], root: str) -> int:
             file=sys.stderr,
         )
 
-    if unverifiable:
+    for reason, hooks in unverifiable.items():
         print(
-            f"lint-paths: UNVERIFIABLE locally: {', '.join(unverifiable)} "
-            "(frontend install failed) — CI runs them; do not gate on them",
+            f"lint-paths: UNVERIFIABLE locally: {', '.join(hooks)} "
+            f"({reason}) — CI runs them; do not gate on them",
             file=sys.stderr,
         )
     return code
