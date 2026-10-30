@@ -8,8 +8,9 @@ the ``Session pending`` milestone on the operator's filing yes; this tool
 drives the review that follows, so the language and the writes live in one
 place rather than in each consumer skill.
 
-Five subcommands, every one taking the session's own task ids (``ENG-###``,
-space- or comma-separated) except ``list``:
+Five subcommands, every one but ``list`` naming the session's own tasks —
+as ids (``--ids``, ``ENG-###``, space- or comma-separated) or as the
+sub-issues of its governing issue (``--parent``, see "The parent switch"):
 
 * ``list`` — every open issue under ``Session pending``, one compact line
   each. The milestone is shared by every seat session, so this is the
@@ -106,9 +107,11 @@ names the set wherever ``--ids`` does — ``ask``, ``review``, ``approve`` and
 ``gate`` — and narrows ``list`` to it: a session that died mid-review resumes
 from its issue number alone. ``review`` and ``approve`` take the sub-issues
 still staged (``approve --parent`` approves every one not given to
-``--cancel``); ``gate`` judges them all. A parent with no sub-issues is
-refused, never a vacuous ``CLEAR``, and ``--parent`` is refused on the inbox
-pool, which approves by id.
+``--cancel``, reports one an earlier run moved as ``ALREADY``, names any
+other as ``SKIPPED``, and refuses a ``--cancel`` id outside the set); ``gate``
+judges them all. A parent with no sub-issues is refused, never a vacuous
+``CLEAR``, and ``--parent`` is refused on the inbox pool, which approves by
+id.
 
 **The write is the operator's, executed.** ``approve`` runs only on the
 operator's final answer in the session's own tab (ruling 12's carve-out); it
@@ -881,8 +884,10 @@ def run(argv: list[str]) -> int:
         raise RatifyError(
             "--operator rides the curator's inbox batch — pass --pool inbox"
         )
-    parent = getattr(args, "parent", None)
-    if parent and pool == "inbox":
+    # `is not None` throughout, never truthiness: `--parent ""` must reach
+    # `fetch_children`'s refusal, not fall back to an empty `--ids` set.
+    parent = args.parent
+    if parent is not None and pool == "inbox":
         raise RatifyError(
             "--parent names a seat session's staged set — the inbox is reviewed "
             "by id, one task at a time"
@@ -892,12 +897,12 @@ def run(argv: list[str]) -> int:
 
     def named() -> list[dict]:
         """The set the command names: the ids, or the parent's sub-issues."""
-        if parent:
+        if parent is not None:
             return fetch_children(key, project, parent)
         return resolve_all(key, project, parse_ids(args.ids))
 
     if args.cmd == "list":
-        if parent:
+        if parent is not None:
             members = [
                 i for i in fetch_children(key, project, parent) if in_pool(i, pool)
             ]
@@ -972,7 +977,7 @@ def run(argv: list[str]) -> int:
 
     if args.cmd == "review":
         issues = named()
-        if parent:
+        if parent is not None:
             # A parent names the whole set, already-moved tasks included; only
             # the ones still staged have anything to review.
             issues = [i for i in issues if in_pool(i, pool)] or issues
@@ -1012,20 +1017,33 @@ def run(argv: list[str]) -> int:
                 "--title retitles the one task an inbox approve moves — "
                 "pass it with --pool inbox and exactly one --ids"
             )
-        if parent:
+        if parent is not None:
+            children = fetch_children(key, project, parent)
+            stray = sorted(set(cancel_ids) - {i["identifier"] for i in children})
+            if stray:
+                raise RatifyError(
+                    "refusing the batch, nothing written — --cancel names ids "
+                    f"that are not sub-issues of {parent.upper()}: {', '.join(stray)}"
+                )
+            cancel = [i for i in children if i["identifier"] in cancel_ids]
             # Every staged sub-issue not rejected is approved — the final
-            # answer covers the whole set. Already-moved ones drop out here,
-            # so the same command re-runs cleanly.
-            approve = [
-                i
-                for i in fetch_children(key, project, parent)
-                if in_pool(i, pool) and i["identifier"] not in cancel_ids
-            ]
+            # answer covers the whole set. One an earlier run already moved
+            # rides along so `plan_approval` reports it ALREADY and the same
+            # command re-runs cleanly; any other child is named, never
+            # silently dropped.
+            approve = []
+            for issue in children:
+                if issue["identifier"] in cancel_ids:
+                    continue
+                if in_pool(issue, pool) or already_moved(issue, cancel=False):
+                    approve.append(issue)
+                else:
+                    print(f"SKIPPED {issue['identifier']} | not {POOL_WHERE[pool]}")
         else:
             approve = resolve_all(key, project, approve_ids) if approve_ids else []
-        if not approve and not cancel_ids:
+            cancel = resolve_all(key, project, cancel_ids) if cancel_ids else []
+        if not approve and not cancel:
             raise RatifyError("nothing to approve or cancel")
-        cancel = resolve_all(key, project, cancel_ids) if cancel_ids else []
         _, held = review_lines(key, [i for i in approve if in_pool(i, pool)], pool)
         updates, already = plan_approval(approve, cancel, held, pool)
         if args.title is not None:
@@ -1048,7 +1066,9 @@ def run(argv: list[str]) -> int:
         print(f"OPEN — still under {MILESTONE}: {', '.join(still)}")
         return 1
     # A parent's set was never typed by the caller, so it is named.
-    named_set = f" ({', '.join(i['identifier'] for i in issues)})" if parent else ""
+    named_set = (
+        f" ({', '.join(i['identifier'] for i in issues)})" if parent is not None else ""
+    )
     print(f"CLEAR — none of {len(issues)} task(s){named_set} is under {MILESTONE}")
     return 0
 

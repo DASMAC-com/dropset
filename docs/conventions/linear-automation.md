@@ -650,12 +650,13 @@ architect spin-off takes no parent: it is the future parent.
 
 The governing issue closes **Done with its sub-issues still open**,
 which holds because the Engineering team's `autoCloseParentIssues` and
-`autoCloseChildIssues` settings are both unset, so off (read from the
-GraphQL `Team` type, 2026-10-29). Turning on the child setting would
-close every open task when its governing issue goes Done. Sub-issues
-are ordinary members of every pool: the board tools' hand-written
-filters carry no parent clause, and a Backlog child is returned by the
-same read the inbox uses (checked on 2026-10-29 against three Backlog
+`autoCloseChildIssues` settings both read `null` — unset, and Linear
+treats an unset auto-close as off (read from the GraphQL `Team` type,
+2026-10-29). Turning on the child setting would close every open task
+when its governing issue goes Done. Sub-issues are ordinary members of
+every pool: the pool reads' hand-written filters carry no parent clause
+(only `--parent` adds one), and a Backlog child is returned by the same
+read the inbox uses (checked on 2026-10-29 against three Backlog
 sub-issues, which only their milestones kept out of the pool).
 
 **Every bootstrap says each parked count out loud.** Parked must be

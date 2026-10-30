@@ -322,6 +322,58 @@ class ParentRunTests(_RunBase):
             ],
         )
 
+    def test_approve_re_runs_cleanly_once_every_child_has_moved(self):
+        todo = dict(milestone=None, state="Todo", state_type="unstarted")
+        fake = FakeLinear(
+            [_issue(1, **todo), _issue(2, **todo)], parents={"ENG-9": [1, 2]}
+        )
+        code, out = self._run(fake, ["approve", "--parent", "ENG-9"])
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.writes, [])
+        self.assertIn("ALREADY ENG-1", out)
+        self.assertIn("ALREADY ENG-2", out)
+
+    def test_approve_names_a_child_that_is_neither_staged_nor_moved(self):
+        fake = FakeLinear(
+            [_issue(2), _issue(4, milestone=None)], parents={"ENG-9": [2, 4]}
+        )
+        code, out = self._run(fake, ["approve", "--parent", "ENG-9"])
+        self.assertEqual(code, 0)
+        self.assertIn("SKIPPED ENG-4", out)
+        self.assertEqual([w[0] for w in fake.writes], ["uuid-2"])
+
+    def test_approve_refuses_a_cancel_outside_the_set(self):
+        fake = self._set()
+        with self.assertRaisesRegex(RatifyError, "not sub-issues of ENG-9: ENG-7"):
+            self._run(fake, ["approve", "--parent", "ENG-9", "--cancel", "ENG-7"])
+        self.assertEqual(fake.writes, [])
+
+    def test_an_empty_parent_is_refused_not_read_as_no_ids(self):
+        with self.assertRaisesRegex(RatifyError, "wants an ENG-### identifier"):
+            self._run(self._set(), ["gate", "--parent", ""])
+
+    def test_ask_builds_from_the_staged_sub_issues(self):
+        _, out = self._run(self._set(), ["ask", "--parent", "ENG-9"])
+        payload = json.loads(out)
+        self.assertEqual(payload["skipped"], ["ENG-1"])
+        self.assertIn("ENG-2", out)
+        self.assertIn("ENG-3", out)
+
+    def test_review_falls_back_to_the_whole_set_once_none_is_staged(self):
+        todo = dict(milestone=None, state="Todo", state_type="unstarted")
+        fake = FakeLinear([_issue(1, **todo)], parents={"ENG-9": [1]})
+        _, out = self._run(fake, ["review", "--parent", "ENG-9"])
+        self.assertEqual(out.strip(), "NOT STAGED ENG-1 | Task 1")
+
+    def test_a_clear_gate_names_the_set_it_resolved(self):
+        fake = FakeLinear(
+            [_issue(1, milestone=None), _issue(2, state_type="canceled")],
+            parents={"ENG-9": [1, 2]},
+        )
+        code, out = self._run(fake, ["gate", "--parent", "ENG-9"])
+        self.assertEqual(code, 0)
+        self.assertIn("(ENG-1, ENG-2)", out)
+
     def test_an_unknown_or_childless_parent_is_refused(self):
         with self.assertRaisesRegex(RatifyError, "no such issue"):
             self._run(self._set(), ["gate", "--parent", "ENG-8"])

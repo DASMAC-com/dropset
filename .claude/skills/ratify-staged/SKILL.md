@@ -62,7 +62,7 @@ agreed spec verbatim, task list included, as one comment on the
 
 ```sh
 python3 .claude/tools/linear_patch.py comment <governing ENG-###> \
-  --body <spec file>
+  --body <spec file, or the spec written to the scratchpad>
 ```
 
 When the design was written into the governing issue's body itself,
@@ -94,7 +94,8 @@ of `--ids`, naming the governing issue's sub-issues as the set: a
 session resumed after dying mid-review needs only that number.
 `review` and `approve` take the children still staged — `approve`
 approves every one not passed to `--cancel` — and `gate` judges them
-all and names the set it resolved.
+all and names the set it resolved. `--parent` excludes `--ids`, and a
+parent with no sub-issues is refused rather than read as a clear gate.
 
 Build the ask from the filed ids — never compose it by hand:
 
