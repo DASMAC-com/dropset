@@ -17,8 +17,9 @@ space- or comma-separated) except ``list``:
 * ``ask --ids …`` — the ``AskUserQuestion`` payload for the review ask: one
   checkbox per staged task, never grouped, at most four per question and four
   questions per call (so sixteen tasks fit one ask; more spill into further
-  calls). Each description leads with the task's priority as filed, so the
-  operator reviews the filer's proposal in the same tick. Printed as JSON,
+  calls). Each description leads with the task's current priority — for a
+  freshly staged task, the filer's proposal — so the operator reviews it in
+  the same tick. Printed as JSON,
   ``{"calls": [{"questions": [...]}, ...]}``.
 * ``review --ids …`` — for the tasks the operator ticked: each one is
   ``APPROVED`` (no open comment thread — the tick is the approval) or
@@ -28,7 +29,7 @@ space- or comma-separated) except ``list``:
   end: every approved task loses the milestone and moves to Todo, every
   rejected one is canceled. Refuses the whole batch, writing nothing, while
   any approved task still holds an open thread or is not staged. Priority is
-  never written here: the filer set it in the creating call. A task an
+  never written here; it stands as already set on the issue. A task an
   earlier, partly failed run already moved reports ``ALREADY`` and is
   skipped, so the same command re-runs cleanly.
 * ``gate --ids …`` — the close gate: exits 1, naming them, while any of the
@@ -410,7 +411,7 @@ def _priority_target(proposal: dict) -> str | None:
         return None
     change = proposal["priority"]
     if not isinstance(change, dict) or "id" not in change:
-        raise RatifyError(f"priority {change!r} needs an id and a target 'to'")
+        raise RatifyError(f"priority {change!r} needs an object with an id")
     return _issue_id(change["id"])[0]
 
 
@@ -543,7 +544,8 @@ def build_ask(
         {
             "label": issue["identifier"],
             "description": (
-                f"{priority_name(issue.get('priority') or 0)} · "
+                # Linear types priority as a Float; the scale is integral.
+                f"{priority_name(int(issue.get('priority') or 0))} · "
                 f"{notes.get(issue['identifier']) or issue['title']}"
             ),
         }

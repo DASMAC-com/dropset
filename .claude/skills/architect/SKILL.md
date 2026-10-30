@@ -166,7 +166,7 @@ is forbidden.
   touch on that issue;
 - **no re-prioritizing** — its one priority write is the proposal
   on each of its own tasks, written at filing as the filing yes left
-  it (`ratify-staged` step 1); no milestone changes beyond its own
+  it (`ratify-staged` steps 1 and 2); no milestone changes beyond its own
   tasks' `Session pending`, no closing beyond its own rejects;
 - **nothing on another issue** — not its state, not its body.
 

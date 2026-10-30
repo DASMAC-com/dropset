@@ -321,11 +321,9 @@ with no refactor-later burden a later issue will undo.
   filer only proposes a priority on its own tasks at filing.
   Priorities move under the **agreement rule**
   (`docs/conventions/linear-automation.md` → "Priorities: shared
-  authority, the agreement rule"): message the curator every
-  priority write with its reason in the same turn, answer its
-  counter-write once at most, and take a third exchange on one
-  issue to the operator through `AskUserQuestion` in the tab that
-  last wrote. A filer's one-line priority message is confirmed by
+  authority, the agreement rule"), which governs the messaging,
+  the counter-write and the escalation to the operator; follow it
+  there. A filer's one-line priority message is confirmed by
   silence or rewritten under the same rule. The scheduler still
   owns dispatch order as read: a wave dispatches on the priorities
   as they stand at that moment, and the next write-back records the

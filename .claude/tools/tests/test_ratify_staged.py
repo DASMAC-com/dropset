@@ -297,7 +297,8 @@ class InboxPoolTests(unittest.TestCase):
 
     def test_every_checkbox_leads_with_the_filed_priority(self):
         issues = [_issue(n) for n in (1, 2, 3, 4)]
-        for issue, priority in zip(issues, (1, 2, 3, 4)):
+        # Linear's GraphQL types priority as a Float, so 2.0 must read as High.
+        for issue, priority in zip(issues, (1, 2.0, 3, 4)):
             issue["priority"] = priority
         (call,) = build_ask(issues)["calls"]
         (question,) = call["questions"]

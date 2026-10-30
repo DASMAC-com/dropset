@@ -354,12 +354,11 @@ to receive the message.
 **Priorities have two writers.** The curator and the scheduler
 each write them, in Backlog and in Todo alike, under the
 **agreement rule** (`docs/conventions/linear-automation.md` →
-"Priorities: shared authority, the agreement rule"): every write is
-messaged to the scheduler in the same turn with its reason; a
-counter-write from it is answered once at most; a third exchange on
-one issue goes to the operator through `AskUserQuestion` in the tab
-that last wrote. A filer's one-line priority message is confirmed by
-silence or rewritten under the same rule. Write priorities with
+"Priorities: shared authority, the agreement rule"), which governs
+the messaging, the counter-write and the escalation to the
+operator; follow it there. A filer's one-line priority message is
+confirmed by silence or rewritten under the same rule. Write
+priorities with
 `board_batch.py priorities --updates <file>`.
 
 **Edges have two writers.** The scheduler and the curator both
