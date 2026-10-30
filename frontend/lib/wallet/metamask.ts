@@ -1,5 +1,7 @@
+import { createDefaultRpcTransport } from "@solana/kit";
 import { useSyncExternalStore } from "react";
-import { FALLBACK_RPC_URL } from "../env";
+import { CLUSTER, FALLBACK_RPC_URL } from "../env";
+import { ClusterMismatchError, clusterGate } from "../rpc";
 
 // MetaMask Connect (the relay-based SDK, distinct from the MetaMask browser
 // extension) only becomes discoverable once a dapp initializes it: calling
@@ -48,6 +50,15 @@ const notifyRegistrationListeners = () => {
 export function registerMetaMaskConnect(): Promise<void> {
   if (registration) return registration;
   registration = (async () => {
+    // The SDK takes the endpoint as a bare URL and calls it itself, past the
+    // gate every app transport carries, so the endpoint passes the same
+    // genesis check before the SDK ever sees it: a wrong-cluster RPC leaves
+    // MetaMask unregistered rather than connected to another chain.
+    const verified = await clusterGate.verify(
+      FALLBACK_RPC_URL,
+      createDefaultRpcTransport({ url: FALLBACK_RPC_URL }),
+    );
+    if (!verified) throw new ClusterMismatchError(FALLBACK_RPC_URL, CLUSTER);
     const { createSolanaClient } = await import("@metamask/connect-solana");
     await createSolanaClient({
       dapp: {

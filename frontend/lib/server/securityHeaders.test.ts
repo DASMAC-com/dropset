@@ -1,7 +1,11 @@
 // cspell:word publicnode
 import { describe, expect, it } from "vitest";
 
-import { connectSources, securityHeaders } from "./securityHeaders";
+import {
+  CONNECTOR_SOURCES,
+  connectSources,
+  securityHeaders,
+} from "./securityHeaders";
 
 const header = (headers: { key: string; value: string }[], key: string) =>
   headers.find((h) => h.key === key)?.value;
@@ -21,12 +25,36 @@ describe("security headers", () => {
 
   it("allows eval only in dev", () => {
     const policy = (dev: boolean) =>
-      header(
-        securityHeaders({}, { dev }),
-        "Content-Security-Policy-Report-Only",
-      );
+      header(securityHeaders({}, { dev }), "Content-Security-Policy");
     expect(policy(true)).toContain("'unsafe-eval'");
     expect(policy(false)).not.toContain("'unsafe-eval'");
+  });
+
+  it("enforces the source allowlist, with nothing left report-only", () => {
+    const headers = securityHeaders({}, { dev: false });
+    const policy = header(headers, "Content-Security-Policy");
+    expect(policy).toContain("default-src 'self'");
+    expect(policy).toContain("object-src 'none'");
+    expect(policy).toContain("base-uri 'self'");
+    expect(header(headers, "Content-Security-Policy-Report-Only")).toBe(
+      undefined,
+    );
+  });
+
+  it("names a host in every source directive but img-src", () => {
+    const policy = header(
+      securityHeaders({}, { dev: false }),
+      "Content-Security-Policy",
+    );
+    for (const directive of policy?.split("; ") ?? []) {
+      const [name, ...sources] = directive.split(" ");
+      if (name === "img-src") continue;
+      for (const source of sources) {
+        expect(source).not.toBe("*");
+        expect(source).not.toMatch(/^(https?|wss?):$/);
+        expect(source).not.toMatch(/\/\/\*/);
+      }
+    }
   });
 
   it("lists the RPC, WS and API origins, never a key", () => {
@@ -50,14 +78,14 @@ describe("security headers", () => {
     expect(sources.join(" ")).not.toContain("secret-key");
   });
 
-  it("puts every connect source in the report-only policy", () => {
+  it("puts every endpoint and connector source in the policy", () => {
     const env = { NEXT_PUBLIC_RPC_URL: "https://rpc.test" };
     const policy = header(
       securityHeaders(env, { dev: false }),
-      "Content-Security-Policy-Report-Only",
+      "Content-Security-Policy",
     );
     expect(policy).toContain(
-      `connect-src 'self' ${connectSources(env).join(" ")}`,
+      `connect-src 'self' ${[...connectSources(env), ...CONNECTOR_SOURCES].join(" ")}`,
     );
   });
 
