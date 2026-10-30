@@ -66,7 +66,8 @@ fi
 
 # THE CARGO POOL: every cargo in a dropset checkout — the base repo or any
 # worktree under it — shares one of a few build directories (the lanes, below)
-# and asks for at most the cores minus two. A `chpwd` hook, not a lazy call
+# and runs at most `CARGO_BUILD_JOBS` compilers, a bound the runtime config
+# sets (the hook derives none). A `chpwd` hook, not a lazy call
 # like `_ds_secrets`, because the point is that every shell in a checkout has
 # it — a plain tab, a session, and every Bash command a session's agent runs
 # (the launcher evaluates it for the session's worktree, so the client inherits

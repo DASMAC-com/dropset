@@ -11,6 +11,9 @@
       "kind": "knob",
       "name": "CARGO_BUILD_JOBS",
       "required": true,
+      "required_unless": {
+        "DS_CARGO_POOL": "0"
+      },
       "verbs": [
         "every launch while the pool is on"
       ]
@@ -68,6 +71,9 @@
       "kind": "knob",
       "name": "DS_CARGO_LANES",
       "required": true,
+      "required_unless": {
+        "DS_CARGO_POOL": "0"
+      },
       "verbs": [
         "every launch while the pool is on",
         "upkeep"

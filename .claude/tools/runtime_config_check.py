@@ -29,9 +29,11 @@ appears in the environment.
 
 ``--live`` reads the environment it is handed: each required row ``set`` or
 ``MISSING``, each optional knob at its default or ``pinned: NAME=value
-(default d)``, and every prefixed name the manifest does not know. The value
-of a model id, a secret reference or a Linear id is never printed, only
-``set``. A Python process sees only EXPORTED variables, so a profile's plain
+(default d)``, and every ``DS_*`` / ``LINEAR_*`` name the manifest does not
+know. A row's ``required_unless`` map (``{"DS_CARGO_POOL": "0"}``) makes it
+optional while another variable holds that value. The value of a model id, a
+secret reference or a Linear id is never printed, only ``set`` — and such a
+row may carry no default, so no ``pinned:`` line can print one either. A Python process sees only EXPORTED variables, so a profile's plain
 assignments reach it only through a caller that hands them over — the
 ``_ds_upkeep`` shell helper does, for the upkeep pass's ``config`` step.
 ``--names`` prints the row names that helper passes, one per line.
@@ -118,6 +120,15 @@ def load_manifest(path: Path) -> dict:
             raise ManifestError(f"{name}: `required` must be true or false")
         if row.get("required") and row.get("default") is not None:
             raise ManifestError(f"{name}: a required row carries no default")
+        # A default is printed beside a pinned value, so an opaque kind with one
+        # would put its value in the report.
+        if row.get("kind") in OPAQUE and row.get("default") is not None:
+            raise ManifestError(f"{name}: a {row['kind']} row carries no default")
+        unless = row.get("required_unless", {})
+        if not isinstance(unless, dict) or (unless and not row.get("required")):
+            raise ManifestError(
+                f"{name}: `required_unless` is a {{NAME: value}} map on a required row"
+            )
         if name in seen:
             raise ManifestError(f"{name}: listed twice")
         seen.add(name)
@@ -193,24 +204,37 @@ def live_rows(manifest: dict, env) -> tuple[list[str], list[str], list[str]]:
         if kind in NOT_CONFIG:
             continue
         value = env.get(name, "")
-        shown = "set" if kind in OPAQUE else f"{name}={value}"
         default = row.get("default")
+        # Required unless another variable switches its consumer off — the
+        # cargo pair while `DS_CARGO_POOL=0`, as the launch refusal reads it.
+        unless = row.get("required_unless", {})
+        required = row["required"] and not any(
+            env.get(k, "") == v for k, v in unless.items()
+        )
         if not value:
-            if row["required"]:
+            if required:
                 missing.append(name)
                 lines.append(f"MISSING {name}")
             elif default is not None:
                 lines.append(f"{name} at default ({default})")
             else:
                 lines.append(f"{name} unset")
+        elif kind in OPAQUE:
+            # Checked first: an opaque value is never printed, pinned or not.
+            lines.append(f"{name} set")
         elif default is not None and value != str(default):
             lines.append(f"pinned: {name}={value} (default {default})")
-        elif kind in OPAQUE:
-            lines.append(f"{name} {shown}")
         else:
-            lines.append(shown)
+            lines.append(f"{name}={value}")
+    # CARGO_* is left out here: cargo reads many of its own (CARGO_INCREMENTAL,
+    # CARGO_PROFILE_*), which an operator may export for reasons of their own.
     unknown = sorted(
-        k for k in env if NAME_RE.fullmatch(k) and k not in known and env.get(k)
+        k
+        for k in env
+        if NAME_RE.fullmatch(k)
+        and not k.startswith("CARGO_")
+        and k not in known
+        and env.get(k)
     )
     return missing, lines, unknown
 
@@ -218,10 +242,12 @@ def live_rows(manifest: dict, env) -> tuple[list[str], list[str], list[str]]:
 def live_summary(missing: list[str], lines: list[str], unknown: list[str]) -> str:
     """One report line, leading with any missing required row."""
     pinned = sum(1 for line in lines if line.startswith("pinned:"))
+    unset = sum(1 for line in lines if line.endswith(" unset"))
     parts = []
     if missing:
         parts.append(f"{len(missing)} required missing ({', '.join(missing)})")
-    parts.append(f"{len(lines) - len(missing)} of {len(lines)} rows set or defaulted")
+    settled = len(lines) - len(missing) - unset
+    parts.append(f"{settled} of {len(lines)} rows set or defaulted")
     if pinned:
         parts.append(f"{pinned} pinned")
     if unknown:

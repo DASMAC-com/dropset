@@ -26,6 +26,7 @@ _ds_pool() {
   lanes="${DS_LANES-}"
   region="${DS_REGION:-us-west-2}"
   [[ -n "$DS_MODEL" ]] || return 1
+  op read "$DS_REF"
 }
 """
 
@@ -37,14 +38,24 @@ key = os.environ.get("LINEAR_KEY")
 """
 
 ROWS = [
-    {"name": "DS_LANES", "kind": "knob", "required": True, "default": None},
+    {
+        "name": "DS_LANES",
+        "kind": "knob",
+        "required": True,
+        "default": None,
+        "required_unless": {"DS_POOL": "0"},
+    },
     {"name": "DS_REGION", "kind": "knob", "required": False, "default": "us-west-2"},
     {"name": "DS_MODEL", "kind": "model-id", "required": True, "default": None},
+    {"name": "DS_REF", "kind": "secret-ref", "required": False, "default": None},
     {"name": "DS_WAIT", "kind": "knob", "required": False, "default": "120"},
     {"name": "LINEAR_KEY", "kind": "launcher-set", "required": False, "default": None},
 ]
 
-EXAMPLE = "DS_LANES=2\nDS_MODEL='<model-id>'\n# DS_REGION=x\n# DS_WAIT=120\n"
+EXAMPLE = (
+    "DS_LANES=2\nDS_MODEL='<model-id>'\nDS_REF='op://<vault>/<item>/<field>'\n"
+    "# DS_REGION=x\n# DS_WAIT=120\n"
+)
 
 
 class Fixture(unittest.TestCase):
@@ -81,13 +92,13 @@ class StaticTests(Fixture):
     def test_a_manifest_matching_the_code_is_in_sync(self):
         code, out = self.call("--static")
         self.assertEqual(code, 0, out)
-        self.assertIn("5 rows, in sync", out)
+        self.assertIn("6 rows, in sync", out)
 
     def test_the_scan_reads_code_lines_and_quoted_names_only(self):
         reads = rc.scan(self.root)
         self.assertEqual(
             set(reads.sites),
-            {"DS_LANES", "DS_REGION", "DS_MODEL", "DS_WAIT", "LINEAR_KEY"},
+            {"DS_LANES", "DS_REGION", "DS_MODEL", "DS_REF", "DS_WAIT", "LINEAR_KEY"},
         )
         self.assertEqual(reads.defaults["DS_REGION"], {"us-west-2"})
         self.assertEqual(reads.defaults["DS_WAIT"], {"120"})
@@ -135,6 +146,10 @@ class StaticTests(Fixture):
             [dict(ROWS[0], kind="secret")],
             [dict(ROWS[0], default="2")],  # required with a default
             [ROWS[0], ROWS[0]],
+            # An opaque default would print beside a pinned value.
+            [dict(ROWS[3], default="op://v/i/f")],
+            # `required_unless` only qualifies a required row.
+            [dict(ROWS[1], required_unless={"DS_POOL": "0"})],
         ):
             with self.subTest(rows=rows):
                 self.write_manifest(rows)
@@ -152,9 +167,12 @@ class LiveTests(Fixture):
     ENV = {
         "DS_LANES": "2",
         "DS_MODEL": "claude-secret-model-1",
+        "DS_REF": "op://secret-vault/item/field",
         "DS_WAIT": "300",
         "LINEAR_KEY": "lin_api_secret",
         "DS_STRAY": "1",
+        # Cargo's own configuration is never an unknown row.
+        "CARGO_INCREMENTAL": "0",
         "HOME": "/Users/me",
     }
 
@@ -165,12 +183,28 @@ class LiveTests(Fixture):
         self.assertIn("  DS_MODEL set", out)
         self.assertIn("  DS_REGION at default (us-west-2)", out)
         self.assertIn("  pinned: DS_WAIT=300 (default 120)", out)
+        self.assertIn("  DS_REF set", out)
         self.assertIn("  unknown: DS_STRAY", out)
+        self.assertNotIn("CARGO_INCREMENTAL", out)
 
     def test_an_opaque_value_is_never_printed(self):
-        _, out = self.call("--live", "--json", env=self.ENV)
-        self.assertNotIn("claude-secret-model-1", out)
-        self.assertNotIn("lin_api_secret", out)
+        for argv in (["--live"], ["--live", "--json"]):
+            with self.subTest(argv=argv):
+                _, out = self.call(*argv, env=self.ENV)
+                self.assertNotIn("claude-secret-model-1", out)
+                self.assertNotIn("secret-vault", out)
+
+    def test_the_summary_counts_an_unset_optional_row_as_neither(self):
+        env = {"DS_LANES": "2", "DS_MODEL": "m"}
+        line = json.loads(self.call("--live", "--json", env=env)[1])["line"]
+        # DS_LANES, DS_MODEL set; DS_REGION, DS_WAIT defaulted; DS_REF unset.
+        self.assertEqual(line, "config: 4 of 5 rows set or defaulted")
+
+    def test_required_unless_lifts_the_requirement(self):
+        env = {k: v for k, v in self.ENV.items() if k != "DS_LANES"}
+        code, out = self.call("--live", env={**env, "DS_POOL": "0"})
+        self.assertEqual(code, 0, out)
+        self.assertIn("  DS_LANES unset", out)
 
     def test_a_missing_required_row_leads_the_line_and_exits_1(self):
         env = {k: v for k, v in self.ENV.items() if k != "DS_LANES"}
@@ -186,7 +220,9 @@ class LiveTests(Fixture):
     def test_names_lists_the_rows_the_config_sets(self):
         code, out = self.call("--names")
         self.assertEqual(code, 0)
-        self.assertEqual(out.split(), ["DS_LANES", "DS_REGION", "DS_MODEL", "DS_WAIT"])
+        self.assertEqual(
+            out.split(), ["DS_LANES", "DS_REGION", "DS_MODEL", "DS_REF", "DS_WAIT"]
+        )
 
 
 if __name__ == "__main__":

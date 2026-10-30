@@ -1254,7 +1254,8 @@ hook, so CI enforces it) fails on an undocumented read, a stale row, a
 knob default that disagrees with the code, or a row the example omits.
 `--live` reads an environment: each required row set or missing, each
 optional knob at its default or `pinned: NAME=value (default d)`, and
-any prefixed name the manifest does not know. It prints a model id,
+any `DS_*` / `LINEAR_*` name the manifest does not know. The cargo pair
+is optional there while `DS_CARGO_POOL=0`, as at launch. It prints a model id,
 secret reference or Linear id only as `set`. The morning upkeep pass
 runs it as its `config` step, and `_ds_upkeep` exports the shell's
 manifest variables to that pass alone, since a Python child sees only
@@ -1281,7 +1282,7 @@ are **required**: unset or malformed, the probe answers no reading
 naming the variable and the launcher refuses the launch, as it does an
 unset model tier. The cargo pool's two knobs are required in the
 same way while the pool is on ("The cargo pool"). The launcher exports
-all four once they pass, since the probe and cargo read their
+each knob it checked once they pass, since the probe and cargo read their
 environment and a plain profile assignment would not reach them.
 
 | Knob                    | Default      | Bounds                                                               |

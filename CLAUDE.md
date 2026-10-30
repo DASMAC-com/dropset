@@ -499,9 +499,10 @@ helpers** (`cdds`, `task`, `explore`, `chore`, `plan`, `curate`,
 `launch`, `architect`, `fleet`) are the exception that *is* committed,
 at `.claude/shell/init.zsh`, sourced by one guarded shell-profile
 line; only the runtime config (model ids, 1Password coordinates,
-fleet knobs) stays untracked, in the shell profile — its shape is the
-committed `.claude/shell/runtime-config.manifest.json`, held to the
-code by `runtime_config_check.py`. Full detail — every hook's
+Linear ids, fleet knobs and the like) stays untracked, in the shell
+profile — its shape is the committed
+`.claude/shell/runtime-config.manifest.json`, held to the code by
+`runtime_config_check.py`. Full detail — every hook's
 wiring, the helper family, and the iTerm setup:
 `docs/conventions/local-integrations.md`.
 
