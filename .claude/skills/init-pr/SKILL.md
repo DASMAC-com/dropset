@@ -91,10 +91,11 @@ say so; `install` — re-run
 by hand, since the `biome` and `tsc` hooks fail the first full
 `make lint` without it; `spec` — fall back to `get_issue`.
 
-**`facts.pnpm: absent`** means the binary is off PATH. The install
-already ran through the helper's `npx --yes pnpm@<pin>` fallback (its
-`detail` says so); use that same prefix for any later `pnpm` command,
-never a corepack shim. `lint_paths.py` skips the `biome` / `tsc` /
+**`facts.pnpm: absent`** means the binary is off PATH, and
+`facts.pnpm_command` holds the `npx --yes pnpm@<pin>` fallback (any
+install this run made went through it). Use that prefix for any later
+`pnpm` command, never a corepack shim; a `null` means npx is missing
+too. `lint_paths.py` skips the `biome` / `tsc` /
 `tsc-sdk` hooks and reports them `UNVERIFIABLE locally`, so say so
 once and never gate on them. An install that failed even through `npx`
 is the same note.

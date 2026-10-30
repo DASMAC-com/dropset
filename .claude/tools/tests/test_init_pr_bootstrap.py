@@ -144,6 +144,8 @@ class HappyPathTests(unittest.TestCase):
             "via `npx --yes pnpm@10.30.3`", statuses_detail(result, "install")
         )
         self.assertEqual(result["facts"]["pnpm"], "absent")
+        # A fact, so a session has the prefix even when no install ran.
+        self.assertEqual(result["facts"]["pnpm_command"], "npx --yes pnpm@10.30.3")
 
     def test_a_failed_npx_install_says_so(self):
         runner = FakeRunner(

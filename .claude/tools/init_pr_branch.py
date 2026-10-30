@@ -546,7 +546,7 @@ def main(argv: list[str] | None = None) -> int:
         else None,
         # Read-only, so unconditional: `present` / `absent` / `no-frontend`.
         "frontend_node_modules": node_modules_state(args.worktree_root),
-        # Read-only too. `absent` means the biome / tsc hooks are unverifiable
+        # Read-only too. `absent` means the pnpm hooks are unverifiable
         # locally; `pnpm_command` is what an install runs instead.
         "pnpm": "present" if shutil.which("pnpm") else "absent",
         "pnpm_command": pnpm_command(args.worktree_root),

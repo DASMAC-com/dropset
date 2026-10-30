@@ -487,6 +487,7 @@ class Bootstrap:
                 "secrets_env_link",
                 "frontend_node_modules",
                 "pnpm",
+                "pnpm_command",
                 "program_so",
                 "signing",
             )
