@@ -1,5 +1,5 @@
 import type { RpcTransport } from "@solana/kit";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertEndpointMatchesCluster,
@@ -208,5 +208,122 @@ describe("cluster gate", () => {
     gate.probe();
     await vi.waitFor(() => expect(gate.status()).toBe("verified"));
     expect(genesisReads(raw)).toBe(1);
+    expect(gate.verified(PRIMARY)).toBe(true);
+  });
+
+  it("shares one genesis read between concurrent first calls", async () => {
+    const gate = createClusterGate("mainnet");
+    const raw = chain(MAINNET_GENESIS_HASH, "ok");
+    const t = gate.guard(PRIMARY, raw);
+    await Promise.all([call(t), call(t), call(t)]);
+    expect(genesisReads(raw)).toBe(1);
+  });
+
+  it("gives up on a genesis read that never answers, then asks again", async () => {
+    const gate = createClusterGate("mainnet", { timeoutMs: 20 });
+    let hang = true;
+    const raw = vi.fn(async (config: Parameters<RpcTransport>[0]) =>
+      hang ? new Promise(() => {}) : chain(MAINNET_GENESIS_HASH, "ok")(config),
+    ) as unknown as RpcTransport;
+    const t = gate.guard(PRIMARY, raw);
+    await expect(call(t)).rejects.toThrow();
+    hang = false;
+    await expect(call(t)).resolves.toEqual({ result: "ok" });
+  });
+
+  it("lets a caller abort a call still waiting on the genesis read", async () => {
+    const gate = createClusterGate("mainnet");
+    const raw = vi.fn(() => new Promise(() => {})) as unknown as RpcTransport;
+    const abort = new AbortController();
+    const pending = call(gate.guard(PRIMARY, raw), abort.signal);
+    abort.abort(new Error("caller gave up"));
+    await expect(pending).rejects.toThrow("caller gave up");
+  });
+
+  it("re-asks on its own while subscribed and pending, and stops after", async () => {
+    vi.useFakeTimers();
+    const gate = createClusterGate("mainnet", { retryMs: 1000 });
+    let up = false;
+    const raw = vi.fn(async (config: Parameters<RpcTransport>[0]) => {
+      if (!up) throw new Error("HTTP 503");
+      return chain(MAINNET_GENESIS_HASH, "ok")(config);
+    }) as unknown as RpcTransport & ReturnType<typeof vi.fn>;
+    gate.guard(PRIMARY, raw);
+    const unsubscribe = gate.subscribe(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(raw).toHaveBeenCalledTimes(1);
+    up = true;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(gate.status()).toBe("verified");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(raw).toHaveBeenCalledTimes(2);
+    unsubscribe();
+    vi.useRealTimers();
+  });
+});
+
+// The wiring the gate's claim rests on: both sides of the app runtime are
+// guarded, so neither can serve a read from another chain.
+describe("app runtime", () => {
+  const runtimeWith = async (genesis: Record<string, string>) => {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_RPC_URL", "https://fallback.test");
+    vi.stubEnv("NEXT_PUBLIC_WS_URL", "wss://fallback.test");
+    vi.stubEnv("NEXT_PUBLIC_PRIMARY_RPC_URL", "https://primary.test");
+    vi.stubEnv("NEXT_PUBLIC_PRIMARY_WS_URL", "wss://primary.test");
+    vi.doMock("@solana/kit", async (original) => ({
+      ...(await original<typeof import("@solana/kit")>()),
+      createDefaultRpcTransport: ({ url }: { url: string }) =>
+        (async ({ payload }: { payload: { id: string; method: string } }) =>
+          payload.method === "getGenesisHash"
+            ? { jsonrpc: "2.0", id: payload.id, result: genesis[url] }
+            : {
+                jsonrpc: "2.0",
+                id: payload.id,
+                result: { context: { slot: 1n }, value: url },
+              }) as unknown as RpcTransport,
+    }));
+    const { createAppRuntime } = await import("./rpc");
+    return createAppRuntime();
+  };
+  const served = async (genesis: Record<string, string>) =>
+    (
+      (await (
+        await runtimeWith(genesis)
+      ).rpc
+        .getBalance("11111111111111111111111111111111" as never)
+        .send()) as unknown as { value: string }
+    ).value;
+
+  afterEach(() => {
+    vi.doUnmock("@solana/kit");
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("serves from the fallback when the primary is on another chain", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(
+      served({
+        "https://primary.test": "DevnetGenesis1111",
+        "https://fallback.test": MAINNET_GENESIS_HASH,
+      }),
+    ).resolves.toBe("https://fallback.test");
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it("refuses when both sides are on another chain", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(
+      served({
+        "https://primary.test": "DevnetGenesis1111",
+        "https://fallback.test": "DevnetGenesis1111",
+      }),
+    ).rejects.toThrow(/does not serve/);
+    error.mockRestore();
+    warn.mockRestore();
   });
 });

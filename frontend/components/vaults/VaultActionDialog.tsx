@@ -632,8 +632,9 @@ export function VaultActionDialog({
   const tx = useVaultTx(vaultRef);
   // "unconfirmed" counts: the transaction may still land, so the form stays
   // locked until the dialog is closed and reopened after checking it. So does
-  // an endpoint not yet proved to serve the build's cluster (the
-  // wrong-network banner says why).
+  // an endpoint not yet proved to serve the build's cluster: briefly while
+  // the check runs, and for good on a mismatch (the wrong-network banner
+  // says why).
   const clusterVerified = useClusterStatus() === "verified";
   const busy =
     tx.status === "preparing" ||
@@ -799,6 +800,7 @@ export function VaultActionDialog({
     }
   };
   const submitWithdraw = async (bps: number) => {
+    if (busy) return;
     if (await tx.execute({ kind: "withdraw", bps })) {
       setWithdrawEpoch((n) => n + 1);
     }

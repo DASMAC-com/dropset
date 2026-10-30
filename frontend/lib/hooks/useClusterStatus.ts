@@ -1,23 +1,26 @@
-import { useEffect, useSyncExternalStore } from "react";
-import { CLUSTER_PROBE_RETRY_MS } from "../data/timings";
-import { type ClusterStatus, clusterGate } from "../rpc";
+import { useSyncExternalStore } from "react";
+import { type ClusterStatus, clusterGate, SUBSCRIPTIONS_RPC_URL } from "../rpc";
 
 // Whether the RPC endpoints serve the cluster the build targets (see
 // `createClusterGate`). Every chain read already goes through the gate; this
 // is for the UI to show a wrong-network banner and hold the submit CTAs.
-// While no endpoint has answered, it re-asks on its own rather than waiting
-// on app traffic, which a panel gated on this status would never send.
+// Subscribing is what keeps the gate re-asking while the status is pending.
 export function useClusterStatus(): ClusterStatus {
-  const status = useSyncExternalStore(
+  return useSyncExternalStore(
     clusterGate.subscribe,
     clusterGate.status,
     (): ClusterStatus => "pending",
   );
-  useEffect(() => {
-    if (status !== "pending") return;
-    clusterGate.probe();
-    const timer = window.setInterval(clusterGate.probe, CLUSTER_PROBE_RETRY_MS);
-    return () => window.clearInterval(timer);
-  }, [status]);
-  return status;
+}
+
+// Whether the subscriptions' websocket is on the build's cluster, as far as
+// its provider's RPC endpoint says. Stricter than `useClusterStatus`: a
+// mismatched primary leaves the app "verified" on the fallback while its
+// websocket still serves the other chain.
+export function useSubscriptionsVerified(): boolean {
+  return useSyncExternalStore(
+    clusterGate.subscribe,
+    () => clusterGate.verified(SUBSCRIPTIONS_RPC_URL),
+    () => false,
+  );
 }

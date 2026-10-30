@@ -6,6 +6,10 @@ import {
   type RpcTransport,
 } from "@solana/kit";
 import {
+  CLUSTER_CHECK_TIMEOUT_MS,
+  CLUSTER_PROBE_RETRY_MS,
+} from "./data/timings";
+import {
   CLUSTER,
   type Cluster,
   FALLBACK_RPC_URL,
@@ -82,11 +86,14 @@ export function createFailoverTransport(
 
 // The app's RPC runtime: the keyed primary when one is configured, with the
 // standing endpoint behind it, else the standing endpoint alone. Each side is
-// behind the cluster gate, so a side serving another chain is refused and the
-// call goes to the other.
+// behind the cluster gate: a primary serving another chain is refused and the
+// call fails over to the fallback; a fallback serving another chain is
+// refused outright.
 // Subscriptions take the primary's websocket when there is one; they do not
 // fail over, but the one consumer (the trades tape) already re-subscribes
-// after a drop.
+// after a drop. The websocket cannot be asked its genesis, so the tape waits
+// on the verdict of the RPC endpoint from the same provider
+// (`SUBSCRIPTIONS_RPC_URL`).
 export function createAppRuntime(): SolanaClientRuntime {
   const primary = PRIMARY_RPC_URL;
   const fallback = clusterGate.guard(
@@ -113,6 +120,10 @@ export function createAppRuntime(): SolanaClientRuntime {
     ),
   };
 }
+
+// The RPC endpoint whose provider serves the subscriptions' websocket (env.ts
+// requires the primary's RPC and WS URLs together).
+export const SUBSCRIPTIONS_RPC_URL = PRIMARY_RPC_URL ?? FALLBACK_RPC_URL;
 
 // The one-line note naming the live provider, so a post-event deploy still
 // pointed at the paid endpoint is visible in any browser console.
@@ -154,42 +165,73 @@ export type ClusterGate = {
   // Check every guarded endpoint now, without waiting for app traffic.
   probe: () => void;
   status: () => ClusterStatus;
+  // Whether this one endpoint has answered with the build's cluster.
+  verified: (url: string) => boolean;
+  // While anyone is subscribed and the status is pending, the gate probes on
+  // its own every `retryMs`: a panel gated on the status sends no traffic
+  // that would ask again.
   subscribe: (listener: () => void) => () => void;
 };
+
+// A promise that also rejects once `signal` aborts, so a caller's abort frees
+// it from a genesis check it shares with other calls.
+const untilAborted = <T>(promise: Promise<T>, signal?: AbortSignal) =>
+  signal
+    ? new Promise<T>((resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        if (signal.aborted) return onAbort();
+        signal.addEventListener("abort", onAbort, { once: true });
+        promise
+          .then(resolve, reject)
+          .finally(() => signal.removeEventListener("abort", onAbort));
+      })
+    : promise;
 
 // Each endpoint is checked on its own: a failover pair whose two sides serve
 // different chains would otherwise pass on whichever side answered first.
 // Verdicts are keyed by URL, so the clients a page rebuilds share them. An
-// unreadable genesis is a transport problem, not a wrong chain: the next call
-// asks again rather than pinning the endpoint refused.
-export function createClusterGate(cluster: Cluster): ClusterGate {
+// unreadable genesis (an error, or no answer within `timeoutMs`) is a
+// transport problem, not a wrong chain: the next call asks again rather than
+// pinning the endpoint refused.
+export function createClusterGate(
+  cluster: Cluster,
+  {
+    timeoutMs = CLUSTER_CHECK_TIMEOUT_MS,
+    retryMs = CLUSTER_PROBE_RETRY_MS,
+  }: { timeoutMs?: number; retryMs?: number } = {},
+): ClusterGate {
   const transports = new Map<string, RpcTransport>();
   const checks = new Map<string, Promise<boolean>>();
   const verdicts = new Map<string, boolean>();
   const listeners = new Set<() => void>();
+  let retry: ReturnType<typeof setInterval> | undefined;
 
   const check = (url: string, transport: RpcTransport): Promise<boolean> => {
     let pending = checks.get(url);
     if (!pending) {
-      pending = createSolanaRpcFromTransport(transport)
-        .getGenesisHash()
-        .send()
-        .then(
-          (seen) => {
-            const ok = genesisMatchesCluster(seen, cluster);
-            if (!ok)
-              console.error(
-                `[rpc] ${endpointHost(url)} serves genesis ${seen}, not NEXT_PUBLIC_CLUSTER=${cluster}; refusing it`,
-              );
-            verdicts.set(url, ok);
-            for (const listener of listeners) listener();
-            return ok;
-          },
-          (error) => {
-            checks.delete(url);
-            throw error;
-          },
-        );
+      const timeout = AbortSignal.timeout(timeoutMs);
+      pending = untilAborted(
+        createSolanaRpcFromTransport(transport)
+          .getGenesisHash()
+          .send({ abortSignal: timeout }),
+        timeout,
+      ).then(
+        (seen) => {
+          const ok = genesisMatchesCluster(seen, cluster);
+          if (!ok)
+            console.error(
+              `[rpc] ${endpointHost(url)} serves genesis ${seen}, not NEXT_PUBLIC_CLUSTER=${cluster}; refusing it`,
+            );
+          verdicts.set(url, ok);
+          if (status() !== "pending") stopRetry();
+          for (const listener of listeners) listener();
+          return ok;
+        },
+        (error) => {
+          checks.delete(url);
+          throw error;
+        },
+      );
       checks.set(url, pending);
     }
     return pending;
@@ -203,23 +245,37 @@ export function createClusterGate(cluster: Cluster): ClusterGate {
       : "pending";
   };
 
+  const probe = () => {
+    for (const [url, transport] of transports)
+      check(url, transport).catch(() => {});
+  };
+  const stopRetry = () => {
+    clearInterval(retry);
+    retry = undefined;
+  };
+
   return {
     guard: (url, transport) => {
       transports.set(url, transport);
       return (async (config: Parameters<RpcTransport>[0]) => {
-        if (!(await check(url, transport)))
+        if (!(await untilAborted(check(url, transport), config.signal)))
           throw new ClusterMismatchError(url, cluster);
         return transport(config);
       }) as RpcTransport;
     },
-    probe: () => {
-      for (const [url, transport] of transports)
-        check(url, transport).catch(() => {});
-    },
+    probe,
     status,
+    verified: (url) => verdicts.get(url) === true,
     subscribe: (listener) => {
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      if (status() === "pending" && retry === undefined) {
+        probe();
+        retry = setInterval(probe, retryMs);
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) stopRetry();
+      };
     },
   };
 }

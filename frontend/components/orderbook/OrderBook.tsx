@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo } from "react";
-import { useClusterStatus } from "@/lib/hooks/useClusterStatus";
+import {
+  useClusterStatus,
+  useSubscriptionsVerified,
+} from "@/lib/hooks/useClusterStatus";
 import type { BookToken, OrderBookState } from "@/lib/hooks/useOrderBook";
 import { useOrderBook } from "@/lib/hooks/useOrderBook";
 import { useSwapStore } from "@/lib/store";
@@ -204,6 +207,8 @@ export function OrderBookPanel({ className }: { className?: string }) {
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const sameToken = fromStablecoin === toStablecoin;
   const verified = useClusterStatus() === "verified";
+  // The tape reads the websocket, which only its own provider's verdict covers.
+  const subscriptionsVerified = useSubscriptionsVerified();
 
   const { status, view, market, base, quote } = useOrderBook(
     fromStablecoin,
@@ -216,7 +221,12 @@ export function OrderBookPanel({ className }: { className?: string }) {
   return (
     <div className={`flex flex-col gap-3 ${className ?? ""}`}>
       <OrderBookView view={view} base={base} quote={quote} />
-      <Trades market={market} base={base} quote={quote} enabled />
+      <Trades
+        market={market}
+        base={base}
+        quote={quote}
+        enabled={subscriptionsVerified}
+      />
     </div>
   );
 }

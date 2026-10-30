@@ -50,6 +50,17 @@ describe("security headers", () => {
     expect(sources.join(" ")).not.toContain("secret-key");
   });
 
+  it("puts every connect source in the report-only policy", () => {
+    const env = { NEXT_PUBLIC_RPC_URL: "https://rpc.test" };
+    const policy = header(
+      securityHeaders(env, { dev: false }),
+      "Content-Security-Policy-Report-Only",
+    );
+    expect(policy).toContain(
+      `connect-src 'self' ${connectSources(env).join(" ")}`,
+    );
+  });
+
   it("keeps a local validator's port", () => {
     expect(
       connectSources({
