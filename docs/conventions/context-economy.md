@@ -1344,6 +1344,19 @@ Two rules keep the cap from turning into deletion:
   "unfirmable churn" is arguing from something that was measured and
   found false.
 
+  **A compiler or test log is a cascade, so cap the matches.** One
+  root cause (a private module) prints seventy identical error
+  blocks, and the first three answer the question. Grep it with
+  `run_quiet.py inspect <log> --grep <re> --max 3`, then slice-read
+  one region — never a shell `grep`, least of all `-A` / `-B`, which
+  prints every block. Measured: two such `grep -nE -A4 '^error…'`
+  calls were one session's largest results, at ≈6.8k each, over a
+  70-error E0603 cascade. A summary-line grep (`test result`,
+  `Running`) that wants only the failures takes
+  `--grep 'FAILED|panicked'`, not every per-binary line (≈4.0k in the
+  same session). A lint log is **not** a cascade: its `Failed` lines
+  are one per hook, so that grep stays uncapped.
+
 - **Scope a sub-agent fan-out.** Inlining the same large diff into N
   reviewers pays for N resident copies; scope each agent to its files,
   or have them read one shared file, rather than inlining N times.

@@ -511,6 +511,37 @@ class ParseInspectArgs(unittest.TestCase):
         with self.assertRaises(rq.UsageError):
             rq.parse_inspect_args(["inspect", "/tmp/x.log", "--latest"])
 
+    def test_max_defaults_to_the_ceiling(self):
+        got = rq.parse_inspect_args(["inspect", "/tmp/x.log", "--grep", "x"])
+        self.assertEqual(got.max, rq.MAX_GREP_MATCHES)
+
+    def test_max_accepts_both_spellings(self):
+        for argv in (
+            ["inspect", "/tmp/x.log", "--max", "3"],
+            ["inspect", "/tmp/x.log", "--max=3"],
+        ):
+            with self.subTest(argv=argv):
+                self.assertEqual(rq.parse_inspect_args(argv).max, 3)
+
+    def test_max_only_lowers_the_ceiling(self):
+        # The ceiling is the guarantee; a larger --max must not reopen the dump
+        # it exists to prevent.
+        got = rq.parse_inspect_args(
+            ["inspect", "/tmp/x.log", "--max", str(rq.MAX_GREP_MATCHES * 10)]
+        )
+        self.assertEqual(got.max, rq.MAX_GREP_MATCHES)
+
+    def test_a_non_positive_or_non_integer_max_is_refused(self):
+        for value in ("0", "-2", "three"):
+            with self.subTest(value=value):
+                with self.assertRaises(rq.UsageError):
+                    rq.parse_inspect_args(["inspect", "/tmp/x.log", "--max", value])
+
+    def test_max_without_a_value_is_refused(self):
+        with self.assertRaises(rq.UsageError) as caught:
+            rq.parse_inspect_args(["inspect", "/tmp/x.log", "--max"])
+        self.assertIn("--max needs a value", str(caught.exception))
+
 
 class InspectLog(unittest.TestCase):
     def setUp(self):
@@ -575,6 +606,21 @@ class InspectLog(unittest.TestCase):
         path = self._log(["line %d" % k for k in range(rq.MAX_GREP_MATCHES + 20)])
         _, out = self._inspect(path, "--grep", "line")
         self.assertIn("%d match(es)+" % rq.MAX_GREP_MATCHES, out)
+
+    def test_max_caps_an_error_cascade_at_the_first_blocks(self):
+        # The shape --max exists for: one root cause, many identical blocks,
+        # where the first few answer the question.
+        lines = []
+        for k in range(10):
+            lines += ["error[E0603]: module `m%d` is private" % k, "  --> src/x.rs"]
+        path = self._log(lines)
+        _, out = self._inspect(path, "--grep", "^error", "--context", "1", "--max", "3")
+        emitted = [ln for ln in out.splitlines() if re.match(r"^\d+:error", ln)]
+        self.assertEqual(len(emitted), 3)
+        self.assertIn("m2", out)
+        self.assertNotIn("m3", out)
+        self.assertIn("3 match(es)+ (capped at 3 by --max)", out)
+        self.assertNotIn("narrow the pattern", out)
 
     def test_grep_takes_precedence_over_failing(self):
         # Documented precedence rather than silent behavior: given both, the

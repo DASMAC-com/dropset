@@ -447,6 +447,15 @@ release work that needs the whole. The re-point is the
 scheduler's write, never the worker's; message the curator the
 filing.
 
+**Size each filed half by its parts, never as a fraction of the
+parent.** "Each half about 400 lines" is checked by nothing before
+dispatch. A write-path half is its transaction builder, status
+hook, UI wiring and tests, so sum those. When a half's honest sum
+passes the band, split it at the seam before filing (a shared
+helper plus a pure module, then the wiring). One half filed at
+≈400 landed at ≈1,300 and 154 turns, and a split by then would
+have shipped inert code.
+
 **Dispatching is the other half; Todo is its standing
 authorization, once the day is started.** The start is the
 operator's: `fleet resume` and the first wave wait for step 8's

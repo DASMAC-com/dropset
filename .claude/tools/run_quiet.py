@@ -58,13 +58,15 @@ message and exits non-zero rather than raising an uncaught traceback.
 
 **Reading a log back**, which is the other half of the job::
 
-    python3 .claude/tools/run_quiet.py inspect LOG [--grep RE] [--context N]
+    python3 .claude/tools/run_quiet.py inspect LOG [--grep RE] [--context N] [--max N]
     python3 .claude/tools/run_quiet.py inspect LOG [--tail N]
     python3 .claude/tools/run_quiet.py inspect LOG --failing
 
 With no flags this reprints the failure summary — the failed-hook index, the
 spelling index, and the tail — which is what you want after coming back to a
-run whose summary has scrolled away.
+run whose summary has scrolled away. A compiler or test log is a cascade, so
+an error-block grep wants ``--max 3``: the first few blocks answer the
+question, and ``--max`` only ever lowers the built-in ceiling.
 
 **Test counts.** A run whose log carries cargo, nextest or ``node --test``
 summaries appends their totals to its one-line result (``— 120 passed, 0
@@ -256,6 +258,21 @@ def _parse_tail(value):
     if tail < 0:
         raise UsageError("--tail must be non-negative, got %d" % tail)
     return tail
+
+
+def _parse_max(value):
+    """Parse a --max value into a match cap in 1..MAX_GREP_MATCHES.
+
+    A value above the ceiling is clamped rather than refused: the ceiling is
+    the guarantee, and ``--max`` exists only to tighten it.
+    """
+    try:
+        cap = int(value)
+    except ValueError:
+        raise UsageError("--max must be an integer, got %r" % value)
+    if cap < 1:
+        raise UsageError("--max must be at least 1, got %d" % cap)
+    return min(cap, MAX_GREP_MATCHES)
 
 
 def sanitize(cmd):
@@ -628,14 +645,16 @@ def write_failure_region(summary, tail):
 #: With neither, the full failure summary is reprinted.
 #: ``compare`` (a baseline log path) takes precedence over both: it prints the
 #: two runs' test counts and the mutation verdict, and nothing else.
+#: ``max`` caps the grep view's matched regions, never above
+#: ``MAX_GREP_MATCHES``.
 InspectArgs = collections.namedtuple(
-    "InspectArgs", "path grep context tail failing compare"
+    "InspectArgs", "path grep context tail failing compare max"
 )
 
 
 def parse_inspect_args(argv):
-    """Parse ``inspect LOG [--grep RE] [--context N] [--tail N] [--failing]
-    [--compare BASELINE]``.
+    """Parse ``inspect LOG [--grep RE] [--context N] [--max N] [--tail N]
+    [--failing] [--compare BASELINE]``.
 
     ``argv`` still carries the ``inspect`` verb as its first element, so the
     caller does not have to strip it.
@@ -647,6 +666,7 @@ def parse_inspect_args(argv):
     tail = DEFAULT_TAIL
     failing = False
     compare = None
+    cap = MAX_GREP_MATCHES
     i = 0
     n = len(rest)
     while i < n:
@@ -675,6 +695,14 @@ def parse_inspect_args(argv):
         elif arg.startswith("--context="):
             context = _parse_tail(arg[len("--context=") :])
             i += 1
+        elif arg == "--max":
+            if i + 1 >= n:
+                raise UsageError("--max needs a value")
+            cap = _parse_max(rest[i + 1])
+            i += 2
+        elif arg.startswith("--max="):
+            cap = _parse_max(arg[len("--max=") :])
+            i += 1
         elif arg == "--tail":
             if i + 1 >= n:
                 raise UsageError("--tail needs a value")
@@ -701,11 +729,12 @@ def parse_inspect_args(argv):
             )
     if path is None:
         raise UsageError("inspect needs a log path")
-    return InspectArgs(path, grep, context, tail, failing, compare)
+    return InspectArgs(path, grep, context, tail, failing, compare, cap)
 
 
-def grep_log(path, pattern, context):
-    """Matching lines from ``path``, with ``context`` lines either side.
+def grep_log(path, pattern, context, cap=MAX_GREP_MATCHES):
+    """Matching lines from ``path``, with ``context`` lines either side, at
+    most ``cap`` matched regions.
 
     Returns ``(rendered_lines, match_count, truncated)``. Regions are separated
     by ``--`` and numbered, so a hit can be slice-read from the log afterwards
@@ -727,7 +756,7 @@ def grep_log(path, pattern, context):
         for lineno, line in enumerate(fh, start=1):
             text = line.rstrip("\n")
             if compiled.search(text):
-                if matches >= MAX_GREP_MATCHES:
+                if matches >= cap:
                     # Test BEFORE counting, so `matches` is what was actually
                     # printed. Counting first reported 41 for a capped run that
                     # emitted 40 regions — a number that was neither what the
@@ -767,12 +796,19 @@ def inspect(args):
         return compare_logs(args.compare, summary)
 
     if args.grep is not None:
-        lines, matches, truncated = grep_log(args.path, args.grep, args.context)
+        lines, matches, truncated = grep_log(
+            args.path, args.grep, args.context, args.max
+        )
         for line in lines:
             sys.stdout.write(line + "\n")
         note = ""
         if truncated:
-            note = "+ (capped at %d — narrow the pattern)" % MAX_GREP_MATCHES
+            # A cap the caller asked for is the answer, not a sign the
+            # pattern was too broad.
+            if args.max < MAX_GREP_MATCHES:
+                note = "+ (capped at %d by --max)" % args.max
+            else:
+                note = "+ (capped at %d — narrow the pattern)" % args.max
         sys.stdout.write(
             "run-quiet inspect | %d match(es)%s of %d line(s)\n"
             % (matches, note, summary.lines)
@@ -834,7 +870,7 @@ def compare_logs(baseline_path, summary):
 
 USAGE = (
     "usage: run_quiet.py [--tail N] [--label L] -- CMD ARGS...\n"
-    "       run_quiet.py inspect LOG [--grep RE] [--context N] "
+    "       run_quiet.py inspect LOG [--grep RE] [--context N] [--max N] "
     "[--tail N] [--failing]\n"
     "       run_quiet.py inspect LOG --compare BASELINE_LOG\n"
 )
