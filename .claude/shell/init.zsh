@@ -629,7 +629,8 @@ _ds_aws_login() {
   if [[ "$sso_help" != *--use-device-code* ]]; then
     print -u2 "$verb: this \`aws\` has no \`sso login --use-device-code\`" \
       "(needs a recent AWS CLI v2; measured on 2.38.4) — launching WITHOUT" \
-      "cost-read access, and ignore any unknown-option error above. Upgrade" \
+      "cost-read access, and ignore any unknown-option or \`Invalid choice\`" \
+      "error above. Upgrade" \
       "the CLI, or log in by hand first."
     return 0
   fi

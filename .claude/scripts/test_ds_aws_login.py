@@ -353,7 +353,7 @@ class AnOldCliWarnsRatherThanBlocking(GateHarness):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("NOT launching", result.stderr)
 
-    def test_a_current_cli_never_reaches_the_subcommand_probe(self):
+    def test_a_current_cli_never_reaches_the_flag_probe(self):
         # The complement, and the one that pins the hot path: a session that
         # repairs normally must not pay for `help` at all.
         _, recorded = self._gate(sts_rc=1, post_login_sts_rc=0)

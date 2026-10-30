@@ -2218,7 +2218,7 @@ Three deliberate bounds on the gate:
   `AWS_PAGER= aws sso login help`. That ordering is a safety
   property, not an accident: `help` renders through groff and a pager,
   the one part of the CLI that can fail for reasons unrelated to whether
-  a subcommand exists. Deciding the *hot* path on it would mean a broken
+  a flag exists. Deciding the *hot* path on it would mean a broken
   pager on a **current** CLI silently warn-and-launching every expired
   session — the exact failure the gate exists to catch. Placed after the
   re-probe it can only widen an outcome that is already a refusal. The
