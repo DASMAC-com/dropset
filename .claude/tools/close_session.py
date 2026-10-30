@@ -573,7 +573,8 @@ def parked(
             # must keep it alive to see the note: exit 1, and no kill.
             result["notes"].append(
                 f"cost line not appended: {e}; client left running so this is "
-                "seen — append the line by hand, then re-run --park"
+                "seen — re-run --park (with --session-id to retry the append, "
+                "without it once the line is in by hand)"
             )
             return 1, result
     result["notes"].append(
