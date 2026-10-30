@@ -711,32 +711,32 @@ decks-build: check-pnpm
 # ahead of it for the same reason: a wrong node or pnpm would otherwise fail
 # only inside the backgrounded frontend, out of sight in $(FRONTEND_LOG).
 #
-# On exit the trap stops the background frontend and nothing else, because
-# nothing else is this recipe's to stop. Everything the TUI owns tears itself
-# down when the TUI quits: `Drop for Validator` kills the validator child and
-# its temp ledger, `Drop for BotManager` kills and reaps every maker/taker
-# child, and `Drop for App` stops the explorer container. That holds for
-# Ctrl-C as well as `q` — the TUI runs in raw mode, so crossterm delivers
-# Ctrl-C as a key event rather than a signal, and it routes to the same clean
-# quit that runs those destructors instead of bypassing them.
+# On exit the trap stops the background frontend, then takes the compose
+# stack down. Everything the TUI owns tears itself down when the TUI quits:
+# `Drop for Validator` kills the validator child and its temp ledger,
+# `Drop for BotManager` kills and reaps every maker/taker child, and
+# `Drop for App` stops the explorer container. That holds for Ctrl-C as well
+# as `q` — the TUI runs in raw mode, so crossterm delivers Ctrl-C as a key
+# event rather than a signal, and it routes to the same clean quit that runs
+# those destructors instead of bypassing them.
 #
-# What is left when the demo ends is therefore the collectors it started —
-# every one, or the keyless six if the enclave gate declined — plus
-# Grafana. They are deliberately left running: they are a standing
-# recording service, not a demo fixture. Every minute they are down is a hole
-# in the stored history that no later run can backfill at tick resolution, and
-# `restart: unless-stopped` already says they are meant to outlive whatever
-# started them. Quitting the demo should cost the demo, not the data.
+# What is left after the TUI is the stack `collectors-up` started — every
+# collector, or the keyless six if the enclave gate declined, plus the
+# estimator, Grafana and Postgres — and `DEMO_DOWN` removes it, so a quit
+# leaves no localnet container running. It is a `down` without `-v`: the
+# named postgres volume survives, so the recorded history carries into the
+# next run with no container kept up to hold it. The price is a gap in that
+# history while no demo runs; `make collectors-up` after the demo keeps
+# recording instead.
 #
-# So stopping the collectors is always an explicit act: `make
-# collectors-down` for the collectors alone, or `make clean-docker` when
-# tearing the whole localnet down. The browser tabs are the operator's to
-# close, and so is the decision to stop recording.
-#
-# This is why the target does not try to stop only what it started. It has no
-# way to tell — `collectors-up` is idempotent, so a demo cannot distinguish
-# the collectors it launched from the ones already running — and under the
-# rule above it does not need to: the answer is the same either way.
+# It takes the whole compose project down rather than only what the demo
+# started. It has no way to tell — `collectors-up` is idempotent, so a demo
+# cannot distinguish the collectors it launched from ones already running —
+# and the project name is shared across worktrees, so a sibling's indexer goes
+# too. All three profiles are named because `down` reaches only the services
+# in the profiles it is given. Nothing it removes holds validator or key
+# state: the validator's ledger is the TUI's own temp directory and `keys/` is
+# a read-only bind mount.
 #
 # `DEMO_CLEANUP` still disarms the trap (`trap -`) as its first act. INT and
 # EXIT are both trapped and the shell runs the EXIT handler after the INT one,
@@ -749,7 +749,10 @@ FRONTEND_LOG ?= /tmp/dropset-frontend.log
 # before these additions.
 DEMO_FRONTEND = $(MAKE) --no-print-directory frontend-localnet \
 	>$(FRONTEND_LOG) 2>&1 </dev/null
-DEMO_CLEANUP = trap - INT TERM EXIT; kill -TERM -$$group 2>/dev/null
+DEMO_DOWN = docker compose -f infra/localnet/docker-compose.yml \
+	--profile taker --profile fx --profile pyth down --remove-orphans
+DEMO_CLEANUP = trap - INT TERM EXIT; kill -TERM -$$group 2>/dev/null; \
+	$(DEMO_DOWN)
 .PHONY: demo
 demo: check-docker check-frontend
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"

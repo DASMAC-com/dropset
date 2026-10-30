@@ -119,6 +119,9 @@ AUDD or CADC against USDC; tGBP is not on the mainnet roster).
 ## 5. Tear down
 
 Quit the TUI with `q`. That stops the validator, the bots, the explorer and the
-frontend. The collectors and Grafana keep recording on purpose:
-`make collectors-down` stops them, and `make clean-docker` stops everything
-while keeping the recorded history.
+frontend, then takes the whole localnet compose stack down — the collectors,
+the estimator, Grafana and Postgres — so `docker ps` shows no localnet
+container afterwards. The recorded history is kept: the teardown removes the
+containers but not the postgres volume, so the next run reads it again. The
+stack's project is shared across worktrees, so a sibling's indexer stops too.
+To keep recording past the demo, run `make collectors-up` after quitting.
