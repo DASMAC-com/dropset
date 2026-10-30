@@ -162,15 +162,20 @@ or, under ``--queue``::
       "pr": 285,
       "mode": "queue",
       "conclusion": "merged",    // merged | dequeued | conflicting | closed |
-                                 // not_queued | timeout | probe_failed |
-                                 // stopped
+                                 // not_queued | auto_merge_waiting |
+                                 // queued_no_group | timeout |
+                                 // probe_failed | stopped
       "settled": true,
       "elapsed_seconds": 1310,
       "polls": 22,
       "seen_queue_entry": true,
       "enqueued_at": "2026-10-22T23:40:27Z",  // earliest enqueue seen, or --since
+      "first_run_seen_at": "2026-10-22T23:41:02Z",  // a merge-group run, or null
       "last": {"rest_state": "MERGED", "gql_state": "MERGED",
-               "entry_state": null, "removed_at": null, …},
+               "entry_state": null, "entry_position": null,
+               "auto_enabled_at": null, "merge_state_status": "CLEAN",
+               "pending_checks": [{"name": "Explorer image", "required": false}],
+               "removed_at": null, …},
       "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…", …}],
       "failing_runs": [],
       "requests": {"sent": 140, "not_modified": 131, "rate_remaining": 4710},
@@ -748,15 +753,41 @@ def queue_log_path_for(pr: int) -> Path:
 # One GraphQL read answers "landed?", "still queued?" and "dequeued?" at once.
 # `mergeQueueEntry` is the queue signal: on a merge-queue repo a genuinely
 # queued PR reports `autoMergeRequest: null`, so keying on the latter announced
-# a dequeue on every run. `autoMergeRequest` stays for classic auto-merge.
+# a dequeue on every run. A set `autoMergeRequest` beside a null entry is the
+# not-yet-queued state: auto-merge waits for every pending check, required or
+# not, so the head commit's rollup names what it is waiting on.
 QUEUE_QUERY = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       state
       merged
+      mergeStateStatus
       mergeQueueEntry { state enqueuedAt position }
       autoMergeRequest { enabledAt }
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              contexts(first: 100) {
+                nodes {
+                  __typename
+                  ... on CheckRun {
+                    name
+                    status
+                    isRequired(pullRequestNumber: $number)
+                  }
+                  ... on StatusContext {
+                    context
+                    state
+                    isRequired(pullRequestNumber: $number)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -781,6 +812,15 @@ NOT_QUEUED_AFTER_SECONDS = 120
 # All-null after the entry demonstrably existed, with no removal event and no
 # failed queue run to explain it.
 AMBIGUOUS_GRACE_SECONDS = 120
+
+# Auto-merge enabled with no queue entry for this long is `auto_merge_waiting`:
+# the PR 548 shape, which sat silent to the outer timeout behind a pending
+# non-required check. The caller's remedy is the plain `gh pr merge <n>`.
+AUTO_MERGE_WAIT_SECONDS = 900
+
+# A queue entry with no merge-group run for this long is `queued_no_group`.
+# Observed dispatch lag behind other branches is about 20 minutes.
+AWAIT_GROUP_SECONDS = 1200
 
 # How far before the watch's start a removal may sit and still be this
 # cycle's, when no `--since` says when the enqueue was: the watch starts
@@ -816,6 +856,13 @@ def _parse_time(text: str | None) -> float | None:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+
+def _iso(epoch: float | None) -> str | None:
+    """Epoch seconds as a UTC ``…Z`` timestamp, or ``None``."""
+    if epoch is None:
+        return None
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _gh_json(args: list[str], what: str):
@@ -917,7 +964,39 @@ def _queue_graphql(pr: int, repo: str) -> dict:
         "gql_merged": bool(node.get("merged")),
         "entry": node.get("mergeQueueEntry"),
         "auto": node.get("autoMergeRequest"),
+        "merge_state_status": node.get("mergeStateStatus"),
+        "pending_checks": pending_contexts(node),
     }
+
+
+# Rollup states that are still running, for each context type.
+PENDING_RUN_STATUSES = frozenset(
+    {"QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED"}
+)
+PENDING_STATUS_STATES = frozenset({"PENDING", "EXPECTED"})
+
+
+def pending_contexts(node: dict) -> list[dict]:
+    """The head commit's still-running checks, as ``{name, required}``.
+
+    Required or not matters: auto-merge waits on a pending non-required
+    check too, which is the one a reader cannot otherwise see.
+    """
+    try:
+        commit = node["commits"]["nodes"][-1]["commit"]
+        contexts = commit["statusCheckRollup"]["contexts"]["nodes"]
+    except (KeyError, IndexError, TypeError):
+        return []
+    pending = []
+    for c in contexts if isinstance(contexts, list) else []:
+        if not isinstance(c, dict):
+            continue
+        if c.get("__typename") == "CheckRun":
+            if c.get("status") in PENDING_RUN_STATUSES:
+                pending.append({"name": c.get("name"), "required": c.get("isRequired")})
+        elif c.get("state") in PENDING_STATUS_STATES:
+            pending.append({"name": c.get("context"), "required": c.get("isRequired")})
+    return pending
 
 
 class QueueProbe:
@@ -1019,6 +1098,8 @@ def wait_queue(
     clock=time.monotonic,
     wall=time.time,
     since: str | None = None,
+    await_group_seconds: int = AWAIT_GROUP_SECONDS,
+    classic_auto_merge: bool = False,
 ):
     """Watch an enqueued PR until it merges or leaves the queue.
 
@@ -1029,7 +1110,8 @@ def wait_queue(
     cron, which the Bedrock auto-mode classifier can deny as persistence.
 
     ``conclusion`` is ``merged`` (exit 0), or ``dequeued`` / ``closed`` /
-    ``not_queued`` / ``timeout`` / ``probe_failed`` (exit 1). A terminal
+    ``not_queued`` / ``auto_merge_waiting`` / ``queued_no_group`` /
+    ``timeout`` / ``probe_failed`` (exit 1). A terminal
     ``MERGED`` from **any** source wins — the REST pull, the timeline's
     ``merged`` event, or GraphQL — and is checked before anything else.
 
@@ -1050,6 +1132,16 @@ def wait_queue(
     fallback. Without it a fresh call keeps only runs from the last
     :data:`RUN_WINDOW_SECONDS`; the timeline's own enqueue event now anchors
     it too, so ``since`` matters only where that event is missing.
+
+    Two bounded readings replace a silent wait to the timeout. A set
+    ``autoMergeRequest`` with no entry is **not** queued on a merge-queue
+    repo — auto-merge defers the enqueue behind every pending check,
+    required or not — so after :data:`AUTO_MERGE_WAIT_SECONDS` with no
+    required check still running it is ``auto_merge_waiting``,
+    ``last.pending_checks`` naming any non-required holdout
+    (``classic_auto_merge`` restores waiting, for a repo with no queue). An
+    entry with no run on its queue branch for ``await_group_seconds`` is
+    ``queued_no_group``; ``first_run_seen_at`` records when a run appeared.
     """
     probe = probe or QueueProbe(clock=clock)
     client = getattr(probe, "client", None)
@@ -1062,6 +1154,9 @@ def wait_queue(
     seen_entry = False
     anchor: float | None = _parse_time(since)
     null_since: float | None = None
+    auto_since: float | None = None
+    group_since: float | None = None
+    first_run_seen_at: float | None = None
     dequeue_streak = 0
     probe_errors = 0
     polls = 0
@@ -1132,6 +1227,7 @@ def wait_queue(
                             "rest": snap.get("rest_state"),
                             "gql": snap.get("gql_state"),
                             "entry": (entry or {}).get("state"),
+                            "auto": bool(snap.get("auto")),
                             "enqueued": events.get("enqueued_at"),
                             "removed": events.get("removed_at"),
                             "runs": len(runs),
@@ -1163,19 +1259,49 @@ def wait_queue(
                 if removed is not None and removed >= removal_floor:
                     conclusion = "dequeued"
                     break
-                # `autoMergeRequest` keeps classic auto-merge (no queue, so no
-                # queue runs) and an enqueue waiting on its checks waiting, but
-                # never outranks a failed queue run; neither does a timeline
-                # enqueue, whose removal may lag.
-                if (
-                    entry
-                    or (current_enqueue and not failing)
-                    or (snap.get("auto") and not failing)
-                ):
+                # A timeline enqueue never outranks a failed queue run, since
+                # its removal may lag; neither does `autoMergeRequest`.
+                if entry or (current_enqueue and not failing):
                     seen_entry = True
                     null_since = None
+                    auto_since = None
                     dequeue_streak = 0
+                    # In the queue: a run on its branch is the group, and an
+                    # entry that never gets one is told apart from a running
+                    # group rather than sitting silent to the timeout.
+                    if runs:
+                        group_since = None
+                        if first_run_seen_at is None:
+                            first_run_seen_at = wall()
+                    else:
+                        if group_since is None:
+                            group_since = now
+                        if now - group_since >= await_group_seconds:
+                            conclusion = "queued_no_group"
+                            break
+                elif snap.get("auto") and not failing:
+                    # On a merge-queue repo this is NOT queued: auto-merge
+                    # defers the enqueue until every pending check completes.
+                    # Classic auto-merge (no queue) opts back into waiting.
+                    null_since = None
+                    group_since = None
+                    dequeue_streak = 0
+                    if classic_auto_merge:
+                        seen_entry = True
+                    elif any(c.get("required") for c in snap.get("pending_checks", [])):
+                        # A required check still running is a legitimate wait,
+                        # not the stuck shape: the bound counts only from when
+                        # nothing required remains.
+                        auto_since = None
+                    else:
+                        if auto_since is None:
+                            auto_since = now
+                        if now - auto_since >= AUTO_MERGE_WAIT_SECONDS:
+                            conclusion = "auto_merge_waiting"
+                            break
                 else:
+                    auto_since = None
+                    group_since = None
                     if null_since is None:
                         null_since = now
                     if failing:
@@ -1200,6 +1326,7 @@ def wait_queue(
 
     runs = snap.get("queue_runs", [])
     events = snap.get("events") or {}
+    entry = snap.get("entry") or {}
     verdict = {
         "pr": pr,
         "repo": repo,
@@ -1211,18 +1338,17 @@ def wait_queue(
         "seen_queue_entry": seen_entry,
         # The earliest enqueue this watch saw (or `since`), so a dequeue cause
         # older than it can be told apart from this cycle's.
-        "enqueued_at": (
-            None
-            if anchor is None
-            else datetime.fromtimestamp(anchor, tz=timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
-        ),
+        "enqueued_at": _iso(anchor),
+        "first_run_seen_at": _iso(first_run_seen_at),
         "last": {
             "rest_state": snap.get("rest_state"),
             "rest_merged_at": snap.get("rest_merged_at"),
             "gql_state": snap.get("gql_state"),
-            "entry_state": (snap.get("entry") or {}).get("state"),
+            "entry_state": entry.get("state"),
+            "entry_position": entry.get("position"),
+            "auto_enabled_at": (snap.get("auto") or {}).get("enabledAt"),
+            "merge_state_status": snap.get("merge_state_status"),
+            "pending_checks": snap.get("pending_checks", []),
             "removed_at": events.get("removed_at"),
         },
         "queue_runs": runs,
@@ -2345,7 +2471,13 @@ def default_since(pr: int, repo: str) -> tuple[str | None, str | None]:
 
 
 def watch_queue(
-    pr: int, repo: str, interval: int, timeout: int, since: str | None
+    pr: int,
+    repo: str,
+    interval: int,
+    timeout: int,
+    since: str | None,
+    await_group_seconds: int = AWAIT_GROUP_SECONDS,
+    classic_auto_merge: bool = False,
 ) -> dict:
     """``--queue``: :func:`wait_queue`, its dequeue cause, and the dismissal.
 
@@ -2366,7 +2498,13 @@ def watch_queue(
     verdict: dict = {}
     try:
         verdict = wait_queue(
-            pr, repo=repo, interval=interval, timeout=timeout, since=since
+            pr,
+            repo=repo,
+            interval=interval,
+            timeout=timeout,
+            since=since,
+            await_group_seconds=await_group_seconds,
+            classic_auto_merge=classic_auto_merge,
         )
         verdict["since"] = since
         verdict["since_source"] = since_source
@@ -2651,6 +2789,19 @@ def run(argv: list[str]) -> int:
         help="with --queue: the enqueue time (ISO-8601), anchoring the run "
         "window for a fresh call such as a cron firing",
     )
+    parser.add_argument(
+        "--await-group-seconds",
+        type=int,
+        default=None,
+        help="with --queue: seconds a queue entry may go without a merge-group "
+        f"run before the watch returns queued_no_group (default {AWAIT_GROUP_SECONDS})",
+    )
+    parser.add_argument(
+        "--classic-auto-merge",
+        action="store_true",
+        help="with --queue: the repo has no merge queue, so an enabled "
+        "auto-merge is the queued signal rather than auto_merge_waiting",
+    )
     parser.add_argument("--repo", default=DEFAULT_REPO, help="owner/repo")
     parser.add_argument(
         "--interval",
@@ -2686,8 +2837,15 @@ def run(argv: list[str]) -> int:
         raise WaitForChecksError(
             "--enqueue and --reviewed-fingerprint are passed together"
         )
-    if args.since is not None and args.queue_pr is None:
-        raise WaitForChecksError("--since is meaningful only with --queue")
+    for flag, value in (
+        ("--since", args.since),
+        ("--await-group-seconds", args.await_group_seconds),
+        ("--classic-auto-merge", args.classic_auto_merge or None),
+    ):
+        if value is not None and args.queue_pr is None:
+            raise WaitForChecksError(f"{flag} is meaningful only with --queue")
+    if args.await_group_seconds is not None and args.await_group_seconds <= 0:
+        raise WaitForChecksError("--await-group-seconds must be positive")
     if args.snapshot is not None and args.pr is None:
         raise WaitForChecksError("--snapshot is meaningful only with --pr")
     if args.base is not None and args.snapshot is None:
@@ -2719,6 +2877,12 @@ def run(argv: list[str]) -> int:
             interval,
             QUEUE_TIMEOUT if args.timeout is None else args.timeout,
             args.since,
+            await_group_seconds=(
+                AWAIT_GROUP_SECONDS
+                if args.await_group_seconds is None
+                else args.await_group_seconds
+            ),
+            classic_auto_merge=args.classic_auto_merge,
         )
     else:
         timeout = DEFAULT_TIMEOUT if args.timeout is None else args.timeout

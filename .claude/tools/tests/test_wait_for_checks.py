@@ -827,7 +827,14 @@ class QueueWatchTests(unittest.TestCase):
         wfc.queue_log_path_for = lambda pr: Path(self.tmp.name) / f"q-{pr}.log"
         self.addCleanup(setattr, wfc, "queue_log_path_for", real)
 
-    def _watch(self, snaps, interval=60, timeout=7200, since=None):
+    def _watch(
+        self,
+        snaps,
+        interval=60,
+        timeout=7200,
+        since=None,
+        await_group_seconds=wfc.AWAIT_GROUP_SECONDS,
+    ):
         """Feed ``snaps`` one per poll (the last repeats); time advances only
         through ``sleep``, so elapsed seconds are exact."""
         now = [0.0]
@@ -852,7 +859,59 @@ class QueueWatchTests(unittest.TestCase):
             clock=lambda: now[0],
             wall=lambda: ENQUEUED_EPOCH + now[0],
             since=since,
+            await_group_seconds=await_group_seconds,
         )
+
+    def test_pending_contexts_names_both_context_types_required_or_not(self):
+        node = {
+            "commits": {
+                "nodes": [
+                    {
+                        "commit": {
+                            "statusCheckRollup": {
+                                "contexts": {
+                                    "nodes": [
+                                        {
+                                            "__typename": "CheckRun",
+                                            "name": "Explorer image",
+                                            "status": "IN_PROGRESS",
+                                            "isRequired": False,
+                                        },
+                                        {
+                                            "__typename": "CheckRun",
+                                            "name": "Tests",
+                                            "status": "COMPLETED",
+                                            "isRequired": True,
+                                        },
+                                        {
+                                            "__typename": "StatusContext",
+                                            "context": "Semantic PR",
+                                            "state": "PENDING",
+                                            "isRequired": True,
+                                        },
+                                        {
+                                            "__typename": "StatusContext",
+                                            "context": "done",
+                                            "state": "SUCCESS",
+                                            "isRequired": True,
+                                        },
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        self.assertEqual(
+            wfc.pending_contexts(node),
+            [
+                {"name": "Explorer image", "required": False},
+                {"name": "Semantic PR", "required": True},
+            ],
+        )
+        self.assertEqual(wfc.pending_contexts({"commits": {"nodes": []}}), [])
+        self.assertEqual(wfc.pending_contexts({}), [])
 
     def test_stays_silent_while_queued_then_reports_the_merge(self):
         v = self._watch([snap(entry=QUEUED)] * 5 + [snap(gql="MERGED", merged=True)])
@@ -1015,12 +1074,116 @@ class QueueWatchTests(unittest.TestCase):
         self.assertEqual(v["elapsed_seconds"], 600)
         self.assertEqual(v["polls"], 11)
 
-    def test_classic_auto_merge_keeps_the_watch_waiting(self):
-        """No queue on the repo: autoMergeRequest alone is the queued signal."""
+    def test_auto_merge_with_no_entry_is_auto_merge_waiting_not_queued(self):
+        """The PR 548 shape: auto-merge enabled, a non-required check pending,
+        no entry. Once a bounded wait, never a silent `seen_entry` to timeout."""
         auto = {"enabledAt": ENQUEUED}
-        v = self._watch([snap(auto=auto)] * 8 + [snap(merged=True)])
+        pending = [{"name": "Explorer image", "required": False}]
+        waiting = dict(snap(auto=auto), merge_state_status="BLOCKED")
+        waiting["pending_checks"] = pending
+        v = self._watch([waiting])
+        self.assertEqual(v["conclusion"], "auto_merge_waiting")
+        self.assertTrue(v["settled"])
+        self.assertFalse(v["seen_queue_entry"])
+        self.assertGreaterEqual(v["elapsed_seconds"], wfc.AUTO_MERGE_WAIT_SECONDS)
+        self.assertLess(v["elapsed_seconds"], wfc.AUTO_MERGE_WAIT_SECONDS + 60)
+        self.assertEqual(v["last"]["auto_enabled_at"], ENQUEUED)
+        self.assertEqual(v["last"]["merge_state_status"], "BLOCKED")
+        self.assertEqual(v["last"]["pending_checks"], pending)
+
+    def test_a_required_check_still_running_holds_the_auto_merge_bound(self):
+        """Auto-merge legitimately waits on a required check: the bound
+        counts only from when nothing required is pending."""
+        auto = {"enabledAt": ENQUEUED}
+        running = dict(snap(auto=auto))
+        running["pending_checks"] = [{"name": "Tests", "required": True}]
+        polls = wfc.AUTO_MERGE_WAIT_SECONDS // 60 + 5
+        v = self._watch([running] * polls + [snap(auto=auto)])
+        self.assertEqual(v["conclusion"], "auto_merge_waiting")
+        self.assertGreaterEqual(
+            v["elapsed_seconds"], polls * 60 + wfc.AUTO_MERGE_WAIT_SECONDS
+        )
+
+    def test_a_flap_out_of_auto_merge_restarts_its_bound(self):
+        """auto → all-null → auto: the second stretch is timed from scratch."""
+        auto = snap(auto={"enabledAt": ENQUEUED})
+        half = wfc.AUTO_MERGE_WAIT_SECONDS // 60 // 2 + 1
+        v = self._watch([auto] * half + [snap()] + [auto])
+        self.assertEqual(v["conclusion"], "auto_merge_waiting")
+        self.assertGreaterEqual(
+            v["elapsed_seconds"], (half + 1) * 60 + wfc.AUTO_MERGE_WAIT_SECONDS
+        )
+
+    def test_a_timeline_only_enqueue_with_no_group_is_queued_no_group(self):
+        """GraphQL's entry null, the timeline still queued, no run: bounded too,
+        with the entry fields honestly null."""
+        v = self._watch([snap(enqueued=ENQUEUED)], await_group_seconds=600)
+        self.assertEqual(v["conclusion"], "queued_no_group")
+        self.assertIsNone(v["last"]["entry_state"])
+        self.assertIsNone(v["last"]["entry_position"])
+
+    def test_auto_merge_that_enters_the_queue_keeps_waiting(self):
+        """Within the bound the entry appears: an ordinary queued merge."""
+        auto = {"enabledAt": ENQUEUED}
+        v = self._watch(
+            [snap(auto=auto)] * 5
+            + [snap(entry=QUEUED, runs=[queue_run()])] * 3
+            + [snap(merged=True)]
+        )
         self.assertEqual(v["conclusion"], "merged")
         self.assertTrue(v["seen_queue_entry"])
+
+    def test_classic_auto_merge_keeps_the_watch_waiting_behind_its_flag(self):
+        """No queue on the repo: autoMergeRequest alone is the queued signal."""
+        auto = {"enabledAt": ENQUEUED}
+        polls = wfc.AUTO_MERGE_WAIT_SECONDS // 60 + 3
+        now = [0.0]
+        calls = [0]
+
+        def probe(pr, repo):
+            calls[0] += 1
+            return snap(auto=auto) if calls[0] <= polls else snap(merged=True)
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        v = wfc.wait_queue(
+            285,
+            interval=60,
+            probe=probe,
+            sleep=sleep,
+            clock=lambda: now[0],
+            wall=lambda: ENQUEUED_EPOCH + now[0],
+            classic_auto_merge=True,
+        )
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertTrue(v["seen_queue_entry"])
+
+    def test_an_entry_with_no_group_run_is_queued_no_group(self):
+        """Entry seen, no merge-group run within the bound: a bounded signal,
+        reporting the entry's state and position."""
+        entry = dict(QUEUED, position=3)
+        v = self._watch([snap(entry=entry)], await_group_seconds=600)
+        self.assertEqual(v["conclusion"], "queued_no_group")
+        self.assertTrue(v["settled"])
+        self.assertTrue(v["seen_queue_entry"])
+        self.assertGreaterEqual(v["elapsed_seconds"], 600)
+        self.assertLess(v["elapsed_seconds"], 660)
+        self.assertEqual(v["last"]["entry_state"], "QUEUED")
+        self.assertEqual(v["last"]["entry_position"], 3)
+        self.assertIsNone(v["first_run_seen_at"])
+
+    def test_a_group_run_records_when_it_appeared_and_disarms_the_bound(self):
+        later = "2026-10-13T12:10:00Z"
+        group = snap(
+            entry=QUEUED, runs=[queue_run(status="in_progress", created=later)]
+        )
+        v = self._watch(
+            [snap(entry=QUEUED)] * 5 + [group] * 20 + [snap(merged=True)],
+            await_group_seconds=600,
+        )
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertEqual(v["first_run_seen_at"], "2026-10-13T12:05:00Z")
 
     def test_auto_merge_never_outranks_a_failed_queue_run(self):
         auto = {"enabledAt": ENQUEUED}
@@ -1462,9 +1625,23 @@ class QueueModeCliTests(unittest.TestCase):
         seen = {}
         real = wfc.wait_queue
 
-        def stub_wait(pr, repo=None, interval=None, timeout=None, since=None):
+        def stub_wait(
+            pr,
+            repo=None,
+            interval=None,
+            timeout=None,
+            since=None,
+            await_group_seconds=None,
+            classic_auto_merge=None,
+        ):
             seen.update(
-                pr=pr, repo=repo, interval=interval, timeout=timeout, since=since
+                pr=pr,
+                repo=repo,
+                interval=interval,
+                timeout=timeout,
+                since=since,
+                await_group_seconds=await_group_seconds,
+                classic_auto_merge=classic_auto_merge,
             )
             return {
                 "conclusion": conclusion,
@@ -1548,6 +1725,38 @@ class QueueModeCliTests(unittest.TestCase):
         seen["verdict"] = json.loads(path.read_text())
         return code, seen
 
+    def test_the_queue_bounds_reach_the_watch_and_default_off(self):
+        _, seen = self._queue_mode("merged")
+        self.assertEqual(seen["await_group_seconds"], wfc.AWAIT_GROUP_SECONDS)
+        self.assertFalse(seen["classic_auto_merge"])
+        _, seen = self._queue_mode(
+            "merged", extra=("--await-group-seconds", "300", "--classic-auto-merge")
+        )
+        self.assertEqual(seen["await_group_seconds"], 300)
+        self.assertTrue(seen["classic_auto_merge"])
+
+    def test_a_non_positive_group_bound_is_refused(self):
+        for value in ("0", "-5"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(wfc.WaitForChecksError, "positive"):
+                    wfc.run(
+                        [
+                            "wait_for_checks.py",
+                            "--queue",
+                            "285",
+                            "--await-group-seconds",
+                            value,
+                        ]
+                    )
+
+    def test_the_queue_bounds_are_refused_outside_queue_mode(self):
+        for flag in (["--await-group-seconds", "300"], ["--classic-auto-merge"]):
+            with self.subTest(flag=flag[0]):
+                with self.assertRaisesRegex(
+                    wfc.WaitForChecksError, "only with --queue"
+                ):
+                    wfc.run(["wait_for_checks.py", "--pr", "285", *flag])
+
     def test_a_merge_dismisses_the_prs_notifications(self):
         _, seen = self._queue_mode("merged")
         self.assertEqual(seen["dismissed"], [(285, wfc.DEFAULT_REPO)])
@@ -1562,7 +1771,14 @@ class QueueModeCliTests(unittest.TestCase):
     def test_every_other_exit_but_probe_failed_dismisses_never_counts(self):
         """Unsubscribe only on merge: an exit that is not a merge marks the
         threads done and keeps the subscription, and never counts."""
-        for conclusion in ("dequeued", "closed", "not_queued", "timeout"):
+        for conclusion in (
+            "dequeued",
+            "closed",
+            "not_queued",
+            "auto_merge_waiting",
+            "queued_no_group",
+            "timeout",
+        ):
             with self.subTest(conclusion=conclusion):
                 _, seen = self._queue_mode(conclusion)
                 self.assertEqual(seen["dismissed"], [(285, wfc.DEFAULT_REPO)])
@@ -1594,7 +1810,7 @@ class QueueModeCliTests(unittest.TestCase):
         `finally`, which dismisses, and a `stopped` verdict prints."""
         state = {}
 
-        def stopped_mid_wait(pr, repo=None, interval=None, timeout=None, since=None):
+        def stopped_mid_wait(pr, **_):
             state["handler"] = signal.getsignal(signal.SIGTERM)
             os.kill(os.getpid(), signal.SIGTERM)
             for _ in range(1000):  # the handler runs between instructions

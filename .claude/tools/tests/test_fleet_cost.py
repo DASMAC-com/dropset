@@ -221,6 +221,43 @@ class WalkTest(unittest.TestCase):
         meter = fc.walk(self.projects, [DAY])
         self.assertIn(("ENG-2031", 1), fc.issue_session_counts(meter, [DAY], fc.SEAT))
 
+    def _chore(self, name: str, issue: int, msg: str) -> None:
+        base = str(Path(self.tmp.name) / "repo")
+        prompt = json.dumps(
+            {
+                "type": "user",
+                "cwd": base,
+                "timestamp": f"{DAY}T11:59:00.000Z",
+                "message": {"role": "user", "content": f"/chore {issue}"},
+            }
+        )
+        self.write(
+            self.projects / "seat" / f"{name}.jsonl", [prompt, record(msg, base)]
+        )
+
+    def test_a_bedrock_chore_lands_on_the_bedrock_side(self) -> None:
+        """Its session record decides; with none, its helper-tier tag marker
+        does — never the base checkout's seat default."""
+        markers = Path(self.tmp.name) / "repo" / sm.SUBSTRATE_DIR
+        (markers / "sessions").mkdir()
+        (markers / "sessions" / "c1").write_text("bedrock\n")
+        self._chore("c1", 2040, "msg_c1")
+        (markers / "2041").write_text("bedrock\n")
+        (markers / "2041.tier").write_text("helper\n")
+        self._chore("c2", 2041, "msg_c2")
+        # A task's marker (no tier) on a base-checkout prompt is not a chore's.
+        (markers / "2042").write_text("bedrock\n")
+        self._chore("c3", 2042, "msg_c3")
+        meter = fc.walk(self.projects, [DAY])
+        bedrock = dict(fc.issue_costs(meter, [DAY]))
+        self.assertAlmostEqual(bedrock["ENG-2040"], ONE_MESSAGE)
+        self.assertAlmostEqual(bedrock["ENG-2041"], ONE_MESSAGE)
+        self.assertNotIn("ENG-2042", bedrock)
+        seat = dict(fc.issue_session_counts(meter, [DAY], fc.SEAT))
+        self.assertNotIn("ENG-2040", seat)
+        self.assertNotIn("ENG-2041", seat)
+        self.assertEqual(seat["ENG-2042"], 1)
+
     def test_a_session_record_closes_both_blind_spots(self) -> None:
         # A Bedrock `plan` (base repo, no tag) and a worktree session whose
         # tag marker a later anthropic launch rewrote: each session's own

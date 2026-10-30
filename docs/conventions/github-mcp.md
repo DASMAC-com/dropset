@@ -40,7 +40,15 @@ which drifted behind it twice:
   out. The queue branch settles it: a completed run set on
   `pr-<number>-…` proves the entry existed. The queue watch reads those
   runs itself, before concluding, and a `not_queued` verdict says
-  whether any earlier cycle's run exists.
+  whether any earlier cycle's run exists. **A set `autoMergeRequest`
+  is not queued either**: beside a null `mergeQueueEntry` it means
+  auto-merge is enabled and the PR has **not** entered the queue.
+  Auto-merge waits for every pending check, required or not, so the
+  head commit's check rollup usually names the one it is waiting on
+  (an empty list puts the hold elsewhere, such as a review); with the
+  `merge_queue` rule active, the plain `gh pr merge <n>` is the
+  remedy, which `wait_for_checks.py --enqueue` runs first. The queue
+  watch reports this state as `auto_merge_waiting`.
 
   **But rule out "already merged" first, and read that as an
   invariant rather than a lag direction.** The all-null probe has a
