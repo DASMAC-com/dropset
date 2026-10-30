@@ -291,7 +291,12 @@ const TOKEN_ACCOUNT_LEN: usize = 165;
 /// Create an SPL Token mint with 6 decimals, owned by `authority`.
 /// Returns the mint address.
 pub fn create_spl_mint(svm: &mut LiteSVM, authority: &Keypair) -> Pubkey {
-    let mint_kp = Keypair::new();
+    create_spl_mint_at(svm, authority, &Keypair::new())
+}
+
+/// [`create_spl_mint`] at a caller-chosen address — for a fixture that
+/// grinds its mint keys (see `Fixture::bootstrap_first_bump`).
+pub fn create_spl_mint_at(svm: &mut LiteSVM, authority: &Keypair, mint_kp: &Keypair) -> Pubkey {
     let lamports = svm.minimum_balance_for_rent_exemption(MINT_LEN);
 
     // SystemProgram::CreateAccount instruction (index 0).
@@ -321,7 +326,7 @@ pub fn create_spl_mint(svm: &mut LiteSVM, authority: &Keypair) -> Pubkey {
         vec![AccountMeta::new(mint_kp.pubkey(), false)],
     );
 
-    send_signed(svm, &[authority, &mint_kp], &[create, init_mint]);
+    send_signed(svm, &[authority, mint_kp], &[create, init_mint]);
     mint_kp.pubkey()
 }
 

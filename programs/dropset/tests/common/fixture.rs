@@ -22,9 +22,10 @@
 
 use super::{
     associated_token_address, create_associated_token_account, create_mock_usdc_mint,
-    create_spl_mint, deploy_with_authority, deploy_with_authority_from, mint_to, mint_to_under,
-    send_ixn, send_ixn_meta, send_ixn_signed_meta, ATA_PROGRAM_ID, CREATE_MARKET_FEE_ATOMS,
-    PROGRAM_ID, REF_PROGRAM_SO_PATH, SIGNER_FUNDING_LAMPORTS, SPL_TOKEN_PROGRAM_ID,
+    create_spl_mint, create_spl_mint_at, deploy_with_authority, deploy_with_authority_from,
+    mint_to, mint_to_under, send_ixn, send_ixn_meta, send_ixn_signed_meta, ATA_PROGRAM_ID,
+    CREATE_MARKET_FEE_ATOMS, PROGRAM_ID, REF_PROGRAM_SO_PATH, SIGNER_FUNDING_LAMPORTS,
+    SPL_TOKEN_PROGRAM_ID,
 };
 use anchor_lang::{bytemuck, programs::System, Id, InstructionData};
 use anchor_v2_testing::{Keypair, Signer};
@@ -88,6 +89,16 @@ pub fn market_pda(base: &Pubkey, quote: &Pubkey) -> Pubkey {
 }
 pub fn market_pda_and_bump(base: &Pubkey, quote: &Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(&[base.as_ref(), quote.as_ref()], &PROGRAM_ID)
+}
+/// Whether `wallet`'s SPL-token ATA for `mint` sits on the first bump, so
+/// the canonical search for it rejects nothing.
+fn first_bump_ata(wallet: &Pubkey, mint: &Pubkey) -> bool {
+    let seeds = [
+        wallet.as_ref(),
+        SPL_TOKEN_PROGRAM_ID.as_ref(),
+        mint.as_ref(),
+    ];
+    Pubkey::find_program_address(&seeds, &ATA_PROGRAM_ID).1 == u8::MAX
 }
 pub fn event_authority() -> Pubkey {
     Pubkey::find_program_address(&[b"__event_authority"], &PROGRAM_ID).0
@@ -393,6 +404,34 @@ impl Fixture {
         )
     }
 
+    /// Like [`Self::bootstrap`] but with both mints ground until each
+    /// market treasury lands on its first ATA bump. A `swap` re-derives
+    /// both treasuries (and the taker's two ATAs) by canonical search, and
+    /// every rejected bump costs 1,500 CU, so on fresh random keys a take
+    /// costs a different amount on every run. A test that reads an
+    /// absolute CU figure against a fixed ceiling bootstraps here and takes
+    /// with a [`Self::first_bump_depositor`], so its reading is the same on
+    /// every run.
+    pub fn bootstrap_first_bump() -> Self {
+        let authority = Keypair::new();
+        let mut svm = deploy_with_authority(&authority);
+        let (base, quote) = loop {
+            let (base, quote) = (Keypair::new(), Keypair::new());
+            let market = market_pda(&base.pubkey(), &quote.pubkey());
+            if first_bump_ata(&market, &base.pubkey()) && first_bump_ata(&market, &quote.pubkey()) {
+                break (base, quote);
+            }
+        };
+        let base_mint = create_spl_mint_at(&mut svm, &authority, &base);
+        let quote_mint = create_spl_mint_at(&mut svm, &authority, &quote);
+        Self::bootstrap_with_legs(
+            svm,
+            authority,
+            (base_mint, SPL_TOKEN_PROGRAM_ID),
+            (quote_mint, SPL_TOKEN_PROGRAM_ID),
+        )
+    }
+
     fn bootstrap_on(mut svm: LiteSVM, authority: Keypair) -> Self {
         let base_mint = create_spl_mint(&mut svm, &authority);
         let quote_mint = create_spl_mint(&mut svm, &authority);
@@ -683,7 +722,28 @@ impl Fixture {
 
     /// A new keypair with funded ATAs holding `base` / `quote` atoms.
     pub fn funded_depositor(&mut self, base: u64, quote: u64) -> Keypair {
-        let kp = self.funded_keypair(10 * SIGNER_FUNDING_LAMPORTS);
+        self.fund_depositor(Keypair::new(), base, quote)
+    }
+
+    /// [`Self::funded_depositor`] with the key ground until both its ATAs
+    /// land on their first bump — the taker half of
+    /// [`Self::bootstrap_first_bump`]. The grind assumes SPL-token legs.
+    pub fn first_bump_depositor(&mut self, base: u64, quote: u64) -> Keypair {
+        let kp = loop {
+            let kp = Keypair::new();
+            if first_bump_ata(&kp.pubkey(), &self.base_mint)
+                && first_bump_ata(&kp.pubkey(), &self.quote_mint)
+            {
+                break kp;
+            }
+        };
+        self.fund_depositor(kp, base, quote)
+    }
+
+    fn fund_depositor(&mut self, kp: Keypair, base: u64, quote: u64) -> Keypair {
+        self.svm
+            .airdrop(&kp.pubkey(), 10 * SIGNER_FUNDING_LAMPORTS)
+            .unwrap();
         let (b_ata, q_ata) = self.create_atas(&kp.pubkey());
         if base > 0 {
             self.mint_leg(true, &b_ata, base);

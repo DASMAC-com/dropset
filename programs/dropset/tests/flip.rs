@@ -395,7 +395,8 @@ fn send_at_max_cu(
 
 /// What a one-atom sell into a cold ten-vault book cost before guard 1f
 /// ended the walk: every one of the book's entries visited, ~2.4k CU
-/// each, for zero fills. A dust walk must now come in well under it.
+/// each, for zero fills. A dust walk must now come in under half of it; it
+/// measures 87.3k CU, the same as flushing all ten vaults with no fill.
 const OLD_DUST_WALK_CU: u64 = 247_000;
 
 /// A one-atom sell above price 1 buys one quote atom at the best bid and
@@ -535,15 +536,18 @@ fn a_whole_book_take_on_a_fully_flipped_book_stops_at_the_leg_cap() {
 /// Floor on the legs a cold take completes within what a bare `swap` gets
 /// with no budget instruction — the ordinary take, which must keep filling
 /// without one. Only a take that clears most of the book runs past it.
-/// Fifteen fit as measured; the floor keeps one leg of slack, since a cold
-/// take's CU moves by several thousand between runs (the fresh keys it
-/// derives from).
+/// Fifteen fit on either side as measured, the sixteenth crossing 200k; the
+/// floor keeps one leg (~6k CU) of slack for program changes. The reading is
+/// the same on every run because [`ten_vault_book`] grinds its keys: on
+/// fresh random ones the swap's four ATA searches swung a cold take by 11k
+/// CU or more between runs, and the floor drew 13 legs on a bad one.
 const DEFAULT_BUDGET_LEGS: usize = 14;
 
 /// Ceiling on a cold take that strands one atom one leg short of the cap,
-/// where the atom, not the cap, must end the walk. It measures about 245k
-/// CU; were the atom to walk the rest of the book instead, the 60-odd entries
-/// a side has left would add ~2.4k CU each, well past this.
+/// where the atom, not the cap, must end the walk. It measures 213.3k (buy)
+/// and 213.6k (sell) CU; were the atom to walk the rest of the book
+/// instead, the 60-odd entries a side has left would add ~2.4k CU each,
+/// well past this.
 const STRANDED_TAKE_CU: u64 = 300_000;
 
 /// The costliest take: a take on a cold ten-vault book (every vault flushed
@@ -819,13 +823,15 @@ fn a_dust_sell_on_a_flipped_book_fits_a_bare_swap() {
 
 /// Ten vaults on one market, every level of every vault quoting a spread
 /// at 12% of each leg a level, plus a taker funded to sweep it. Cold:
-/// nothing has touched the book since the profiles were set.
+/// nothing has touched the book since the profiles were set. The mints and
+/// the taker are ground to first-bump ATAs, so the CU a take reads here is
+/// the same on every run and can be pinned against a fixed ceiling.
 fn ten_vault_book() -> (Fixture, Keypair) {
     let ladder: Vec<(u32, u16, u32)> = (0..N_LEVELS as u32)
         .map(|i| ((i + 1) * 1_000, 1_200, u32::MAX))
         .collect();
     let profile = flip_profile(&ladder, &ladder, 500);
-    let mut f = Fixture::bootstrap();
+    let mut f = Fixture::bootstrap_first_bump();
     let auth = f.authority.insecure_clone();
     let reference = Price::encode(10_850_000, 0).unwrap().as_u32();
     for i in 0..VAULTS {
@@ -838,7 +844,7 @@ fn ten_vault_book() -> (Fixture, Keypair) {
             .expect("seed");
         f.svm.expire_blockhash();
     }
-    let taker = f.funded_depositor(20_000_000, 50_000_000);
+    let taker = f.first_bump_depositor(20_000_000, 50_000_000);
     (f, taker)
 }
 
