@@ -2882,16 +2882,18 @@ a terminal closed outright, is covered by the next morning's digest.
   `upkeep.py fold-stamp` and said by the scheduler through
   `upkeep.py fold-today`), the curator's dispatch on the scheduler's
   `state of play written` message with the fold's hand-off as the
-  curator's first message, the unasked prune and the weekly memory
-  judge below, and the morning's one destructive ask — the
-  transcript purge, the upkeep report's other destructive items
+  curator's first message, and the morning's one destructive ask —
+  the transcript purge, the upkeep report's other destructive items
   (allowlist cruft, permission-refresh candidates) and the judged
-  memories — each applied only where the operator ticks it.
+  memories, each applied only where the operator ticks it. Two acts
+  sit outside the ask: the unasked prune and the weekly memory
+  judge, below.
 
   **Done means prune.** An issue marked Done or Canceled releases
   everything attached to it, and the launcher prunes it without
   asking (operator ruling, 2026-10-29): `upkeep.py prune --apply`,
-  its first act after the fold, removes the checkout under
+  its first act once the fold is done or skipped, removes the
+  checkout under
   `.claude/worktrees/<n>`, its `.git/worktrees` registration
   (`git worktree prune` after the removal) and the local branch.
   Eligibility is the board rule — status type completed or
@@ -2909,8 +2911,8 @@ a terminal closed outright, is covered by the next morning's digest.
 
   **The memory posture is minimal.** The mechanical
   `memory_audit.py` stays in the upkeep pass as a pre-filter, and the
-  report's `memory` line says the `MEMORY.md` line count every run —
-  it should fall. Weekly, on its own gate
+  report's `memory` line says the `MEMORY.md` line count on every
+  run whose gate answers — it should fall. Weekly, on its own gate
   (`memory_scan_gate.py judge-check`, a time-only marker beside the
   scan's), the launcher spawns one read-only sub-agent that reads
   every memory against HEAD and the board and returns a verdict and
@@ -2919,9 +2921,9 @@ a terminal closed outright, is covered by the next morning's digest.
   that belongs in a committed doc) or **keep** (about the operator
   or how to work, not derivable from the repo; `feedback` memories
   stay). The first run is a full cull, uncapped; later runs are
-  capped at ten. Repo-bound items are filed as one `Claude:` docs
-  task per run, and a ticked memory is deleted with its index line
-  once its fact has a home.
+  capped at ten. A ticked memory is deleted with its index line; a
+  repo-bound one only once its fact is queued for a committed doc,
+  in the one `Claude:` docs task each run files.
 
 - **`architect <n>`** — start **or resume** an **architect** session on
   the design thread governed by issue `<n>`, its only argument: the CEO

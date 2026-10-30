@@ -528,6 +528,48 @@ class PassTests(unittest.TestCase):
         self.assertEqual(step["held"], ["eng-10: held: not yet digested"])
         self.assertIn("1 held: not yet digested", step["line"])
 
+    def test_a_transcript_written_at_the_close_is_held(self):
+        written = datetime(2026, 10, 8, 8, tzinfo=timezone.utc)
+        sent, _ = self._held_pass("2026-10-08T08:00:00", written)
+        self.assertEqual(sent, [["eng-12"]])
+
+    def test_the_held_names_reach_the_rendered_report(self):
+        written = datetime(2026, 10, 8, 9, tzinfo=timezone.utc)
+        _, step = self._held_pass("2026-10-08T08:00:00", written)
+        text = render({"ran_at": "t", "armed": True, "steps": [step]})
+        self.assertIn("  - eng-10: held: not yet digested", text)
+
+    def _tree_project(self, tmp: str, suffix: str = "") -> Path:
+        tree = f"{BASE}/.claude/worktrees/eng-10"
+        project = Path(tmp) / (prune_conversations.slugify(Path(tree)) + suffix)
+        project.mkdir(parents=True)
+        return project
+
+    def _prune_with_projects(self, tmp: str) -> list[str]:
+        ctx = make_ctx(FakeRun())
+        ctx.base = Path(tmp) / "base"
+        ctx.projects = Path(tmp)
+        ctx.data["eligible"] = {"eng-10"}
+        ctx.data["local_traces"] = {"eng-10"}
+        return upkeep.undigested(ctx, ["eng-10"])
+
+    def test_a_session_started_in_a_tree_subdirectory_holds_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (self._tree_project(tmp, "-frontend") / "s.jsonl").write_text("{}\n")
+            self.assertEqual(self._prune_with_projects(tmp), ["eng-10"])
+
+    def test_a_sibling_trees_project_does_not_hold_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (self._tree_project(tmp, "0") / "s.jsonl").write_text("{}\n")
+            self.assertEqual(self._prune_with_projects(tmp), [])
+
+    def test_an_unreadable_transcript_holds_the_tree(self):
+        # A dangling link: the glob lists it, the stat fails. Fail closed.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = self._tree_project(tmp)
+            (project / "s.jsonl").symlink_to(project / "gone.jsonl")
+            self.assertEqual(self._prune_with_projects(tmp), ["eng-10"])
+
     def test_a_tree_digested_before_the_close_goes(self):
         written = datetime(2026, 10, 8, 7, tzinfo=timezone.utc)
         sent, step = self._held_pass("2026-10-08T08:00:00", written)

@@ -1,6 +1,6 @@
 ---
 name: launch
-description: Run the launcher — the executor-tier session that starts the day, opened by the fresh-day `plan` pre-launch in a tab left of the scheduler's (or typed as `launch`), in the base repo with no worktree, branch or PR. Runs the trim-context lever fold in its own visible tab, filing the Claude: batches into Backlog and writing the fold stamp; gathers kill and merge candidates, filing nothing on them. Then prunes, unasked, every worktree and branch whose issue is Done or Canceled and whose session the digest has read, reporting each tip. Waits, event-driven, for the scheduler's `state of play written`, then dispatches the curator with the hand-off. Weekly, a read-only sub-agent judges every memory stale, superseded, repo-bound or keep. Then asks the one destructive question — the transcript purge, the upkeep report's other destructive items and the judged memories — applying only what is ticked. Ends with session metrics and its cost; the tab stays open.
+description: Run the launcher — the executor-tier session that starts the day, opened by the fresh-day `plan` pre-launch in a tab left of the scheduler's (or typed as `launch`), in the base repo with no worktree, branch or PR. Runs the trim-context lever fold in its own visible tab, filing the Claude: batches into Backlog and writing the fold stamp; gathers kill and merge candidates, filing nothing on them. Then prunes, unasked, every worktree (once the digest has read its session) and stray branch whose issue is Done or Canceled, reporting each tip. Waits, event-driven, for the scheduler's `state of play written`, then dispatches the curator with the hand-off. Weekly, a read-only sub-agent judges every memory stale, superseded, repo-bound or keep. Then asks the one destructive question — the transcript purge, the upkeep report's other destructive items and the judged memories — applying only what is ticked. Ends with session metrics and its cost; the tab stays open.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -65,7 +65,7 @@ python3 .claude/tools/planning_doc.py --section 'Upkeep report'
 
 Keep the section in context: step 4's ask reads its destructive
 items from it. A report that wrote no digest means no fold: say so,
-write no stamp, and go on to step 2.
+write no stamp, and go straight on to the prune below.
 
 Follow trim-context steps 1–7 as written — batches **Backlog, no
 milestone**, folds into open issues zero-echo, rejections filed
@@ -88,8 +88,8 @@ one line of evidence — the commit, the PR or the sibling issue. File
 nothing and move nothing on them: canceling and merging are the
 curator's, on its judgment and the operator's tick.
 
-**Then prune, unasked** — the first act after the stamp (operator
-ruling, 2026-10-29: Done means prune):
+**Then prune, unasked** — the first act once the fold is done or
+skipped (operator ruling, 2026-10-29: Done means prune):
 
 ```sh
 python3 .claude/tools/upkeep.py prune --apply
@@ -220,8 +220,9 @@ python3 .claude/tools/memory_scan_gate.py judge-record <memory-dir>
 
 The verdicts join step 4's ask. **Repo-bound** items are filed first
 as **one** `Claude:` docs task per run (Backlog, no milestone; one
-part per memory with its target doc and the claim to land), so each
-tick deletes a memory whose fact already has a home.
+part per memory with its target doc and the claim to land), so a
+ticked repo-bound memory is deleted only once its fact is queued for
+a committed doc.
 
 ## 4. The destructive ask
 

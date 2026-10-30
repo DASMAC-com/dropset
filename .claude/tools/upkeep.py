@@ -42,7 +42,8 @@ refuses the whole pass, since every later step assumes it.
     ``prune_worktrees`` as ``--closed`` names: only a live session lock holds
     one, and the report names each one's commits ahead of ``origin/main``. A
     worktree whose session the digest has not read yet — a transcript written
-    at or after the last digest window's close (:func:`undigested`) — is held
+    at or after the last digest window's close, or one it cannot read
+    (:func:`undigested`) — is held
     out of the set and reported ``held: not yet digested``; it goes the next
     morning;
  7. dismiss every settled PR's notifications, unsubscribing only from a
@@ -460,21 +461,34 @@ def undigested(ctx: Ctx, targets: list[str]) -> list[str]:
     transcript written at or after the latest digest window's close (or any
     transcript, when no digest has run). A tree goes only once its session
     metrics are in a digest; a held one goes the next morning. A branch with
-    no tree has no transcript to read, so it is never held."""
+    no tree has no transcript to read, so it is never held. An unreadable
+    transcript holds the tree: the guard fails closed."""
     projects = ctx.projects or prune_conversations.projects_root()
     close = session_digest.last_close(ctx.base / session_digest.DIGEST_DIR)
     cutoff = close.timestamp() if close is not None else None
+    try:
+        dirs = [p for p in projects.iterdir() if p.is_dir()]
+    except OSError:
+        dirs = []
     held = []
     for tree in ctx.data.get("trees", []):
         if tree.get("branch") not in targets or prune_worktrees.is_base(tree):
             continue
-        # Top-level transcripts only, as the digest's own discovery reads them.
-        project = projects / prune_conversations.slugify(Path(tree["path"]))
-        try:
-            mtimes = [p.stat().st_mtime for p in project.glob("*.jsonl")]
-        except OSError:
-            mtimes = []
-        if mtimes and (cutoff is None or max(mtimes) >= cutoff):
+        # The tree's own project, and a session started in a subdirectory of
+        # it (`<slug>-<sub>`), which the digest's prefix discovery also reads.
+        slug = prune_conversations.slugify(Path(tree["path"]))
+        mtimes: list[float] = []
+        unreadable = False
+        for project in dirs:
+            if project.name != slug and not project.name.startswith(slug + "-"):
+                continue
+            # Top-level transcripts only, as the digest's discovery reads them.
+            for transcript in project.glob("*.jsonl"):
+                try:
+                    mtimes.append(transcript.stat().st_mtime)
+                except OSError:
+                    unreadable = True
+        if unreadable or (mtimes and (cutoff is None or max(mtimes) >= cutoff)):
             held.append(tree["branch"])
     return sorted(held)
 
