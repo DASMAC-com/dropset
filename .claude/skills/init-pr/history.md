@@ -42,7 +42,14 @@ is not repeated here.
 - **Scoped surveys.** A `general-purpose` survey of reference repos
   pulled 2–2.5M input each; an open-ended in-repo "map the TUI and the
   bots" survey was the top sink of three consecutive sessions, each
-  needing only ~3–6 named modules the main loop then Read anyway.
+  needing only ~3–6 named modules the main loop then Read anyway. A
+  scoped survey briefed "≤ 10 turns / ≤ 15 tool calls" took 11 and 18
+  (≈585k summed input, more than any of six review lenses), and the
+  main loop then re-read its exemplar regions by slice to imitate
+  them.
+- **Log cascades.** `grep -nE -A4 '^error…'` over a 70-error E0603
+  cascade (one private module) gave a session its two largest results,
+  ≈6.8k each; the first three blocks answered it.
 - **Planning document.** A whole-document read cost ≈9.6k (2.4× the
   next result) to answer a ~six-line question; the live
   scheduler then answered better, correcting a stale fact the document
@@ -91,6 +98,11 @@ is not repeated here.
 - **Stale citations (step 12).** All four `(§4 row 5)` citations in
   one spec had been rewritten away by an unrelated PR, making the item
   moot, established via four greps including a ≈1.1k sweep.
+- **Scope sizing (step 1).** A TUI feature estimated at ≈550 lines
+  landed +1,261 / −137 (\$29, 193 turns): rustfmt expanded the new
+  module ≈1.4×, and each new `Action` variant touched ≈10 match tables
+  plus the all-variants fixture. The overage surfaced only after
+  implementing, when a further split was no longer allowed.
 - **Migration numbers (step 13).** Two branches took the same number
   twice in one week; the two-command form routed every open PR's file
   list through context (~4.0k).

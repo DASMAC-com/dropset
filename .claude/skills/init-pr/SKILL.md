@@ -149,14 +149,18 @@ The three rules specific to `init-pr`:
    discovery commit; one message to the owning session costs a
    fraction of one map, and a reversed premise invalidates the map.
 
-1. **Survey with a scoped `Explore` agent, or not at all.** For a
-   survey of reference code (external or in-repo), spawn `Explore`,
-   not `general-purpose`, with an explicit **named-path allowlist**,
-   caps in **turns and tool calls** (e.g. "≤ 8 turns, ≤ 12 tool
-   calls, then report"), and a compact file → responsibility → key
-   symbols map as the deliverable. A ≤ ~3-file question is cheaper
-   Read directly. Compose the brief with the committed tool, never by
-   reading the convention doc to quote it:
+1. **Survey with a scoped `Explore` agent, or not at all.** A survey
+   **locates** code; it never maps code you are about to edit. When
+   the main loop will imitate a pattern it must read anyway, read the
+   2–3 exemplar regions directly by slice — a survey of them is paid
+   twice. For a survey of reference code (external or in-repo), spawn
+   `Explore`, not `general-purpose`, with an explicit **named-path
+   allowlist**, caps in **turns and tool calls** stated as a hard stop
+   with a report-now clause ("≤ 8 turns, ≤ 12 tool calls; at either
+   cap, stop and report what you have"), and a compact file →
+   responsibility → key symbols map as the deliverable. A ≤ ~3-file
+   question is cheaper Read directly. Compose the brief with the
+   committed tool, never by reading the convention doc to quote it:
 
    ```sh
    python3 .claude/tools/lens_preamble.py --out <scratchpad>/brief.md \
@@ -179,7 +183,7 @@ shape (dry runs included), never polling a backgrounded log,
 `make tools-tests` whole, `wait_for_checks.py` for CI, and never
 re-reading what you authored. A refused search leaves its question
 unanswered, never zero hits (`docs/conventions/shell-commands.md`).
-Seven reminders neither states:
+The reminders neither states:
 
 - **Test one tools module with the wrapper**:
   `make tools-test T=test_<tool>` (`K=<name>` narrows). It resolves the
@@ -204,6 +208,13 @@ Seven reminders neither states:
   from its slices; reach for `git diff` only for a change you have not
   read (a rebase, a hook autofix, a sibling session), and take
   `--stat` first when the question is which files moved.
+
+- **Cap a build or test log's error grep at the first few blocks.**
+  A compiler log is a cascade — one root cause, dozens of identical
+  blocks — so take
+  `run_quiet.py inspect <log> --grep '<re>' --max 3`, then slice one
+  region; never `grep -A` / `-B` for error blocks
+  (`docs/conventions/context-economy.md` → "The levers").
 
 - **Write the issue body on the zero-echo path.** The bootstrap read
   it without an echo; keep it that way. A body **append** (a progress
@@ -261,6 +272,17 @@ Seven reminders neither states:
      test-heavy or prose-deletion overage, where a split would ship
      inert code. **Never a second PR on this
      issue** later (`docs/conventions/commits-and-prs.md`).
+
+     **Size honestly, and from the parts.** Estimate new Rust at
+     formatted size, about 1.4× a hand count. For an enum-dispatched
+     surface (the TUI `Action` enum), add a per-variant cost: count
+     the `match self` tables once, and every new variant touches each
+     of them plus the all-variants fixture. When the issue states an
+     estimate, sum its parts list and flag a mismatch now. Then
+     re-ask the split question at the **first commit checkpoint**,
+     while a split is still cheap: this PR finishes its
+     self-contained half, and the remainder goes to the scheduler as
+     pullable units, never a second PR here.
 
    Present the description and checklist as the plan of work. The
    user's own instructions win.
