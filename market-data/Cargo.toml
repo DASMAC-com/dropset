@@ -133,7 +133,7 @@ dropset-db-schema = { path = "../db-schema", features = ["test-support"] }
 # suite, so such a typo fails a required check rather than reaching a deploy.
 # The test is `#[ignore]`d — it needs a Docker daemon; run it with
 # `cargo test -p dropset-market-data -- --ignored`.
-testcontainers-modules = { version = "0.11", features = ["postgres"] }
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
 
 [package]
 description = "Market-data collection app and its crypto and FX reference feeds."

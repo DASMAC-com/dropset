@@ -26,7 +26,7 @@ sqlx = { version = "0.8", default-features = false, features = [
   "migrate",
 ] }
 # Only for `test-support` (src/testing.rs); no deployed binary links it.
-testcontainers-modules = { version = "0.11", features = [
+testcontainers-modules = { version = "0.15", features = [
   "postgres",
 ], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

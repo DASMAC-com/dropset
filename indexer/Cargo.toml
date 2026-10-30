@@ -66,7 +66,7 @@ dropset-db-schema = { path = "../db-schema", features = ["test-support"] }
 # `dropset-db-schema` the way a deployment is. Those tests need a Docker
 # daemon, so they are `#[ignore]`d; the `Postgres` CI job runs them with
 # `--run-ignored all`.
-testcontainers-modules = { version = "0.11", features = ["postgres"] }
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [package]
