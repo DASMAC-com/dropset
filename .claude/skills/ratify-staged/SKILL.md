@@ -24,9 +24,9 @@ The curator drives the same tool over the **inbox pool** with
 curator's own `Curator pending` mark, `[Operator]` items included and
 marked) rather than over `Session pending`. There
 `ask` takes the session's per-task `--notes` and its `--proposals`
-(edges, and the launcher's kill and merge candidates, asked as a
-further question; no priority kind, priorities being the
-scheduler's), `approve` takes one id at a time plus
+(edges, priority changes, and the launcher's kill and merge
+candidates, asked as a further question), `approve` takes one id at a
+time plus
 any rejects, and `gate` is refused, since nothing is staged. The steps
 below are the staged pool's and are unchanged.
 
@@ -39,8 +39,11 @@ in the operator's wording (2026-10-23):
 > tasks to Linear so that you can review them?
 
 With the list inline — each task's title with its verb/substrate
-token, one line of scope, its cost band — and the **blocking edges
-the session proposes**, as a chain with a one-line reason each
+token, one line of scope, its cost band, and the **priority the
+session proposes** with its reason in a word
+(`High — blocks the demo`; `[Operator]` items stay fixed at Urgent)
+— and the **blocking
+edges the session proposes**, as a chain with a one-line reason each
 (shared files, applied grammar). A session that believes no edge is
 needed says so.
 
@@ -48,18 +51,24 @@ needed says so.
   is the operator placing edges through an explicit in-tab
   instruction (ruling 2's human-placed form), never an automated
   filer deciding one. An edge the answer strikes is not placed.
+- **A yes writes the proposed priorities**, each as the answer left it.
 - **A no returns to stage 1.**
 
 ## 2. File into `Session pending`
 
 File every task `Backlog` plus the **`Session pending`** milestone
-**in the creating call**, with its title token
-(`docs/conventions/linear-automation.md` → "The verb/substrate title
-token"). Once every task exists, place the ratified edges with
-`board_batch.py edges --pairs <file>` (rehearse with `--dry-run`).
-Then say, in plain text: "filed these N tasks; let me know what you
-think." The operator reads the filed bodies in Linear and
-comments on any that needs work.
+and its **proposed priority**, all **in the creating call**, with its
+title token (`docs/conventions/linear-automation.md` → "The
+verb/substrate title token"). Once every task exists, place the
+ratified edges with `board_batch.py edges --pairs <file>` (rehearse
+with `--dry-run`). Then message the live scheduler and curator the
+set in one line (`filed ENG-1 High, ENG-2 Medium — <why>`); either
+confirms by silence or rewrites under the agreement rule
+(`docs/conventions/linear-automation.md` → "Priorities: shared
+authority, the agreement rule"). With neither live, the proposal
+stands and is named in the handoff. Then say, in plain text: "filed
+these N tasks; let me know what you think." The operator reads the
+filed bodies in Linear and comments on any that needs work.
 
 ## 3. The review ask, in rounds
 
@@ -72,7 +81,8 @@ python3 .claude/tools/ratify_staged.py ask --ids <ENG-### …> \
 
 Pass each `calls[]` entry's `questions` to `AskUserQuestion`
 unchanged: one checkbox per task, **never grouped**, up to sixteen
-per call. The text is the operator's:
+per call, each leading with its filed priority. The text is the
+operator's:
 
 > Have you looked at these? Check each one once you have. Leave a
 > comment on it and I will revise it; leave nothing and I will take

@@ -249,8 +249,8 @@ the day's **one destructive question**. Detail:
 **No automated writer files a blocking edge — ever**, semantic ones
 included; a human places them — in the **scheduler**, by a ticked
 curator proposal, or by a seat session's filing yes. The scheduler and
-curator message each other any change to the other's edge; priorities
-are the scheduler's alone. A spurious edge (dropping an issue out of
+curator message each other any change to the other's edge; both write
+priorities under the agreement rule. A spurious edge (dropping an issue out of
 the available set) costs more than a missing one (a rebase). A filer
 that believes a real dependency exists **proposes** it via
 `AskUserQuestion` with the concrete evidence and writes it only on an

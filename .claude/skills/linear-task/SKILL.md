@@ -160,8 +160,17 @@ what to file.
      and a spurious edge drops an issue out of the board's
      available set.
 
-   - **Priority** — default to 3 (Medium). Bump to
-     2 (High) only if the user calls it urgent.
+   - **Priority** — the filer's **proposal**, written in
+     the creating call: default to 3 (Medium), 2 (High)
+     only if the user calls it urgent; an `[Operator]`
+     item stays fixed at 1 (Urgent). After filing,
+     message the live scheduler and curator the id and
+     priority with its reason in a word; either confirms
+     by silence or rewrites under the agreement rule
+     (`docs/conventions/linear-automation.md` →
+     "Priorities: shared authority, the agreement rule").
+     With neither live, the proposal stands and the
+     report names it.
 
 1. **Check the Backlog for a duplicate first — cheaply.**
    This step exists because its absence filed a real

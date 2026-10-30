@@ -316,12 +316,19 @@ with no refactor-later burden a later issue will undo.
 - An issue is in Next **iff** it is in Todo with no live
   blocking edge. "Put it in Next" means resolving or re-scoping
   what blocks it — **never** silently dropping a real dependency.
-- **Priorities are the scheduler's alone; edges are the
-  scheduler's and the curator's** (ruling 2); implementation
-  sessions never place edges. The curator messages a priority it
-  believes wrong. Message the curator every direction change, and
-  any write touching an edge it placed, with the reason, in the
-  same turn.
+- **Priorities and edges are the scheduler's and the curator's**
+  (ruling 2); implementation sessions never place edges, and a
+  filer only proposes a priority on its own tasks at filing.
+  Priorities move under the **agreement rule**
+  (`docs/conventions/linear-automation.md` → "Priorities: shared
+  authority, the agreement rule"), which governs the messaging,
+  the counter-write and the escalation to the operator; follow it
+  there. A filer's one-line priority message is confirmed by
+  silence or rewritten under the same rule. The scheduler still
+  owns dispatch order as read: a wave dispatches on the priorities
+  as they stand at that moment, and the next write-back records the
+  result. Message the curator every direction change, and any write
+  touching an edge it placed, with the reason, in the same turn.
 - **A hold is an edge or it does not exist** (ruling 2). An issue
   held behind an in-flight surface or a sequencing reason gets a
   blocking edge on that blocker, asked in step 8's ask at
@@ -650,6 +657,7 @@ session that died mid-review — offer to resume it.
   days.
 - **The board is shared with the curator alone**, under ruling
   2's coordination rule: the curator judges (promote, kill,
-  merge), the scheduler schedules and owns priorities and the
-  document; each messages the other any edge write touching what
-  the other placed.
+  merge), the scheduler schedules and owns the document, both hold
+  priorities under the agreement rule; each messages the other
+  every priority write and any edge write touching what the other
+  placed.

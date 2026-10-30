@@ -1,6 +1,6 @@
 ---
 name: curate
-description: Run the curator — the daily advisor-tier session that owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Dispatched by the launcher each morning, or by hand with the `curate` verb (Bedrock; `curate anthropic` is the escape). Bootstraps from the Planning document, the rulings file and one compact pool listing; ranks the un-parked Backlog against the day's direction; walks the operator through it four tasks at a time, one checkbox each with a line of commentary, plus a second checklist of proposed edges and, in the first ask, the launcher's kill and merge candidates. Moves each ticked, uncommented task to Todo one at a time, folds comments into the task's body, places only the edges, kills and merges the operator ticks — never a priority, the scheduler's — and spins off an architect task when a spec needs a design conversation first. Messages the scheduler every move it makes. Event-driven, never polls; stops on the scheduler's closing message.
+description: Run the curator — the daily advisor-tier session that owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Dispatched by the launcher each morning, or by hand with the `curate` verb (Bedrock; `curate anthropic` is the escape). Bootstraps from the Planning document, the rulings file and one compact pool listing; ranks the un-parked Backlog against the day's direction; walks the operator through it four tasks at a time, one checkbox each with a line of commentary, plus a second checklist of proposed edges and, in the first ask, the launcher's kill and merge candidates. Moves each ticked, uncommented task to Todo one at a time, folds comments into the task's body, places only the edges, kills and merges the operator ticks, writes priorities under the agreement rule, and spins off an architect task when a spec needs a design conversation first. Messages the scheduler every move it makes. Event-driven, never polls; stops on the scheduler's closing message.
 user-invocable: true
 ---
 
@@ -8,8 +8,9 @@ user-invocable: true
 
 The **curator** judges: everything between Backlog and Todo —
 what to promote, kill or merge. The **scheduler** (the `plan`
-session) schedules — dispatch, holds, priorities, the direction —
-and owns the Planning document. The **launcher** starts the day:
+session) schedules — dispatch, holds, the direction — and owns the
+Planning document. **Both hold priorities**, under the agreement
+rule (below). The **launcher** starts the day:
 it runs the lever fold and hands its kill and merge candidates to
 this session. Todo means "should this be done", and the operator
 answers that question in this tab, four tasks at a time.
@@ -183,8 +184,10 @@ don't retitle around it.
 one-line reason (what it consumes, what it unblocks). In the
 **first ask** it also carries the launcher's hand-off, one
 checkbox per candidate with its evidence as the reason —
-`{"kill": <id>}` and `{"merge": [<ids> …]}`. The tool has no
-priority kind: a priority goes to the scheduler (below). A ticked
+`{"kill": <id>}` and `{"merge": [<ids> …]}`. A re-rank the curator
+wants the operator's word on rides here too, as
+`{"priority": {"id": <id>, "to": <name>}}`; one it is sure of it
+simply writes (below). A ticked
 proposal is executed after the ticks (below). An unticked one is
 **not executed and not re-asked** unless its evidence changes.
 A tick on an edge is the operator placing it through an explicit
@@ -323,6 +326,8 @@ python3 .claude/tools/ratify_staged.py review --pool operator --ids <id>
 
 - **An edge**: `board_batch.py edges --pairs <file>`, rehearsed
   with `--dry-run` first.
+- **A priority**: `board_batch.py priorities --updates <file>`,
+  rehearsed with `--dry-run` first, under the agreement rule.
 - **A kill**: cancel it first (`approve --pool inbox --cancel <id>`),
   then append the evidence to the body (`linear_issue.py append`).
   A kill the tool refuses (out of the pool, or holding an open
@@ -338,7 +343,7 @@ python3 .claude/tools/ratify_staged.py review --pool operator --ids <id>
 then `SendMessage`), sent in the turn the writes land: every Todo
 move, every operator Done, every item handed over as a chore (now
 the scheduler's to dispatch), every cancel, every merge, every
-edge placed, and any kill
+edge placed, every priority written with its reason, and any kill
 or merge handed over. No live scheduler: the moves are on the
 board — except a change to an edge **the scheduler placed**, or a
 handed-over kill or merge, which waits until a scheduler is live
@@ -346,10 +351,15 @@ to receive the message.
 
 ## The coordination rule
 
-**Priorities are the scheduler's alone.** The curator writes none.
-A priority it believes wrong goes to the scheduler by message,
-with the reason; with no live scheduler it **waits** — the same
-rule as a change to a scheduler-placed edge.
+**Priorities have two writers.** The curator and the scheduler
+each write them, in Backlog and in Todo alike, under the
+**agreement rule** (`docs/conventions/linear-automation.md` →
+"Priorities: shared authority, the agreement rule"), which governs
+the messaging, the counter-write and the escalation to the
+operator; follow it there. A filer's one-line priority message is
+confirmed by silence or rewritten under the same rule. Write
+priorities with
+`board_batch.py priorities --updates <file>`.
 
 **Edges have two writers.** The scheduler and the curator both
 write them, anywhere on the board — each sees what the other
@@ -364,7 +374,7 @@ lacks. So:
 
 **What the curator never writes:**
 
-- a priority, beyond the architect task's fixed one at filing;
+- a priority without the same-turn message to the scheduler;
 - an edge, kill or merge the operator did not tick;
 - a milestone, except `Post-validation` when a comment names it
   and its own `Curator pending` mark;
@@ -378,8 +388,8 @@ lacks. So:
   scheduler's.
 
 The one filing it makes is the architect task below, drafted with
-the operator in the tab; its Urgent priority and Backlog state are
-fixed by this method, never chosen per case.
+the operator in the tab; its Backlog state is fixed by this method,
+and its priority is a proposal like any filer's.
 
 ## The architecture spin-off
 
@@ -391,14 +401,17 @@ fold.
 1. **Draft the architect task's brief with the operator, in the
    tab**: the question; what is known; the open items, each with
    its `NEEDS-CONFIRM` / `NEEDS-FEEDBACK` marker, indexed at the
-   top and inline; the tasks it should produce.
+   top and inline; the tasks it should produce; and its **proposed
+   priority** with its reason in a word (Urgent by default, since
+   an open design holds a spec back).
 
-1. **File it** with the `Architect/Bedrock` token, Urgent, Backlog,
-   no milestone:
+1. **File it** with the `Architect/Bedrock` token, the priority the
+   draft settled, Backlog, no milestone, and message the scheduler
+   the id and priority in the same turn:
 
    ```sh
    python3 .claude/tools/linear_issue.py create --verb architect \
-     --substrate bedrock --priority 1 --state Backlog \
+     --substrate bedrock --priority <1-4> --state Backlog \
      --title <title> --body-file <scratchpad>/brief.md
    ```
 
