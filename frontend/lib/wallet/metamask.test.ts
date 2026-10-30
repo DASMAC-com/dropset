@@ -8,6 +8,11 @@ const { createSolanaClient, served } = vi.hoisted(() => ({
   served: { genesis: "", fail: false },
 }));
 vi.mock("@metamask/connect-solana", () => ({ createSolanaClient }));
+// A retry interval short enough for the test to wait out several.
+vi.mock("../data/timings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../data/timings")>()),
+  CLUSTER_PROBE_RETRY_MS: 2,
+}));
 // Every transport the module builds answers the genesis read with `served`,
 // or fails like a provider that is down while `served.fail` is set.
 vi.mock("@solana/kit", async (importOriginal) => ({
@@ -62,17 +67,17 @@ describe("MetaMask Connect registration", () => {
     });
   });
 
-  it("stays unregistered on an unreadable genesis, then retries", async () => {
-    served.genesis = "";
+  it("waits out an unreadable genesis, then registers on the same call", async () => {
     served.fail = true;
-    vi.spyOn(console, "warn").mockImplementation(() => {});
     const { registerMetaMaskConnect } = await import("./metamask");
-    await registerMetaMaskConnect();
+    const registered = registerMetaMaskConnect();
+    // Several retry intervals pass with the provider down.
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(createSolanaClient).not.toHaveBeenCalled();
 
     served.fail = false;
     served.genesis = MAINNET_GENESIS_HASH;
-    await registerMetaMaskConnect();
+    await registered;
     expect(createSolanaClient).toHaveBeenCalledOnce();
   });
 });

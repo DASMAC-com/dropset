@@ -43,7 +43,7 @@ describe("security headers", () => {
     );
   });
 
-  it("widens no source past one origin but the two documented ones", () => {
+  it("widens no network source past one origin but the two documented ones", () => {
     const policy = header(
       securityHeaders({}, { dev: false }),
       "Content-Security-Policy",
@@ -95,6 +95,13 @@ describe("security headers", () => {
       `connect-src 'self' ${[...connectSources(env), ...CONNECTOR_SOURCES].join(" ")}`,
     );
     expect(policy).toContain(`frame-src ${CONNECTOR_FRAMES.join(" ")}`);
+    // The SDK-read origins, pinned so dropping one fails here.
+    for (const source of [
+      "wss://mm-sdk-relay.api.cx.metamask.io",
+      "https://mm-sdk-analytics.api.cx.metamask.io",
+      "https://fwd.metamask.io",
+    ])
+      expect(policy).toContain(source);
   });
 
   it("keeps a local validator's port", () => {

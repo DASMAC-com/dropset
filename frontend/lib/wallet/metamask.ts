@@ -1,5 +1,6 @@
 import { createDefaultRpcTransport } from "@solana/kit";
 import { useSyncExternalStore } from "react";
+import { CLUSTER_PROBE_RETRY_MS } from "../data/timings";
 import { CLUSTER, FALLBACK_RPC_URL } from "../env";
 import { ClusterMismatchError, clusterGate } from "../rpc";
 
@@ -33,6 +34,25 @@ export function isMetaMaskExtensionPresent(): boolean {
   return eth.isMetaMask === true;
 }
 
+// Whether MetaMask's endpoint serves the build's cluster. Registration runs
+// once per page, so an unreadable genesis (a provider hiccup, not a wrong
+// chain) is asked again every `CLUSTER_PROBE_RETRY_MS` until the endpoint
+// answers either way, rather than leaving MetaMask off until a reload.
+const verifyEndpoint = async (): Promise<boolean> => {
+  for (;;) {
+    try {
+      return await clusterGate.verify(
+        FALLBACK_RPC_URL,
+        createDefaultRpcTransport({ url: FALLBACK_RPC_URL }),
+      );
+    } catch {
+      await new Promise((resolve) =>
+        setTimeout(resolve, CLUSTER_PROBE_RETRY_MS),
+      );
+    }
+  }
+};
+
 let registration: Promise<void> | null = null;
 let registrationReady = false;
 const registrationListeners = new Set<() => void>();
@@ -54,11 +74,8 @@ export function registerMetaMaskConnect(): Promise<void> {
     // gate every app transport carries, so the endpoint passes the same
     // genesis check before the SDK ever sees it: a wrong-cluster RPC leaves
     // MetaMask unregistered rather than connected to another chain.
-    const verified = await clusterGate.verify(
-      FALLBACK_RPC_URL,
-      createDefaultRpcTransport({ url: FALLBACK_RPC_URL }),
-    );
-    if (!verified) throw new ClusterMismatchError(FALLBACK_RPC_URL, CLUSTER);
+    if (!(await verifyEndpoint()))
+      throw new ClusterMismatchError(FALLBACK_RPC_URL, CLUSTER);
     const { createSolanaClient } = await import("@metamask/connect-solana");
     await createSolanaClient({
       dapp: {
