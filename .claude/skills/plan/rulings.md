@@ -253,11 +253,10 @@ the document's state sections.
    funds (2026-10-26).
 
 1. **A fix that shortens every in-flight PR's path jumps the
-   queue.** PR-throughput tasks get held fleet slots ahead of the
-   dispatch queue; the
-   fleet is not resumed while a shared build lock makes every lint
-   wait; every resumed or dispatched session is told to rebase
-   onto current main first (2026-10-27).
+   queue.** PR-throughput tasks get held slots ahead of the
+   dispatch queue; the fleet is not resumed while a shared build
+   lock makes every lint wait; every resumed or dispatched session
+   is told to rebase onto current main first (2026-10-27).
 
 1. **A blank vault name renders as `#` plus the per-market
    sequence number** on every surface, TUI and frontend alike,
