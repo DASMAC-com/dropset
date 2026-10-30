@@ -61,7 +61,10 @@ sessions: temporary worktree, no PR".
    outcome on the issue with a zero-echo append — what was produced,
    where it is, anything left over, and last the cost line from
    `session_metrics.py --cost-line --session-id <uuid>` — then move it
-   to In Review:
+   to In Review. Left over is a filed number, never a restated
+   operator action, and the In Review move is the last word
+   (`docs/conventions/linear-automation.md` → "A close never recites
+   a captured operator action"):
 
    ```sh
    python3 .claude/tools/linear_issue.py append --id ENG-<n> \

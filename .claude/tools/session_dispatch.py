@@ -4,8 +4,9 @@
 A board session's dispatch arm (the scheduler's, or the curator's for an
 architect spin-off): it names a task that is ready to start,
 offers to start it, and on the operator's yes runs this. The ask-then-yes IS
-the authorization, the same class as `fleet go` — the one gate this tool adds is
-the machine's (below), never a second ask.
+the authorization, the same class as `fleet go` — for the scheduler that yes is
+the start trigger (or, on "this wave only", each later wave's ask) — and the one
+gate this tool adds is the machine's (below), never a second ask.
 
     python3 .claude/tools/session_dispatch.py task 1234
     python3 .claude/tools/session_dispatch.py task anthropic 1234

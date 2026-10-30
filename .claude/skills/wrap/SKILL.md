@@ -136,7 +136,13 @@ everything below it is recoverable and that one is not.
 1. **Follow-ups discharged.** Anything this session surfaced
    but did not do is either **filed** to convention
    (`linear-task`, which messages the curator) or **handed to
-   the scheduler** with a message. Named, not remembered.
+   the scheduler** with a message. Named, not remembered. An
+   operator action already held by an `[Operator]` task, a chore or
+   a ticked ask is never restated; an uncaptured one is filed first
+   and named `uncaptured operator action, filed as N`, all before
+   the close question, which is the last word
+   (`docs/conventions/linear-automation.md` → "A close never
+   recites a captured operator action").
 
    The failure this catches is specific: a finding raised
    mid-session, acknowledged, and then carried only in the

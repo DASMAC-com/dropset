@@ -124,7 +124,8 @@ Four duties this skill owns directly:
   Run `/session-metrics`, the shared tail, immediately before
   the final state write, and at ratification plus fold close with
   `close_session.py --state Done --issue ENG-### --session-id <uuid>`,
-  which appends the cost line.
+  which appends the cost line. Close per `linear-automation.md`
+  → "A close never recites a captured operator action".
 - **Read-only toward source.** No source edit, no commit, no
   push, no local state — Linear is the record, so a wiped
   worktree loses nothing. A rotation's ff-only sync to
