@@ -380,5 +380,6 @@ wronly
 ysign
 zarp
 zaru
+zdotdir
 zeroable
 zmodload

@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from zsh_test_env import hermetic_env
@@ -59,6 +63,36 @@ class HermeticEnv(unittest.TestCase):
     def test_the_case_env_wins(self):
         child = self.build(env={"DS_MODEL_EXECUTOR": "placeholder"})
         self.assertEqual(child["DS_MODEL_EXECUTOR"], "placeholder")
+
+    def test_the_case_env_wins_over_the_forced_values_too(self):
+        child = self.build(env={"CLAUDE_CONFIG_DIR": "/elsewhere"})
+        self.assertEqual(child["CLAUDE_CONFIG_DIR"], "/elsewhere")
+
+
+@unittest.skipUnless(shutil.which("zsh"), "no zsh on this machine")
+class OperatorZshenvDoesNotRun(unittest.TestCase):
+    """zsh sources `.zshenv` even for `zsh -c`, so the name scrub alone would
+    lose to an operator `.zshenv` that re-exports a scrubbed variable."""
+
+    def test_a_zshenv_cannot_re_export_a_scrubbed_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            operator_home = Path(tmp) / "operator"
+            operator_home.mkdir()
+            (operator_home / ".zshenv").write_text(
+                "export DS_MODEL_EXECUTOR=leaked\n", encoding="utf-8"
+            )
+            with mock.patch.dict(
+                os.environ, {"HOME": str(operator_home), "ZDOTDIR": str(operator_home)}
+            ):
+                env = hermetic_env(Path(tmp) / "scratch")
+            out = subprocess.run(
+                ["zsh", "-c", 'print -r -- "${DS_MODEL_EXECUTOR-unset}"'],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env,
+            ).stdout.strip()
+        self.assertEqual(out, "unset")
 
 
 if __name__ == "__main__":

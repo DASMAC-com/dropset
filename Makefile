@@ -1511,10 +1511,12 @@ deps-audit:
 # One sub-target per tree, run under `-k`: a single recipe stops at the first
 # failing discover, so a red tools tree hid whether the later trees passed at
 # all, and they reached CI never having run locally. The target still exits
-# non-zero when any tree fails.
+# non-zero when any tree fails. `-j1` keeps the trees sequential under a
+# caller's `-j`: concurrent suites interleave their output and add the load
+# the timing-sensitive cases are bounded against.
 .PHONY: tools-tests
 tools-tests:
-	$(MAKE) --no-print-directory -k tools-tests-tools tools-tests-scripts \
+	$(MAKE) --no-print-directory -j1 -k tools-tests-tools tools-tests-scripts \
 		tools-tests-keys tools-tests-release
 
 .PHONY: tools-tests-tools

@@ -36,8 +36,9 @@ def hermetic_env(
 ) -> dict[str, str]:
     """`os.environ` with the operator's state removed, ready for `subprocess`.
 
-    `claude_home` becomes `CLAUDE_CONFIG_DIR`, so no case sees real transcripts;
-    it need not exist. `also_scrub` names a suite's own extra variables (the
+    `claude_home` becomes `CLAUDE_CONFIG_DIR`, so no case sees real transcripts,
+    and `ZDOTDIR`, so no operator `.zshenv` runs; it need not exist, and must
+    not hold a `.zshenv`. `also_scrub` names a suite's own extra variables (the
     cargo pool's `CARGO_*`, say). `env` is applied last and wins over all of it,
     which is how a case sets a `DS_*` knob it means to test. `DS_ITERM_DISABLED`
     is forced on so no case can reach a real iTerm tab (`iterm_api.DISABLED_ENV`).
@@ -49,6 +50,10 @@ def hermetic_env(
         if name not in drop and not name.startswith(SCRUBBED_PREFIXES)
     }
     child["CLAUDE_CONFIG_DIR"] = str(claude_home)
+    # zsh sources `$ZDOTDIR/.zshenv` (default `~/.zshenv`) even for `zsh -c`,
+    # so an operator `.zshenv` would re-export what the scrub just removed.
+    # The scratch dir holds no `.zshenv`, so pointing ZDOTDIR there skips it.
+    child["ZDOTDIR"] = str(claude_home)
     child["DS_ITERM_DISABLED"] = "1"
     child.update(env or {})
     return child
