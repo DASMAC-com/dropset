@@ -190,12 +190,13 @@ The three rules specific to `init-pr`:
    document.** `ListAgents` is the liveness check. The document getter
    returns the whole, growing body with no slice accessor, and a stale
    line reads exactly like a current one; a scheduler session answers
-   with the current ruling. Read the document only when none is live
-   or the scheduler approved the read; a task whose subject is the
-   document itself needs its text, not a ruling, so it reads without
-   asking. **Every such read goes through `planning_doc.py`**
-   (`--headings` then `--section <re>`, or `--out <file>` to spill the
-   body and print only its heading map), never `get_document`.
+   with the current ruling. Read the document only when none is live,
+   the scheduler approved the read, or the task's subject is the
+   document itself (it needs the text, not a ruling, so it reads
+   without asking). **Every read of the document goes through
+   `planning_doc.py`** (`--headings` then `--section <re>`, or
+   `--out <file>` to spill the body and print only its heading map),
+   never `get_document`.
 
 The convention owns the rules this phase slips on most — the four
 whole-read licenses, declaration-only section maps, `run_quiet.py` by

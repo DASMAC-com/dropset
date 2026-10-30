@@ -101,7 +101,7 @@ is not repeated here.
   write cost two ≈1.1k echoes for one payload; one session read the
   same long body three times (≈14.8k); a speculative fetch to
   disambiguate an "8.5.9" reference cost ≈4.5k and settled nothing.
-- **Stale citations (step 12).** All four `(§4 row 5)` citations in
+- **Stale citations (step 1).** All four `(§4 row 5)` citations in
   one spec had been rewritten away by an unrelated PR, making the item
   moot, established via four greps including a ≈1.1k sweep.
 - **Subject re-scope (step 1).** A wallet-bug issue carried a
