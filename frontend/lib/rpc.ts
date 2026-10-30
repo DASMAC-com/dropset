@@ -162,6 +162,12 @@ export type ClusterGate = {
   // Wrap one endpoint's transport so every call first checks that endpoint's
   // genesis (once per page load) and is refused on another chain.
   guard: (url: string, transport: RpcTransport) => RpcTransport;
+  // Check one endpoint's genesis up front, for a consumer that passes the
+  // bare URL on rather than calling through a guarded transport (MetaMask
+  // Connect). Registers the endpoint like `guard`, so `probe` and `status`
+  // count it; resolves whether it serves the build's cluster, and rejects on
+  // an unreadable genesis.
+  verify: (url: string, transport: RpcTransport) => Promise<boolean>;
   // Check every guarded endpoint now, without waiting for app traffic.
   probe: () => void;
   status: () => ClusterStatus;
@@ -266,6 +272,10 @@ export function createClusterGate(
           throw new ClusterMismatchError(url, cluster);
         return transport(config);
       }) as RpcTransport;
+    },
+    verify: (url, transport) => {
+      transports.set(url, transport);
+      return check(url, transport);
     },
     probe,
     status,

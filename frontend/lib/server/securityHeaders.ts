@@ -1,16 +1,15 @@
 // cspell:word clickjack
 // The response headers every page carries, set by next.config.ts.
 //
-// Framing, MIME sniffing and the referrer are enforced: the site may never be
-// framed (a hostile page could otherwise clickjack the picker or the swap
-// CTA), and nothing it serves is sniffed into another type.
-//
-// The source allowlist ships report-only. A violation is logged to the browser
-// console without blocking anything, so the wallet connectors (MetaMask
-// Connect's relay, the Android Mobile Wallet Adapter's local socket) and the
-// globe can be checked against it on a real deploy before it is enforced by
-// moving it into the enforced policy. Next's own hydration scripts are inline,
-// so scripts need 'unsafe-inline' until the app adopts per-request nonces.
+// Everything here is enforced: the site may never be framed (a hostile page
+// could otherwise clickjack the picker or the swap CTA), nothing it serves is
+// sniffed into another type, no script loads from a foreign host, and fetches
+// and sockets reach only the sources listed. A connector that breaks under
+// the policy is a missing source, added here, never a reason to widen a
+// directive. Next's own hydration scripts are inline, so scripts need
+// 'unsafe-inline' until the app adopts per-request nonces; until then the
+// policy does not stop an injected inline script sending data out (an image
+// request to any https: host, or a message on the MetaMask relay).
 
 import {
   DFLOW_ORDER_URLS,
@@ -63,29 +62,48 @@ export function connectSources(
   return [...new Set(sources)];
 }
 
+// The origins the wallet connectors' SDKs open themselves, read from the
+// SDKs' source; each must also survive a connect on a deploy.
+export const CONNECTOR_SOURCES = [
+  // MetaMask Connect: the relay its QR and deep-link sessions ride.
+  "wss://mm-sdk-relay.api.cx.metamask.io",
+  // MetaMask Connect: the connection counters `analytics` enables.
+  "https://mm-sdk-analytics.api.cx.metamask.io",
+  // Android Mobile Wallet Adapter: the wallet app's local association
+  // socket, on a port it picks per session.
+  "ws://localhost:*",
+];
+
+// The frames the connectors' SDKs open: MetaMask's onboarding forwarder, a
+// hidden frame its extension-install flow talks to.
+export const CONNECTOR_FRAMES = ["https://fwd.metamask.io"];
+
 export function securityHeaders(
   env: Record<string, string | undefined>,
   { dev }: { dev: boolean },
 ): Header[] {
-  const baseline = [
+  const policy = [
     "default-src 'self'",
     // 'wasm-unsafe-eval' for the SDK's WebAssembly; dev's React refresh
     // also evaluates strings.
     `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${dev ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline'",
-    // Token icons come from each issuer's own host.
+    // Token icons come from each issuer's own host, which no list can name
+    // ahead of time; an image runs no script, though a request for one can
+    // carry data out (see the top of this file).
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    `connect-src 'self' ${connectSources(env).join(" ")}`,
+    `connect-src 'self' ${[...connectSources(env), ...CONNECTOR_SOURCES].join(" ")}`,
+    `frame-src ${CONNECTOR_FRAMES.join(" ")}`,
     "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    // The app posts no form; injected markup may not post one elsewhere.
+    "form-action 'self'",
     "frame-ancestors 'none'",
   ];
   return [
-    {
-      key: "Content-Security-Policy",
-      value: "frame-ancestors 'none'; object-src 'none'; base-uri 'self'",
-    },
-    { key: "Content-Security-Policy-Report-Only", value: baseline.join("; ") },
+    { key: "Content-Security-Policy", value: policy.join("; ") },
     { key: "X-Frame-Options", value: "DENY" },
     { key: "X-Content-Type-Options", value: "nosniff" },
     { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

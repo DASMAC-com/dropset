@@ -1,7 +1,12 @@
 // cspell:word publicnode
 import { describe, expect, it } from "vitest";
 
-import { connectSources, securityHeaders } from "./securityHeaders";
+import {
+  CONNECTOR_FRAMES,
+  CONNECTOR_SOURCES,
+  connectSources,
+  securityHeaders,
+} from "./securityHeaders";
 
 const header = (headers: { key: string; value: string }[], key: string) =>
   headers.find((h) => h.key === key)?.value;
@@ -21,12 +26,42 @@ describe("security headers", () => {
 
   it("allows eval only in dev", () => {
     const policy = (dev: boolean) =>
-      header(
-        securityHeaders({}, { dev }),
-        "Content-Security-Policy-Report-Only",
-      );
+      header(securityHeaders({}, { dev }), "Content-Security-Policy");
     expect(policy(true)).toContain("'unsafe-eval'");
     expect(policy(false)).not.toContain("'unsafe-eval'");
+  });
+
+  it("enforces the source allowlist, with nothing left report-only", () => {
+    const headers = securityHeaders({}, { dev: false });
+    const policy = header(headers, "Content-Security-Policy");
+    expect(policy).toContain("default-src 'self'");
+    expect(policy).toContain("object-src 'none'");
+    expect(policy).toContain("base-uri 'self'");
+    expect(policy).toContain("form-action 'self'");
+    expect(header(headers, "Content-Security-Policy-Report-Only")).toBe(
+      undefined,
+    );
+  });
+
+  it("widens no network source past one origin but the two documented ones", () => {
+    const policy = header(
+      securityHeaders({}, { dev: false }),
+      "Content-Security-Policy",
+    );
+    expect(policy).toBeDefined();
+    // img-src https: (issuer icon hosts) and MWA's per-session loopback port.
+    const exceptions = new Set([
+      "img-src https:",
+      "connect-src ws://localhost:*",
+    ]);
+    const wide: string[] = [];
+    for (const directive of policy?.split("; ") ?? []) {
+      const [name, ...sources] = directive.split(" ");
+      for (const source of sources)
+        if (source.includes("*") || /^(https?|wss?):$/.test(source))
+          wide.push(`${name} ${source}`);
+    }
+    expect(new Set(wide)).toEqual(exceptions);
   });
 
   it("lists the RPC, WS and API origins, never a key", () => {
@@ -50,15 +85,23 @@ describe("security headers", () => {
     expect(sources.join(" ")).not.toContain("secret-key");
   });
 
-  it("puts every connect source in the report-only policy", () => {
+  it("puts every endpoint and connector source in the policy", () => {
     const env = { NEXT_PUBLIC_RPC_URL: "https://rpc.test" };
     const policy = header(
       securityHeaders(env, { dev: false }),
-      "Content-Security-Policy-Report-Only",
+      "Content-Security-Policy",
     );
     expect(policy).toContain(
-      `connect-src 'self' ${connectSources(env).join(" ")}`,
+      `connect-src 'self' ${[...connectSources(env), ...CONNECTOR_SOURCES].join(" ")}`,
     );
+    expect(policy).toContain(`frame-src ${CONNECTOR_FRAMES.join(" ")}`);
+    // The SDK-read origins, pinned so dropping one fails here.
+    for (const source of [
+      "wss://mm-sdk-relay.api.cx.metamask.io",
+      "https://mm-sdk-analytics.api.cx.metamask.io",
+      "https://fwd.metamask.io",
+    ])
+      expect(policy).toContain(source);
   });
 
   it("keeps a local validator's port", () => {
