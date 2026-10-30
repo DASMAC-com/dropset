@@ -1356,8 +1356,8 @@ class LauncherResolvedToken(SubstrateHarness):
     def test_it_still_does_not_outlive_a_SECOND_launch_in_the_same_tab(self):
         # The staleness bug in the first provenance attempt: the second launch
         # saw a token already present, concluded it was the operator's, and the
-        # subscription guard then preserved a launcher-resolved credential in a seat
-        # tab. Two launches, one guard, token must still be gone.
+        # subscription guard then preserved a launcher-resolved credential in a
+        # subscription tab. Two launches, one guard, token must still be gone.
         result = self._zsh(
             f"_ds_bedrock_env; _ds_bedrock_env; _ds_subscription_guard plan; {self._PROBE}",
             env=self._op_env(),

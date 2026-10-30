@@ -240,6 +240,10 @@ class EndToEndTests(DigestFixture):
         text = self.digest_text()
         self.assertIn("(3-digest median $1.00) FLAGGED", text)
         self.assertNotIn("median $10) FLAGGED", text)
+        # Rows written before the rename carry the retired `seat` key, and
+        # still feed the Subscription median.
+        self.assertRegex(text, r"- Subscription \S+ \(3-digest median \$10\)")
+        self.assertIn("subscription", summary)
         self.assertGreaterEqual(summary["flagged"], 1)
         # This run joined the history, once, even when rerun the same day.
         self.run_digest()

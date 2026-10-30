@@ -166,6 +166,22 @@ class WalkTest(unittest.TestCase):
         self.assertIn("costliest issues: ENG-1651", out.getvalue())
         self.assertIn("not a complete UTC day", err.getvalue())
 
+    def test_the_meter_json_keys_the_subscription_issues(self) -> None:
+        out = io.StringIO()
+        with mock.patch.object(fc.sm, "claude_home", return_value=self.home):
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(fc.main(["meter", "--day", DAY, "--json"]), 0)
+        report = json.loads(out.getvalue())
+        self.assertIn(["ENG-1700", ONE_MESSAGE], report["subscription_issue_costs"])
+        self.assertIn("subscription_issues", report)
+        self.assertNotIn("seat_issue_costs", report)
+
+    def test_a_retired_seat_marker_classifies_as_the_subscription(self) -> None:
+        base = Path(self.tmp.name) / "repo"
+        (base / sm.SUBSTRATE_DIR / "1702").write_text("seat\n")
+        cwd = f"{base}/.claude/worktrees/1702"
+        self.assertEqual(fc.classify(cwd), fc.SUBSCRIPTION)
+
     def test_subscription_spend_is_priced_and_labelled_not_billed(self) -> None:
         summary = fc.day_summary(self.meter, DAY)
         subscription = next(
@@ -801,6 +817,12 @@ class LocalDayTest(unittest.TestCase):
             )
         self.assertIn("subscription", fc.day_summary(meter, "2026-10-27")["substrates"])
         self.assertEqual(fc.day_summary(meter, "2026-10-28")["substrates"], {})
+        windows = fc.local_windows(hour("2026-10-28T17:00:00"), PACIFIC)
+        report = fc.local_report(meter, windows, None, None, "off", PACIFIC)
+        row = next(r for r in report["days"] if r["day"] == "2026-10-27")
+        self.assertGreater(row["subscription"], 0.0)
+        self.assertEqual(row["subscription_sessions"], 1)
+        self.assertIn("subscription", report["week"])
 
     def test_hours_bucket_by_local_start_and_name_the_last_billed(self) -> None:
         hours = fc.parse_hourly(
