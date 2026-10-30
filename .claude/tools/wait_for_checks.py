@@ -2206,7 +2206,7 @@ def classify_dequeue(failing_runs: list[dict], repo: str) -> dict:
     read is ``unknown`` evidence, never dropped.
     """
     stepped: list[dict] = []
-    stepless: list[dict] = []
+    no_step: list[dict] = []
     for run in failing_runs:
         run_id = str(run.get("run_id") or "")
         if run.get("conclusion") in TRANSIENT_RUN_CONCLUSIONS:
@@ -2220,7 +2220,7 @@ def classify_dequeue(failing_runs: list[dict], repo: str) -> dict:
         if error is None and not isinstance(jobs, list):
             error = "unexpected jobs payload shape"
         if error is not None:
-            stepless.append({"run_id": run_id, "job": None, "step": None,
+            no_step.append({"run_id": run_id, "job": None, "step": None,
                              "cause": "unknown", "error": error})  # fmt: skip
             continue
         for job in jobs:
@@ -2232,14 +2232,15 @@ def classify_dequeue(failing_runs: list[dict], repo: str) -> dict:
             failed = [
                 s
                 for s in job.get("steps") or []
-                if isinstance(s, dict) and s.get("conclusion") in FAILED_STEP_CONCLUSIONS
+                if isinstance(s, dict)
+                and s.get("conclusion") in FAILED_STEP_CONCLUSIONS
             ]
             if not failed:
-                stepless.append({**base, "step": None, "cause": "unknown"})
+                no_step.append({**base, "step": None, "cause": "unknown"})
                 continue
             name = failed[0].get("name") or ""
             stepped.append({**base, "step": name, "cause": step_cause(name)})
-    evidence = stepped or stepless
+    evidence = stepped or no_step
     causes = {e["cause"] for e in evidence}
     if "integration" in causes:
         cause = "integration"
@@ -2250,7 +2251,7 @@ def classify_dequeue(failing_runs: list[dict], repo: str) -> dict:
     first = next((str(r.get("run_id")) for r in failing_runs if r.get("run_id")), None)
     return {
         "cause": cause,
-        "evidence": stepped + stepless,
+        "evidence": stepped + no_step,
         "next_command": None
         if first is None
         else (

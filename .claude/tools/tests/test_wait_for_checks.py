@@ -1699,9 +1699,7 @@ class QueueModeCliTests(unittest.TestCase):
         self.assertIn("dismissal failed: 403", line)
 
     def test_since_defaults_to_the_prs_own_enqueue_time(self):
-        _, seen = self._queue_mode(
-            "merged", default_since=(ENQUEUED, "auto_merge")
-        )
+        _, seen = self._queue_mode("merged", default_since=(ENQUEUED, "auto_merge"))
         self.assertEqual(seen["defaulted"], [285])
         self.assertEqual(seen["since"], ENQUEUED)
         self.assertEqual(seen["verdict"]["since_source"], "auto_merge")
@@ -1757,7 +1755,9 @@ class DefaultSinceTests(unittest.TestCase):
     def test_auto_merge_time_first_then_the_queue_entry(self):
         later = "2026-10-13T12:05:00Z"
         self.assertEqual(
-            self._since({"auto": {"enabledAt": ENQUEUED}, "entry": {"enqueuedAt": later}}),
+            self._since(
+                {"auto": {"enabledAt": ENQUEUED}, "entry": {"enqueuedAt": later}}
+            ),
             (ENQUEUED, "auto_merge"),
         )
         self.assertEqual(
@@ -1806,14 +1806,24 @@ class ClassifyDequeueTests(unittest.TestCase):
 
     def test_a_toolchain_failure_before_any_test_is_transient(self):
         c = self._classify(
-            [jobs_payload(failed_job("Rust", "Run ./.github/actions/install-toolchain"))]
+            [
+                jobs_payload(
+                    failed_job("Rust", "Run ./.github/actions/install-toolchain")
+                )
+            ]
         )
         self.assertEqual(c["cause"], "transient")
-        self.assertEqual(c["evidence"][0]["step"], "Run ./.github/actions/install-toolchain")
+        self.assertEqual(
+            c["evidence"][0]["step"], "Run ./.github/actions/install-toolchain"
+        )
         self.assertIn("gh run view 0 --repo", c["next_command"])
 
     def test_a_failing_test_or_build_step_is_integration(self):
-        for step in ("Run cargo nextest run", "Run make program", "Run make tools-tests"):
+        for step in (
+            "Run cargo nextest run",
+            "Run make program",
+            "Run make tools-tests",
+        ):
             with self.subTest(step=step):
                 c = self._classify([jobs_payload(failed_job("Rust", step))])
                 self.assertEqual(c["cause"], "integration")
@@ -1923,7 +1933,9 @@ class EnqueueTests(unittest.TestCase):
         v, seen = self._enqueue(
             [{"auto": {"enabledAt": ENQUEUED}}], queue_rule=False, merge_exits=(0,)
         )
-        self.assertEqual(seen["commands"], [["pr", "merge", "285", "--repo", REPO, "--auto"]])
+        self.assertEqual(
+            seen["commands"], [["pr", "merge", "285", "--repo", REPO, "--auto"]]
+        )
         self.assertEqual(v["conclusion"], "auto_merge_pending")
         self.assertEqual(v["enqueued_at"], ENQUEUED)
 
@@ -1963,13 +1975,22 @@ class EnqueueTests(unittest.TestCase):
                 with self.assertRaises(wfc.WaitForChecksError):
                     with redirect_stdout(io.StringIO()):
                         wfc.run(["wait_for_checks.py", *argv])
-        argv = ["wait_for_checks.py", "--enqueue", "285", "--reviewed-fingerprint", "fp1"]
+        argv = [
+            "wait_for_checks.py",
+            "--enqueue",
+            "285",
+            "--reviewed-fingerprint",
+            "fp1",
+        ]
         for conclusion, code in (("queued", 0), ("auto_merge_pending", 0),
                                  ("refused", 1), ("not_queued", 1)):  # fmt: skip
             with self.subTest(conclusion=conclusion):
-                with mock.patch.object(
-                    wfc, "enqueue", lambda pr, repo, fp: {"conclusion": conclusion}
-                ), redirect_stdout(io.StringIO()):
+                with (
+                    mock.patch.object(
+                        wfc, "enqueue", lambda pr, repo, fp: {"conclusion": conclusion}
+                    ),
+                    redirect_stdout(io.StringIO()),
+                ):
                     self.assertEqual(wfc.run(argv), code)
 
 
