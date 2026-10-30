@@ -1,5 +1,5 @@
-// cspell:ignore swissy
 import {
+  ALL_STABLECOINS,
   currencyFlagUrl,
   currencyForStablecoin,
   currencyName,
@@ -202,19 +202,8 @@ export type FxPairGroup = {
   baseName: string;
   quoteName: string;
   label: string;
-  nickname: string;
   vaults: GroupedVault[];
   tvl: number;
-};
-
-// FX dealer nicknames for the majors we list (NZD/"Kiwi" excluded for now).
-const FX_NICKNAMES: Record<string, string> = {
-  "EUR/USD": "Fiber",
-  "USD/JPY": "Ninja",
-  "GBP/USD": "Cable",
-  "USD/CHF": "Swissy",
-  "USD/CAD": "Loonie",
-  "AUD/USD": "Aussie",
 };
 
 const resolveCurrency = (
@@ -292,22 +281,17 @@ export const quoteUsdRate = (
 // A stablecoin pair by symbol, e.g. { base: "EURC", quote: "USDC" }.
 export type VaultPair = { base: string; quote: string };
 
-// The stablecoin pairs whose markets the live read probes. Token order
-// encodes the FX convention: USD is the quote for EUR/GBP/AUD (base = EURC,
-// quote = USDC) and the base for JPY/CHF/CAD (base = USDC, quote = GYEN). The
-// live read takes each market's real orientation from the chain, so this
-// order is only the roster's. Every symbol must be in currencies.json
-// (vaults.test.ts).
-export const VAULT_PAIR_ROSTER: VaultPair[] = [
-  { base: "EURC", quote: "USDC" },
-  { base: "EURC", quote: "USDT" },
-  { base: "USDC", quote: "GYEN" },
-  { base: "TGBP", quote: "USDC" },
-  { base: "VGBP", quote: "USDC" },
-  { base: "USDC", quote: "VCHF" },
-  { base: "USDC", quote: "CADC" },
-  { base: "AUDD", quote: "USDC" },
-];
+// The quote leg every roster market is listed against.
+const ROSTER_QUOTE = "USDC";
+
+// The stablecoin pairs whose markets the live read probes: currencies.json is
+// the roster, so every non-USD stablecoin in it pairs against USDC, and a
+// market for a newly listed stablecoin shows without an edit here. The live
+// read takes each market's real orientation from the chain, so the order
+// written here is only the roster's.
+export const VAULT_PAIR_ROSTER: VaultPair[] = ALL_STABLECOINS.filter(
+  (s) => currencyForStablecoin(s.symbol) !== "USD",
+).map((s) => ({ base: s.symbol, quote: ROSTER_QUOTE }));
 
 // The roster pair for an unordered stablecoin pair. A vault's base/quote are
 // fixed by the market, not by which way a taker trades — so USDC→EURC and
@@ -468,7 +452,6 @@ export const groupVaultMarkets = (markets: VaultMarket[]): FxPairGroup[] => {
         baseName: currencyName(m.baseCurrency),
         quoteName: currencyName(m.quoteCurrency),
         label: `${m.baseCurrency} / ${m.quoteCurrency}`,
-        nickname: FX_NICKNAMES[`${m.baseCurrency}/${m.quoteCurrency}`] ?? "",
         vaults: [],
         tvl: 0,
       };

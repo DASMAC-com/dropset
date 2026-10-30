@@ -1,12 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { currencyForStablecoin, stablecoinMint } from "./currencies";
+import {
+  ALL_STABLECOINS,
+  currencyForStablecoin,
+  stablecoinMint,
+} from "./currencies";
 import { findVaultPair, VAULT_PAIR_ROSTER } from "./vaults";
 
-// The roster is a literal, so nothing resolves its symbols at load: a typo
-// would only drop that pair from the live read (stablecoinMint answers "").
-// These checks stand in for that missing load-time resolve.
 describe("the vault pair roster", () => {
   const symbols = VAULT_PAIR_ROSTER.flatMap((p) => [p.base, p.quote]);
+
+  // A market outside the roster is never probed, so its vaults never show:
+  // every non-USD stablecoin must have its USDC pair, not only the majors.
+  it("pairs every non-USD stablecoin against USDC", () => {
+    const nonUsd = ALL_STABLECOINS.filter(
+      (s) => currencyForStablecoin(s.symbol) !== "USD",
+    ).map((s) => s.symbol);
+    expect(nonUsd).toContain("ZARP");
+    for (const symbol of nonUsd) {
+      expect(findVaultPair(symbol, "USDC"), symbol).not.toBeNull();
+    }
+    expect(VAULT_PAIR_ROSTER).toHaveLength(nonUsd.length);
+  });
 
   it("names only symbols with a mint and a currency", () => {
     for (const symbol of symbols) {

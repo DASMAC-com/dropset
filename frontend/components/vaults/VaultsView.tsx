@@ -67,7 +67,7 @@ const cmpMetric = compareSortValues;
 // its chip; a shorter value is a hand-typed prefix and shown verbatim.
 const LEADER_SLUG_MAX = 12;
 
-// Substring match across the pair's FX label / nickname / currency names and
+// Substring match across the pair's FX label / currency names and
 // the vault's tokens, name, vault number and leader address.
 const matchesQuery = (
   q: string,
@@ -77,7 +77,6 @@ const matchesQuery = (
   if (!q) return true;
   return [
     group.label,
-    group.nickname,
     group.baseName,
     group.quoteName,
     group.baseCurrency,
@@ -160,7 +159,7 @@ function TokenPair({
 }
 
 // FX-pair heading spanning the table, mirroring the per-currency headings on
-// /currencies: two flags + "EUR / USD" + nickname, with the pair's summed TVL
+// /currencies: two flags + "EUR / USD", with the pair's summed TVL
 // and vault count to the right.
 function FxGroupHeading({
   group,
@@ -182,9 +181,6 @@ function FxGroupHeading({
           <span className="font-semibold text-foreground text-xl">
             {group.label}
           </span>
-          {group.nickname && (
-            <span className="text-muted-fg text-base">({group.nickname})</span>
-          )}
           <span className="flex items-center gap-3 font-mono text-muted-fg text-xs tabular-nums">
             <span>
               TVL <NumberFlow value={group.tvl} format={FORMATS.usdCompact} />
