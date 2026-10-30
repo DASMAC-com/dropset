@@ -99,6 +99,16 @@ the resident-size gate (`docs/conventions/context-economy.md` →
   and the session stalled for an operator unlock. Nothing was lost only
   because the branch was already pushed. The pre-wait checkpoint covers
   the wait itself, not a rebase that comes after it.
+- **WASM binary overlap.** One SDK-surface session conflicted on the
+  committed `dropset_interface_bg.wasm` on four separate rebases, each
+  a stall, checkout, continue, rebuild and commit — roughly 8 to 10
+  turns apiece at a 600k+ prefix. Another overlapped on it twice and
+  improvised both times (a soft reset, then `rebase --onto` dropping
+  the rebuild commit), each followed by `make wasm`, a recommit and a
+  second Rust suite pair. The content is always "rebuild from the
+  merged tree". `merge=ours` in `.gitattributes` was considered and
+  rejected: git has no built-in `ours` driver, so it would need wiring
+  in every clone.
 
 ## Step 3: Linear echoes
 
@@ -1028,6 +1038,21 @@ to move and by how much.
   idle until enqueued a second way. The step had warned only that the
   MCP `merge_pull_request` bypasses the queue, leaving no safe
   non-`--auto` option until the already-clean remedy was named.
+- **Overlap PR landed in the queue.** The fan-out overlap probe
+  flagged one open PR sharing a Makefile and a convention doc. It
+  landed while this PR waited in the queue, and the queue dequeued
+  this one after 15 minutes with `merge_conflict`. Recovery was a
+  second rebase with a manual resolution and an operator question, a
+  full lint, both Rust suites (a Rust test reads the Makefile), a
+  second CI wait, a re-enqueue and a second queue watch: about 30
+  turns at a ~280k prefix, the session's largest avoidable cost.
+- **Held-PR tails.** One session cost \$60 over 363 turns, its prefix
+  growing from 47.9k to 639.9k. Work and review were done by about
+  turn 200; everything after was holds (a weekend flake, a hold for a
+  crate rename, a conflict dequeue, a locked signer) and four rebases,
+  each followed by a full one-at-a-time gate re-run against a 500k+
+  prefix. Cost is quadratic in turns, so the tail likely cost more
+  than the implementation.
 
 ## Step 21: session metrics
 

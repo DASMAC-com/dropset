@@ -117,6 +117,10 @@ LINT_CONFIG = frozenset(
     }
 )
 
+# The committed optimized WASM binary: every interface-crate change rebuilds
+# it, so on a hot SDK surface it overlaps on every base move.
+WASM_BINARY = "sdk/ts/src/wasm/dropset_interface_bg.wasm"
+
 
 def is_frontend_dep(path: str) -> bool:
     """The lockfile or a ``frontend/package*.json``: a base change to either
@@ -248,7 +252,9 @@ def rerun_verdicts(result: dict) -> dict:
       as this branch's regressions ("Stale program after rebase").
     * ``frontend_install`` — see ``is_frontend_dep`` ("Stale node_modules
       after rebase").
-    * ``artifact_gates`` — ``runs_artifact_gates``, restated as a verdict.
+    * ``artifact_gates`` — ``runs_artifact_gates``, restated as a verdict;
+      an overlap on the committed WASM binary names the drop → rebase →
+      regenerate sequence instead ("WASM binary overlap").
     * ``may_enqueue_unverified`` — a re-run forced only by a rebase may push and
       enqueue and let the queue verify, when the overlap is empty: the queue
       runs the whole suite against the merged result whatever the paths, so it
@@ -286,7 +292,19 @@ def rerun_verdicts(result: dict) -> dict:
     else:
         frontend = _verdict(False, "base changed no frontend dependency manifest")
 
-    if result["runs_artifact_gates"]:
+    if WASM_BINARY in overlap:
+        # Git cannot merge it and `wasm-opt` is not reproducible, so the only
+        # correct content is a rebuild from the merged tree ("WASM binary
+        # overlap").
+        reason = (
+            f"{WASM_BINARY} overlaps — drop any `Rebuild WASM bindings` "
+            "commit, rebase, then let `regen_artifacts.py` rebuild it "
+            "(`make wasm`, recommitted under that subject)"
+        )
+        if result["runs_artifact_gates"]:
+            reason += "; base delta also touched a generation input"
+        gates = _verdict(True, reason)
+    elif result["runs_artifact_gates"]:
         gates = _verdict(True, "base delta touched a generation input")
     else:
         gates = _verdict(False, "base delta touched no generation input")

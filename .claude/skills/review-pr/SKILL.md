@@ -180,10 +180,27 @@ migrations or generation inputs, and whether it spans crates.
      git add <resolved files>
      ```
 
+   - **The committed WASM binary is never hand-resolved**
+     (`sdk/ts/src/wasm/dropset_interface_bg.wasm`; the triage's
+     `artifact_gates` reason names it). Its only correct content is a
+     rebuild, so it lives in its own `Rebuild WASM bindings` commit
+     (step 9's tool). On a base move drop each such commit in place,
+     rebase, and let step 9 rebuild — never skipped after a drop, never
+     a `reset --soft` (`history.md` → "WASM binary overlap"):
+
+     ```sh
+     git rebase --onto <wasm-commit>~1 <wasm-commit>
+     ```
+
+     Abort a rebase the conflict already stopped first. A binary inside
+     a source commit: rebase, take either side, step 9 rebuilds.
+
    - **A clean rebase that integrated base commits** can still hide a
      *semantic* conflict (the base renamed something this branch
      calls): flag it for steps 5 and 11. History was rewritten, so step
-     12 force-pushes with `--force-with-lease`.
+     12 force-pushes with `--force-with-lease`. A fix the rebase forces
+     (a broken helper) is committed first, and the push is a later call
+     made only once that commit returns success.
 
    **Act on the triage's `rerun` block**: each of `lint`, `program`,
    `frontend_install`, `artifact_gates` and `may_enqueue_unverified`
@@ -1130,7 +1147,9 @@ migrations or generation inputs, and whether it spans crates.
    excluded, since `wasm-opt` isn't byte-reproducible), and
    `sdk/ts/src/wasm.conformance.test.ts` runs the **committed**
    binary against the conformance vectors — so a stale binary is a
-   real behavioral divergence, not a formatting nit.
+   real behavioral divergence, not a formatting nit. Step 2 drops the
+   WASM rebuild commit on its own, so **never fold it into another**
+   (no squash, no amend).
 
 1. **Refresh the Audit registry if the diff changed the
    platform shape.** Rotations read the subsystems,
@@ -1318,6 +1337,11 @@ migrations or generation inputs, and whether it spans crates.
    ```sh
    git push --force-with-lease
    ```
+
+   **Push only once every fix commit succeeded — never in the same
+   parallel batch as a `git commit`.** A batched push still runs when
+   its commit fails (a locked signer), landing the tree without the
+   fix (`commit-changes` → "Push").
 
    **If the branch carries unsigned commits and the signer answers
    now, sign here instead** — the tool pushes with its own pinned
@@ -1559,6 +1583,19 @@ migrations or generation inputs, and whether it spans crates.
    Progress, and stop. On `unverified`, say so and hold. Only `green`
    proceeds.
 
+   **Then re-read each PR step 5's overlap probe named** — one that
+   lands while this PR is queued dequeues it with `merge_conflict`
+   (`history.md` → "Overlap PR landed in the queue"). One read each;
+   free when it named none:
+
+   ```sh
+   gh api graphql -F n=<N> -F query=@.claude/tools/queue_state.graphql
+   ```
+
+   **`MERGED`** → rebase (step 2) and re-verify before enqueueing. **A
+   non-null `mergeQueueEntry`** → park (below) until it lands, or
+   enqueue and say a dequeue is likely. Otherwise proceed.
+
    **If this branch adds a migration, check for a cross-branch number
    collision before enqueueing.** The ascend guard and the schema-fence
    tests see one tree from an empty database, so a duplicate number is
@@ -1611,6 +1648,15 @@ migrations or generation inputs, and whether it spans crates.
    own diff is **unchanged** since the last green local pass. Otherwise
    verify locally. Say in the summary that the re-verify was skipped
    and why.
+
+   **A green PR held behind another PR is parked, not watched.** On a
+   hold (the operator, planning, or the re-check above), leave the
+   issue In Progress with the PR pushed and green, append a resume
+   brief (`linear_issue.py append`: PR number, the PR waited on, gates
+   still owed) and end the session — a resident tail replays the whole
+   review's prefix per rebase (`history.md` → "Held-PR tails"). A
+   fresh session resumes from the brief alone at step 2, re-running no
+   lens unless the rebase overlaps.
 
    **Then the final signing pass — nothing is enqueued unsigned.**
    Branch protection requires every commit on main signed, so a branch

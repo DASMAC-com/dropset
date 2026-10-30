@@ -118,6 +118,16 @@ CAP_PLACEHOLDER = "`{{cap}}`"
 # It is stripped from the composed brief: the agent reads the filled-in cap.
 DEFAULT_CAP_RE = re.compile(r"^<!--\s*default-cap:\s*(.+?)\s*-->\s*\n?", re.M)
 
+# The shell rule restated where a lens acts on it, immediately above its task.
+FIRST_CALL = (
+    "## Your first tool call\n"
+    "\n"
+    "Make it the Grep tool, or one bare `grep -n '<pattern>' <file>` — never "
+    "`;`, `&&`, `|`, `$(…)` or backticks, which the guard blocks and which cost "
+    "a call from your cap. Then slice: `Read` with the `offset` / `limit` the "
+    "match's line number gives."
+)
+
 
 class LensPreambleError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
@@ -306,6 +316,10 @@ def compose(
             raise LensPreambleError(f"cannot read {extra}: {e}") from e
         if extra == lens_file:
             body = fill_cap(body, cap, str(extra))
+            # The section right before the lens's own task: buried in the
+            # brief, the rule lost every lens of one fan-out its first call
+            # to the compound guard.
+            parts.extend(["", FIRST_CALL])
         parts.extend(["", body.rstrip()])
 
     return "\n".join(parts) + "\n"

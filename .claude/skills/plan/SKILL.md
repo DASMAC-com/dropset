@@ -327,6 +327,10 @@ with no refactor-later burden a later issue will undo.
   dispatched. A completed blocker stops blocking on its own;
   removing a hold edge on a re-sequence is the operator's call
   too, asked the same way and run through step 3.
+- **A hold message to a reviewed, green PR says park.** Tell the
+  worker to append its resume brief and end the session
+  (`review-pr` step 20), not to wait resident; dispatch the resume
+  once the PR it waits on lands, as a fresh session.
 
 An issue that isn't startable gets reordered behind what it
 depends on, re-scoped, or split so its first actionable unit is

@@ -229,7 +229,12 @@ changes here belong to this session.
    that *succeeded* has its message in git and
    needs nothing.
 
-1. Push to the branch's upstream:
+1. Push to the branch's upstream — a separate,
+   later call, made only once the commit has
+   returned success. **Never issue it in the same
+   parallel batch as the commit**: a batched push
+   still runs when the commit fails (a locked
+   signer), and lands the tree without the change.
 
    ```sh
    git push
