@@ -512,11 +512,11 @@ _ds_op_signout() {
 #
 # Four things about the shape below are load-bearing:
 #
-#   * It **probes before logging in**. `aws login` stops for the operator, so
+#   * It **probes before logging in**. The login stops for the operator, so
 #     a still-valid session must not pay for one. `sts get-caller-identity` is the
 #     cheapest call that actually proves the credentials resolve, and it is what
 #     fails with `Your session has expired` when they do not.
-#   * **The probe is what decides, not the login's exit status.** `aws login` can
+#   * **The probe is what decides, not the login's exit status.** A login can
 #     exit 0 having left a profile that still cannot call STS, so the gate
 #     re-probes afterwards and trusts only that. The invariant defended is
 #     "this session's credentials RESOLVE", never "a login ran".
@@ -540,20 +540,24 @@ _ds_op_signout() {
 #     default, which is the common case. Naming a profile in a committed file
 #     would hard-code one machine's SSO config — and this account's profile
 #     names carry the account id.
-#   * **The login is `--remote`, for every profile.** The plain flow opens the
-#     default browser, which silently signs in as whichever identity that
-#     browser already holds — an admin login can complete as the PowerUser and
-#     then fails at role-credential fetch. `--remote` prints the URL and takes
-#     the code back by paste, so the operator chooses the browser (incognito if
-#     need be) and with it the identity. The operator is at the keyboard
-#     anyway, so the paste costs nothing.
+#   * **The login is `aws sso login --use-device-code --no-browser`.** The
+#     plain flow opens the default browser, which silently signs in as
+#     whichever identity that browser already holds — an admin login can
+#     complete as the PowerUser and then fails at role-credential fetch. The
+#     device-code flow prints a URL and an eight-character code to type on the
+#     AWS page, and `--no-browser` keeps the CLI from opening that URL itself,
+#     so the operator chooses the browser (incognito if need be) and with it
+#     the identity — and nothing long is pasted back into the terminal, which
+#     is why it replaced `aws login --remote` (operator direction, 2026-10).
 #
-# `aws login` is the spelling this CLI itself prescribes: measured on
-# aws-cli/2.35.22, an expired session fails with "Please reauthenticate using
-# 'aws login'". `aws sso login` is the older spelling and is deliberately not
-# coded as a fallback — an unverified command in a committed launcher is worse
-# than a clear failure, and `docs/conventions/aws-infra.md` already prescribes
-# `aws login` for the MCP wiring.
+# **The profile must be SSO-shaped, and a profile that is not is refused, not
+# routed elsewhere.** `aws sso login` only refreshes a profile carrying
+# `sso_session` (or the legacy inline `sso_start_url`); a `login_session`
+# profile written by `aws login` fails with "Missing the following required SSO
+# configuration values". The gate checks that shape locally, after the probe
+# failed and before attempting the login, and refuses with the `aws configure
+# sso` instruction. Silently falling back to `aws login --remote` would keep
+# two login paths alive and hide which one ran. Measured on aws-cli/2.38.4.
 #
 # **An absent CLI warns rather than blocking.** The gate exists to catch an
 # EXPIRED token, which is the measured failure; a machine with no `aws` at all
@@ -576,22 +580,33 @@ _ds_aws_login() {
     return 0
   fi
 
+  # A local config read, so unlike `help` below it is safe on the hot path.
+  if [[ -z "$(aws configure get sso_session "${profile[@]}" 2>/dev/null)" &&
+    -z "$(aws configure get sso_start_url "${profile[@]}" 2>/dev/null)" ]]; then
+    print -u2 "$verb: AWS session expired or absent, and the profile it" \
+      "probes (DS_AWS_PROFILE, or the CLI default when unset) has no SSO" \
+      "settings, so \`aws sso login\` cannot refresh it — NOT launching. Run" \
+      "\`aws configure sso\` to make it an SSO profile (or point" \
+      "DS_AWS_PROFILE at one in the runtime config), then re-run \`$verb\`."
+    return 1
+  fi
+
   print -u2 "$verb: AWS session expired or absent — logging in before launch."
-  aws login --remote "${profile[@]}"
+  aws sso login --use-device-code --no-browser "${profile[@]}"
 
   if aws sts get-caller-identity "${profile[@]}" >/dev/null 2>&1; then
     return 0
   fi
 
   # The re-probe failed, so this is a refusal — UNLESS this `aws` is simply too
-  # old to have a top-level `login` at all, which is the same "AWS is not set up
-  # here" shape as no `aws` and takes the same warn-and-launch branch. Blocking
-  # it would be strictly worse than having no CLI, which launches fine.
+  # old to have `--use-device-code` at all, which is the same "AWS is not set
+  # up here" shape as no `aws` and takes the same warn-and-launch branch.
+  # Blocking it would be strictly worse than having no CLI, which launches fine.
   #
   # **This check sits here, on the already-failing path, and not before the
   # login where it reads more naturally.** The placement IS the safety property.
   # `help` renders through groff and a pager — the one part of the CLI that can
-  # fail for reasons having nothing to do with whether a subcommand exists (no
+  # fail for reasons having nothing to do with whether a flag exists (no
   # `groff`, a misconfigured `AWS_PAGER`, a pager that exits non-zero on closed
   # stdout). Deciding the hot path on that call means a broken pager on a
   # CURRENT CLI silently warn-and-launches every expired session, which is
@@ -599,14 +614,17 @@ _ds_aws_login() {
   # widen an outcome that is already a refusal. `AWS_PAGER=` removes the
   # likeliest cause on top of that.
   #
-  # The cost of the later placement is one stray `Invalid choice: 'login'` from
-  # the attempted login on a genuinely old CLI — worth paying to keep a fragile
+  # The cost of the later placement is one stray unknown-option error from the
+  # attempted login on a genuinely old CLI — worth paying to keep a fragile
   # call off the path that matters, and the message below says to ignore it.
-  if ! AWS_PAGER= aws login help >/dev/null 2>&1; then
-    print -u2 "$verb: this \`aws\` has no top-level \`login\` command (needs a" \
-      "recent AWS CLI v2; measured on 2.35.22) — launching WITHOUT cost-read" \
-      "access, and ignore any \`Invalid choice\` above. Upgrade the CLI, or run" \
-      "the older \`aws sso login --use-device-code\` by hand first."
+  # An unreadable help reads as "no flag", which only widens a refusal.
+  local sso_help
+  sso_help="$(AWS_PAGER= aws sso login help 2>/dev/null)"
+  if [[ "$sso_help" != *--use-device-code* ]]; then
+    print -u2 "$verb: this \`aws\` has no \`sso login --use-device-code\`" \
+      "(needs a recent AWS CLI v2; measured on 2.38.4) — launching WITHOUT" \
+      "cost-read access, and ignore any unknown-option error above. Upgrade" \
+      "the CLI, or log in by hand first."
     return 0
   fi
 
@@ -618,8 +636,8 @@ _ds_aws_login() {
     "NOT launching — it would hit the same error mid-conversation with no way" \
     "to fix it from inside. Either the login did not complete, or AWS was" \
     "unreachable (offline, captive portal, STS throttle). Re-run \`$verb\`" \
-    "once \`aws login --remote\` succeeds, or check DS_AWS_PROFILE in the runtime" \
-    "config."
+    "once \`aws sso login --use-device-code\` succeeds, or check" \
+    "DS_AWS_PROFILE in the runtime config."
   return 1
 }
 
@@ -2345,7 +2363,8 @@ _ds_plan_cycle() {
 #     interactive, and a session cannot fix an expired token from the inside.
 #     Deliberately not called a "hard" gate: it has two documented
 #     warn-and-launch escapes (no `aws` at all, and an `aws` too old for
-#     `login`), so it is hard only when AWS is present and current. It runs
+#     `sso login --use-device-code`), so it is hard only when AWS is present
+#     and current. It runs
 #     AFTER the seat guard on purpose: the guard clears an `AWS_REGION`
 #     inherited from a previous `task` in the same tab, and the AWS CLI reads
 #     that variable, so probing first would probe under the Bedrock launcher's

@@ -2128,7 +2128,7 @@ gated verb, since the retired `housekeeping` verb took its gate with it.
 It reads cost and account data — the upkeep pass it runs first reports
 spend and runs the monthly permission refresh, and the planning
 bootstrap reports that spend —
-and `aws login` is **interactive**, so a session that discovers an
+and the login is **interactive**, so a session that discovers an
 expired token mid-conversation cannot self-heal. Measured: a scheduler
 session's Cost Explorer read failed on an expired session and the spend
 report had to be deferred a day. Launch time is the one moment
@@ -2140,19 +2140,37 @@ The gate is `_ds_aws_login` in the committed
 
 1. **Probe** with `aws sts get-caller-identity`. A live session stops
    here, so a valid launch never stops for a login.
-1. **Log in** with `aws login --remote` only if the probe failed.
+1. **Log in** with `aws sso login --use-device-code --no-browser` only
+   if the probe failed.
 1. **Re-probe**, and refuse the launch if *that* fails.
 
-**The login is `--remote`, for every profile.** The plain flow opens
-the default browser, which silently signs in as whichever identity
-that browser already holds: an admin login can complete as the PowerUser
-and then fails at role-credential fetch with no access. `--remote`
-prints the URL and takes the authorization code back by paste, so the
-operator picks the browser (incognito if need be) and with it the
-identity. A login you run by hand takes the same flag, and the older
-`aws sso login` takes `--use-device-code` for the same reason.
+**The login is the device-code flow, with the browser left to the
+operator.** The plain flow opens the default browser, which silently
+signs in as whichever identity that browser already holds: an admin
+login can complete as the PowerUser and then fails at role-credential
+fetch with no access. `--use-device-code` prints a URL and an
+eight-character code to type on the AWS page, and `--no-browser` keeps
+the CLI from opening the URL itself, so the operator picks the browser
+(incognito if need be) and with it the identity. It replaced
+`aws login --remote` on operator direction (2026-10): that flow takes a
+long authorization code back by paste, and the device code is short
+and typed on the AWS side. A login you run by hand takes the same
+flags.
 
-**Step 3 is the load-bearing one.** `aws login` can exit 0 having left a
+**The profile must be an SSO profile.** `aws sso login` refreshes only
+a profile carrying `sso_session` (or the legacy inline
+`sso_start_url`); a `login_session` profile written by `aws login`
+fails with `Missing the following required SSO configuration values`.
+Once the probe has failed, the gate checks that shape with
+`aws configure get` — a local read, safe on the hot path — and on a
+non-SSO profile **refuses** with the `aws configure sso` instruction
+rather than falling back to `aws login --remote`, so there is one login
+path and no guessing which ran. To convert a profile, run
+`aws configure sso` (reusing the existing SSO session name) and name
+the result after the profile the gate probes, or add `sso_session`,
+`sso_account_id` and `sso_role_name` to its stanza by hand.
+
+**Step 3 is the load-bearing one.** A login can exit 0 having left a
 profile that still cannot call STS, so the gate trusts the probe rather
 than the login's exit status: the invariant defended is "this session's
 credentials **resolve**", never "a login ran".
@@ -2169,16 +2187,9 @@ gate **narrows** the mid-conversation failure rather than closing it.
 Reading the SSO cache's `expiresAt` and re-logging below a threshold
 would close more of it; that is deliberately not built.
 
-`aws login` is the spelling this CLI prescribes for itself. Measured on
-`aws-cli/2.35.22`, an expired session fails naming that exact command:
-
-```text
-Your session has expired. Please reauthenticate using 'aws login'
-```
-
-The older `aws sso login` is deliberately **not** coded as a fallback:
-an unverified command in a committed launcher is worse than a clear
-failure.
+Measured on `aws-cli/2.38.4`: `aws sso login help` lists both
+`--use-device-code` and `--no-browser`. An expired SSO profile fails the
+probe with `Token has expired and refresh failed`.
 
 **The profile is untracked runtime config.** Set `DS_AWS_PROFILE` in the
 runtime config alongside the `DS_OP_*` coordinates to pin one; left
@@ -2194,23 +2205,23 @@ Three deliberate bounds on the gate:
   the committed verb unusable on a checkout without AWS. A *failed or
   dismissed* login is a different condition and does stop the launch.
 
-- **An `aws` too OLD for a top-level `login` takes that same branch.**
-  It is the same "AWS is not set up here" shape, so it warns and
-  launches, naming the older `aws sso login --use-device-code`
-  spelling. Without this it
-  was strictly worse than having no CLI at all: the login failed with
-  `Invalid choice: 'login'`, the re-probe failed, and the verb refused
-  to start — while a machine with no `aws` started fine.
+- **An `aws` too OLD for `sso login --use-device-code` takes that same
+  branch.** It is the same "AWS is not set up here" shape, so it warns
+  and launches. Without this it would be strictly worse than having no
+  CLI at all: the login fails on the unknown option, the re-probe
+  fails, and the verb refuses to start — while a machine with no `aws`
+  starts fine.
 
   **The gate detects this AFTER the failed re-probe, not before the
-  login**, with `AWS_PAGER= aws login help`. That ordering is a safety
+  login**, by looking for `--use-device-code` in
+  `AWS_PAGER= aws sso login help`. That ordering is a safety
   property, not an accident: `help` renders through groff and a pager,
   the one part of the CLI that can fail for reasons unrelated to whether
   a subcommand exists. Deciding the *hot* path on it would mean a broken
   pager on a **current** CLI silently warn-and-launching every expired
   session — the exact failure the gate exists to catch. Placed after the
   re-probe it can only widen an outcome that is already a refusal. The
-  price is one stray `Invalid choice` from the attempted login on a
+  price is one stray unknown-option error from the attempted login on a
   genuinely old CLI, which the warning tells the operator to ignore.
 
 - **`architect` is not gated.** It argues design rather than reading
@@ -2218,13 +2229,13 @@ Three deliberate bounds on the gate:
   operator and a design thought. Add it only if an architect session is
   actually found wanting one.
 
-**One consequence worth knowing: `aws login` blocks on the operator.** That
+**One consequence worth knowing: the login blocks on the operator.** That
 is exactly right for a verb the operator types — which `plan` is,
 being the verb that opens the day. It would be
 wrong for a verb typed into a tab by automation, so note that
 `session_dispatch.py` dispatches `task` verbs, which run on Bedrock and
 are deliberately **not** gated. Keep it that way: gating a dispatched
-verb would hang a tab nobody is watching, waiting on a pasted code.
+verb would hang a tab nobody is watching, waiting on a device code.
 
 It runs **after** `_ds_seat_guard`, which matters: the guard clears an
 `AWS_REGION` inherited from a previous `task` in the same tab, and the
@@ -2237,8 +2248,8 @@ The observation is real, but it names **two** different things. It is
 worth asking which of the two has a number worth designing around;
 neither does:
 
-- **SSO session expiry** is a *local* credential cache. `aws login`
-  refreshes it and the result is usable immediately; there is no
+- **SSO session expiry** is a *local* credential cache.
+  `aws sso login` refreshes it and the result is usable immediately; there is no
   propagation involved. This is the failure the gate above handles, and
   it is the one that actually bit a scheduler session.
 - **IAM policy propagation** is genuine eventual consistency. AWS

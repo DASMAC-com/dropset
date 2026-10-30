@@ -95,9 +95,10 @@ the document's state sections.
    to the operator.
 
 1. **AWS.** Every suggested login lets the operator pick the
-   identity: the login gate runs `aws login --remote` (the
-   paste-the-code path; `aws login` has no device-code flag), and a
-   bare `aws sso login` keeps `--use-device-code`. The spend cap
+   identity: the login gate runs
+   `aws sso login --use-device-code --no-browser` against an SSO
+   profile, and refuses a non-SSO one with the `aws configure sso`
+   instruction. The spend cap
    is live at 2,000 dollars per rolling 24 hours;
    **on a sudden Bedrock access-denied, check the kill switch
    before credentials.** Key rotation is yearly.
@@ -393,7 +394,7 @@ line here is struck.
   issue.
 - **AWS** (`docs/conventions/aws-infra.md`): identity
   `dropset-bedrock-agent`; CLI-first under SSO, logging in with
-  `aws login --remote`; the credential gate precedes the morning
+  `aws sso login --use-device-code`; the credential gate precedes the morning
   dispatch; AWS reports in UTC, so cost reconciliation buckets by
   UTC day.
 - **CI** (`docs/ci.md`): the merge queue runs the full Rust suite
