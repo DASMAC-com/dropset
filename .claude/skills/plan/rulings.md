@@ -221,8 +221,12 @@ the document's state sections.
    with the localnet id.
 
 1. **The first mainnet publish carries admin-teardown** — the
-   documented early-mainnet build, dropped only at the final
-   immutable deploy.
+   documented early-mainnet build. The upgrade authority is
+   retained after the publish, probably in perpetuity (operator,
+   2026-10-30, on 1923); admin-teardown may be removed by a later
+   upgrade on its own, and no fully immutable deploy is assumed or
+   scheduled. A later upgrade is an additive change under that
+   authority, never a republish.
 
 1. **Operator-executed items are never dispatched.** An item
    executed in a vendor dashboard, credentials or deploy env is
@@ -249,7 +253,12 @@ the document's state sections.
 1. **Program-touching work lands before the mainnet publish**,
    never as a later upgrade; the performance-fee issue is the one
    ruled exception after C2. The publish ceremony chore carries
-   the merged-at-recorded-commit check (2026-10-26).
+   the merged-at-recorded-commit check (2026-10-26). Additive
+   upgrades under the retained authority (ruling 26) are possible
+   after C2 and are deferred rather than rushed in; what must land
+   before the publish is any change to a frozen constant, a layout
+   or an existing instruction's behavior, since those are what a
+   republish would mean (2026-10-30).
 
 1. **Docs move with behavior.** A PR that changes behavior the
    architecture or interface docs describe updates those docs in
