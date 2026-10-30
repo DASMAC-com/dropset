@@ -52,6 +52,10 @@ its own and has no close tool.
    python3 .claude/tools/ratify_staged.py list --pool inbox
    ```
 
+   A row marked `[curator pending]` is a **leftover** from a curator
+   that stopped mid-day: clear it before the first batch with one
+   sweep, `python3 .claude/tools/ratify_staged.py unmark --all`.
+
 **Nothing else.** No issue bodies — a body is read when its batch
 comes up. No PR checks, no parked counts, no audit heartbeat:
 those are the scheduler's. The **launcher's hand-off** arrives as
@@ -83,7 +87,9 @@ Urgent set leads, and meta work follows launch work.
 ## The pool
 
 The **un-parked Backlog**: state Backlog, no milestone,
-`[Operator]` items included. An operator item is filed at Urgent,
+`[Operator]` items included. Your own **`Curator pending`** mark
+(below) keeps a task in the pool: it parks nothing. An operator item is filed at
+Urgent,
 so it leads the ranking in priority order, and is **surfaced once**:
 a tick moves it to Todo, where the Next view holds it until the
 operator's Done, and dispatch refuses it downstream. Once
@@ -102,6 +108,19 @@ The listing is the **state**. Re-list before every batch, so an
 arrival joins and a lost message costs latency, not work.
 
 ## The batch: always four
+
+**Mark the batch first.** Before each ask, stamp its ids
+`Curator pending` in one write:
+
+```sh
+python3 .claude/tools/ratify_staged.py mark --ids <the four …>
+```
+
+The operator's view then shows what is under review, and a count
+with no live curator is the visible sign the curator stopped. Only
+the curator writes this milestone. The ticked move clears it; a
+held or unticked task keeps it until it is re-presented (marking it
+again is a no-op) or until the close sweep.
 
 **One `AskUserQuestion` per batch.** Build it with the tool —
 **never compose it by hand**:
@@ -143,6 +162,15 @@ The commentary line, by case:
 - **A spec awaiting design**: "awaiting design in" the architect
   task's title.
 
+**Retitle on the tick.** When a task's title is shorthand or no
+longer matches its body (a fold grew it), its line ends
+`title → <proposed title>`. A held task that grew a part gets the
+same check when it returns. The proposal **never changes** the
+leading `[<Verb>/<Substrate>]` token, `[Operator]` or `Claude:`; the
+tool refuses one that does, and you never pass `--retoken`. If the
+body contradicts the token, raise it with the operator as a comment;
+don't retitle around it.
+
 **Question 2**, only when there is something to propose, passed as
 `--proposals`: **edges**, one checkbox per proposal with its
 one-line reason (what it consumes, what it unblocks). In the
@@ -172,14 +200,34 @@ follow. Then, per ticked task:
 
   ```sh
   python3 .claude/tools/ratify_staged.py approve --pool inbox \
-    --ids <one>
+    --ids <one> [--title <proposed title>]
   ```
 
-- **A thread** (`HELD`), unless it is one of the three cases
-  below: fold by the fold protocol — the fold lands in the task's
-  **body**; the reply on the thread names the part of the body
-  where it landed; then resolve it
-  (`linear_gate.py resolve <comment-id>`). It carries to the next
+  That one write moves the task, clears its `Curator pending` mark,
+  and applies the retitle if you proposed one. A bare tick accepts the
+  proposal.
+
+- **A comment that only answers the title**: if it says
+  `keep title`, approve with no `--title`. If it gives a different
+  title, pass that one. Either way, first reply and resolve the
+  thread as below, then approve in this same round, since the
+  approval is the tick.
+
+- **A thread** (`HELD`), unless it is the case above or one of the
+  three below: fold by the fold protocol. The fold lands in the task's
+  **body**. Then **reply in the operator's thread**, naming what
+  changed and the part of the body where it landed, and resolve the
+  thread with your reply as the resolving comment:
+
+  ```sh
+  python3 .claude/tools/linear_patch.py comment <id> \
+    --body <scratchpad>/reply.md --reply-to <thread-id>
+  python3 .claude/tools/linear_gate.py resolve <thread-id> \
+    <reply-id>
+  ```
+
+  If the reply fails, leave the thread **open**: a resolved thread
+  with no answer reads as approved. The task carries to the next
   batch.
 
 - **A comment asking to drop it**: cancel it, the reason in the
@@ -241,7 +289,9 @@ lacks. So:
 
 - a priority, beyond the architect task's fixed one at filing;
 - an edge, kill or merge the operator did not tick;
-- a milestone, except `Post-validation` when a comment names it;
+- a milestone, except `Post-validation` when a comment names it
+  and its own `Curator pending` mark;
+- a title's leading token: a retitle keeps it;
 - any other issue's state or body beyond the fold, a ticked kill
   or merge, and the ticked task's Todo move or cancel.
 
@@ -302,6 +352,14 @@ for the day". On it:
 1. Take **no new batch**; finish a batch that is mid-tick — its
    writes and its message to the scheduler.
 
+1. **The close sweep**: clear every remaining `Curator pending`
+   mark, so a count left on the board means a curator stopped
+   without closing:
+
+   ```sh
+   python3 .claude/tools/ratify_staged.py unmark --all
+   ```
+
 1. State the **inbox remaining**: the count and the ids.
 
 1. Session metrics, unprompted (`session-metrics`), and the day's
@@ -313,7 +371,8 @@ for the day". On it:
    CLEAR TO CLOSE — close this window
    ```
 
-No board write accompanies the stop, no issue state (there is no
+No board write accompanies the stop beyond the sweep, no issue
+state (there is no
 governing issue), and no Planning-document note: the scheduler,
 which owns the document, is rewriting it as this runs, and the
 board holds any move its rewrite missed. A close the operator starts by hand

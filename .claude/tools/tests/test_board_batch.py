@@ -407,6 +407,61 @@ class ApplyFieldsTests(unittest.TestCase):
         self.assertTrue(lines[0].startswith("WOULD SET"))
 
 
+class TitleTokenTests(unittest.TestCase):
+    TITLE = "[Chore/Anthropic] [Operator] Claude: Old subject"
+
+    def setUp(self):
+        self.by_number = index_by_number([_issue(10, title=self.TITLE)])
+
+    def test_the_token_run_reads_brackets_then_the_claude_prefix(self):
+        self.assertEqual(
+            bb.title_token(self.TITLE),
+            ("[Chore/Anthropic]", "[Operator]", "Claude:"),
+        )
+        self.assertEqual(bb.title_token("Plain subject"), ())
+
+    def test_a_retitle_that_keeps_the_token_is_accepted(self):
+        new = "[Chore/Anthropic] [Operator] Claude: New subject"
+        with mock.patch.object(bb, "_post") as posted:
+            lines = apply_fields(
+                "k", {"10": {"title": new}}, self.by_number, dry_run=True
+            )
+        posted.assert_not_called()
+        self.assertTrue(lines[0].startswith("WOULD SET ENG-10"))
+
+    def test_a_dry_run_that_changes_the_token_is_refused(self):
+        for new in (
+            "[Task/Bedrock] [Operator] Claude: Old subject",
+            "[Chore/Anthropic] Claude: Old subject",
+            "[Chore/Anthropic] [Operator] Old subject",
+        ):
+            with self.subTest(new=new), mock.patch.object(bb, "_post") as posted:
+                with self.assertRaises(BoardBatchError) as ctx:
+                    apply_fields(
+                        "k", {"10": {"title": new}}, self.by_number, dry_run=True
+                    )
+                posted.assert_not_called()
+                self.assertIn("--retoken", str(ctx.exception))
+
+    def test_retoken_lets_the_token_change(self):
+        new = "[Task/Bedrock] Old subject"
+        with mock.patch.object(bb, "_post"):
+            lines = apply_fields(
+                "k",
+                {"10": {"title": new}},
+                self.by_number,
+                dry_run=True,
+                retoken=True,
+            )
+        self.assertTrue(lines[0].startswith("WOULD SET ENG-10"))
+
+    def test_the_cli_takes_retoken_on_fields_only(self):
+        args = bb._parse_args(["prog", "fields", "--updates", "u.json", "--retoken"])
+        self.assertTrue(args.retoken)
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            bb._parse_args(["prog", "priorities", "--updates", "u.json", "--retoken"])
+
+
 class EdgesTests(unittest.TestCase):
     def setUp(self):
         self.by_number = index_by_number([_issue(10), _issue(11)])

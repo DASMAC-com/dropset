@@ -52,7 +52,22 @@ drives through the same machinery:
 * ``approve --pool inbox`` takes **at most one** ``--ids`` — the
   one-at-a-time rule, enforced here rather than in prose — plus any number of
   ``--cancel`` rejects. The approved id moves to Todo; the rest is as above.
+  ``--title`` retitles that one task in the same write, through
+  ``board_batch.py``'s title guard: a title that changes the leading
+  ``[Verb/Substrate]`` / ``[Operator]`` / ``Claude:`` token run is refused,
+  and this tool has no ``--retoken``.
 * ``gate --pool inbox`` is refused: nothing is staged in that pool.
+
+**The curator's mark.** An inbox member carrying the ``Curator pending``
+milestone is still an inbox member: ``list --pool inbox`` lists it (marked
+``[curator pending]``) and ``approve --pool inbox`` accepts it, clearing the
+milestone in the same write. Two inbox-only subcommands write it, the
+milestone resolved by name:
+
+* ``mark --ids … [--dry-run]`` — stamp the batch before its ask; an
+  out-of-pool id is skipped and named.
+* ``unmark (--ids … | --all) [--dry-run]`` — clear it; ``--all`` is the close
+  sweep and the next bootstrap's leftover sweep. Clears only that milestone.
 
 An out-of-pool id (Todo, parked under any milestone, closed) is skipped and
 named, never silently dropped.
@@ -81,6 +96,8 @@ Usage:
         --notes notes.json --proposals proposals.json --out ask.json
     python3 .claude/tools/ratify_staged.py approve --pool inbox --ids ENG-1 \\
         --cancel ENG-2
+    python3 .claude/tools/ratify_staged.py mark --ids ENG-1 ENG-2
+    python3 .claude/tools/ratify_staged.py unmark --all
 """
 
 from __future__ import annotations
@@ -93,12 +110,16 @@ import sys
 import board_batch
 
 MILESTONE = "Session pending"
+# The curator's under-review mark: stamped on a batch before its ask, cleared by
+# the ticked move, the close sweep or the next bootstrap. Only the curator
+# writes it, and an inbox member carrying it is still an inbox member.
+CURATOR_MILESTONE = "Curator pending"
 
 POOLS = ("staged", "inbox")
 # How each pool's membership reads in a refusal or a skip.
 POOL_WHERE = {
     "staged": f"open under {MILESTONE}",
-    "inbox": "open in Backlog with no milestone",
+    "inbox": f"open in Backlog with no milestone or {CURATOR_MILESTONE}",
 }
 INBOX_STATE = "Backlog"
 OPERATOR_TOKEN = "[operator]"
@@ -171,14 +192,21 @@ def parse_ids(raw: list[str]) -> list[str]:
 
 def in_pool(issue: dict, pool: str) -> bool:
     """Open and a member of ``pool``: still carrying the parking milestone for
-    ``staged``; in Backlog with no milestone at all for ``inbox``."""
+    ``staged``; in Backlog with no milestone, or the curator's own
+    ``Curator pending`` mark, for ``inbox``."""
     milestone = (issue.get("projectMilestone") or {}).get("name")
     state = issue.get("state") or {}
     if state.get("type") in RESOLVED_TYPES:
         return False
     if pool == "inbox":
-        return not milestone and str(state.get("name", "")).lower() == "backlog"
+        return milestone in (None, "", CURATOR_MILESTONE) and (
+            str(state.get("name", "")).lower() == "backlog"
+        )
     return milestone == MILESTONE
+
+
+def curator_marked(issue: dict) -> bool:
+    return (issue.get("projectMilestone") or {}).get("name") == CURATOR_MILESTONE
 
 
 def is_operator_item(issue: dict) -> bool:
@@ -199,7 +227,11 @@ def format_pool_listing(issues: list[dict]) -> list[str]:
     lines = []
     for issue in sorted(issues, key=priority_rank):
         (line,) = board_batch.format_listing([issue])
-        lines.append(f"{line}  {OPERATOR_TOKEN}" if is_operator_item(issue) else line)
+        if is_operator_item(issue):
+            line = f"{line}  {OPERATOR_TOKEN}"
+        if curator_marked(issue):
+            line = f"{line}  [{CURATOR_MILESTONE.lower()}]"
+        lines.append(line)
     return lines
 
 
@@ -452,8 +484,8 @@ def plan_approval(
     batch cannot run yet. Skipping the already-moved ids is what lets a write
     that failed partway be re-run with the same arguments.
 
-    The inbox pool approves one task per write, and its tasks carry no
-    milestone to clear."""
+    The inbox pool approves one task per write, and clears a task's milestone
+    only when it carries the curator's ``Curator pending`` mark."""
     if pool == "inbox" and len(approve) > 1:
         raise RatifyError(
             "refusing the batch, nothing written — the inbox approves one task "
@@ -477,10 +509,58 @@ def plan_approval(
         raise RatifyError(
             "refusing the batch, nothing written — " + "; ".join(problems)
         )
-    clear = {"milestone": None} if pool == "staged" else {}
-    updates = {i["identifier"]: {**clear, "state": "Todo"} for i in approve}
-    updates.update({i["identifier"]: {**clear, "state": "Canceled"} for i in cancel})
+
+    def clear(issue: dict) -> dict:
+        if pool == "staged" or curator_marked(issue):
+            return {"milestone": None}
+        return {}
+
+    updates = {i["identifier"]: {**clear(i), "state": "Todo"} for i in approve}
+    updates.update({i["identifier"]: {**clear(i), "state": "Canceled"} for i in cancel})
     return updates, already
+
+
+_MILESTONES_QUERY = """
+query($projectId: String!) {
+  project(id: $projectId) { projectMilestones { nodes { id name } } }
+}
+"""
+
+
+def milestone_id(api_key: str, project: str, name: str) -> str:
+    """The id of the project milestone named ``name``; zero or several matches
+    are refused rather than guessed."""
+    data = board_batch._post(api_key, _MILESTONES_QUERY, {"projectId": project})
+    nodes = ((data.get("project") or {}).get("projectMilestones") or {}).get(
+        "nodes"
+    ) or []
+    matches = [n for n in nodes if n.get("name") == name]
+    if len(matches) != 1:
+        raise RatifyError(
+            f"{len(matches)} milestones are named {name!r} in this project — "
+            "expected exactly one"
+        )
+    return str(matches[0]["id"])
+
+
+def plan_mark(issues: list[dict], mark_id: str) -> tuple[dict[str, dict], list[str]]:
+    """``(updates, skipped)`` stamping ``Curator pending`` on the inbox members
+    of ``issues``; a member already carrying it needs no write, and an
+    out-of-pool id is skipped and named."""
+    updates: dict[str, dict] = {}
+    skipped: list[str] = []
+    for issue in issues:
+        if not in_pool(issue, "inbox"):
+            skipped.append(issue["identifier"])
+        elif not curator_marked(issue):
+            updates[issue["identifier"]] = {"milestone": mark_id}
+    return updates, skipped
+
+
+def plan_unmark(issues: list[dict]) -> dict[str, dict]:
+    """The writes clearing ``Curator pending`` from whichever of ``issues``
+    carry it — never another milestone."""
+    return {i["identifier"]: {"milestone": None} for i in issues if curator_marked(i)}
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -497,16 +577,62 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     approve = sub.add_parser("approve", help="the one batch write at the end")
     approve.add_argument("--ids", nargs="+", default=[])
     approve.add_argument("--cancel", nargs="+", default=[])
+    approve.add_argument(
+        "--title",
+        help="inbox only: retitle the one approved task in the same write; the "
+        "leading token run must not change",
+    )
     approve.add_argument("--dry-run", action="store_true")
     gate = sub.add_parser("gate", help="fail while any id is still staged")
     gate.add_argument("--ids", nargs="+", required=True)
     for command in (listing, ask, review, approve, gate):
         command.add_argument("--pool", choices=POOLS, default="staged")
+    mark = sub.add_parser("mark", help=f"stamp an inbox batch {CURATOR_MILESTONE}")
+    mark.add_argument("--ids", nargs="+", required=True)
+    mark.add_argument("--dry-run", action="store_true")
+    unmark = sub.add_parser("unmark", help=f"clear {CURATOR_MILESTONE}")
+    which = unmark.add_mutually_exclusive_group(required=True)
+    which.add_argument("--ids", nargs="+")
+    which.add_argument(
+        "--all",
+        action="store_true",
+        help="every open issue carrying it: the close and bootstrap sweeps",
+    )
+    unmark.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
+
+
+def run_mark(args: argparse.Namespace, key: str, project: str) -> int:
+    """``mark`` / ``unmark``: the curator's ``Curator pending`` writes, one
+    ``board_batch`` field batch each."""
+    if args.cmd == "unmark" and args.all:
+        issues = board_batch.fetch_open_in_milestones(key, project, [CURATOR_MILESTONE])
+    else:
+        issues = resolve_all(key, project, parse_ids(args.ids))
+    if args.cmd == "mark":
+        updates, skipped = plan_mark(
+            issues, milestone_id(key, project, CURATOR_MILESTONE)
+        )
+        for ident in skipped:
+            print(f"SKIPPED {ident} | not {POOL_WHERE['inbox']}")
+    else:
+        updates = plan_unmark(issues)
+    if not updates:
+        print(f"NOTHING to write — {CURATOR_MILESTONE} already as asked")
+        return 0
+    by_number = {int(i["number"]): i for i in issues}
+    board_batch.apply_fields(key, updates, by_number, dry_run=args.dry_run)
+    return 0
 
 
 def run(argv: list[str]) -> int:
     args = _parse_args(argv)
+    if args.cmd in ("mark", "unmark"):
+        return run_mark(
+            args,
+            board_batch.env_var("LINEAR_API_KEY"),
+            board_batch.env_var("LINEAR_PROJECT_ID"),
+        )
     pool = args.pool
     if args.cmd == "gate" and pool == "inbox":
         raise RatifyError(
@@ -563,10 +689,19 @@ def run(argv: list[str]) -> int:
         cancel_ids = parse_ids(args.cancel) if args.cancel else []
         if not approve_ids and not cancel_ids:
             raise RatifyError("nothing to approve or cancel")
+        if args.title is not None and (pool != "inbox" or len(approve_ids) != 1):
+            raise RatifyError(
+                "--title retitles the one task an inbox approve moves — "
+                "pass it with --pool inbox and exactly one --ids"
+            )
         approve = resolve_all(key, project, approve_ids) if approve_ids else []
         cancel = resolve_all(key, project, cancel_ids) if cancel_ids else []
         _, held = review_lines(key, [i for i in approve if in_pool(i, pool)], pool)
         updates, already = plan_approval(approve, cancel, held, pool)
+        if args.title is not None:
+            ident = approve[0]["identifier"]
+            if ident in updates:
+                updates[ident]["title"] = args.title
         for ident in already:
             print(f"ALREADY {ident} | already in its target state, skipped")
         by_number = {int(i["number"]): i for i in approve + cancel}
