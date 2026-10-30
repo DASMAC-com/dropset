@@ -297,8 +297,9 @@ def rerun_verdicts(result: dict) -> dict:
         # correct content is a rebuild from the merged tree ("WASM binary
         # overlap").
         reason = (
-            f"{WASM_BINARY} overlaps — drop its `Rebuild WASM bindings` "
-            "commit, rebase, then `make wasm` and recommit"
+            f"{WASM_BINARY} overlaps — drop any `Rebuild WASM bindings` "
+            "commit, rebase, then let `regen_artifacts.py` rebuild it "
+            "(`make wasm`, recommitted under that subject)"
         )
         if result["runs_artifact_gates"]:
             reason += "; base delta also touched a generation input"
