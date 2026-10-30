@@ -534,6 +534,32 @@ class GateTests(unittest.TestCase):
         )
         self.assertTrue(self.out.exists())
 
+    def test_the_fingerprint_survives_a_rebase_and_moves_with_the_change(self):
+        """What the enqueue's stale-review check compares: a base that moves
+        under an unchanged branch keeps it, any edit to the branch moves it,
+        and an `--only` slice never narrows it."""
+        self.commit("a.txt", "one\ntwo\nthree\n", "Add a")
+        self.commit("b.txt", "bee\n", "Add b")
+        reviewed = rd.gate("main", self.out, fetch=False)["fingerprint"]
+        self.assertRegex(reviewed, r"^[0-9a-f]{40}$")
+        self.assertEqual(
+            rd.gate("main", self.out, fetch=False, only=["a.txt"])["fingerprint"],
+            reviewed,
+        )
+        # The base gains an unrelated commit and the branch is rebased onto it.
+        git(self.repo, "checkout", "-q", "-b", "base", "origin/main")
+        self.commit("seed.txt", "seed\nmore\n", "Base moves")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "checkout", "-q", "main")
+        git(self.repo, "rebase", "-q", "origin/main")
+        self.assertEqual(rd.diff_fingerprint("origin/main"), reviewed)
+        # The LAST file in the diff, so a per-file id would miss it.
+        self.commit("b.txt", "bee\nsting\n", "Amend b")
+        self.assertNotEqual(rd.diff_fingerprint("origin/main"), reviewed)
+
+    def test_an_empty_diff_has_no_fingerprint(self):
+        self.assertIsNone(rd.gate("main", self.out, fetch=False)["fingerprint"])
+
     def test_nothing_changed_is_not_ready(self):
         v = rd.gate("main", self.out, fetch=False)
         self.assertFalse(v["ready"])
