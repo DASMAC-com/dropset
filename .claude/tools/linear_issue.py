@@ -687,19 +687,19 @@ def parse_body_file(text: str, path: str) -> tuple[dict, str]:
             )
         if key in fields:
             raise LinearIssueError(f"{path}: header key {key!r} is repeated")
+        # An empty value would reach `create_issue` as "" and read as unset,
+        # silently dropping the flag it was meant to override — so refuse it.
+        if not value.strip():
+            raise LinearIssueError(f"{path}: header key {key!r} has no value")
         fields[key] = value.strip()
     else:
         end = len(lines)
     if "priority" in fields:
-        try:
-            fields["priority"] = int(fields["priority"])
-        except ValueError as exc:
-            raise LinearIssueError(
-                f"{path}: priority {fields['priority']!r} is not 0-4"
-            ) from exc
+        raw = fields["priority"]
+        if not raw.isdecimal() or int(raw) > 4:
+            raise LinearIssueError(f"{path}: priority {raw!r} is not 0-4")
+        fields["priority"] = int(raw)
     body = "\n".join(lines[end + 1 :]).strip("\n")
-    if not fields["title"]:
-        raise LinearIssueError(f"{path}: the title is blank")
     if not body.strip():
         raise LinearIssueError(f"{path}: the body after the header is empty")
     return fields, body
@@ -746,6 +746,8 @@ def create_many(
         try:
             line = create_issue(api_key, body=body, **merged)
         except LinearIssueError as exc:
+            if merged.get("dry_run"):
+                raise LinearIssueError(f"{name}: {exc} — a dry run, nothing filed")
             raise LinearIssueError(
                 f"{name}: {exc} — {filed} of {len(entries)} filed before it; "
                 "remove those files before re-running"

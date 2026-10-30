@@ -1246,7 +1246,7 @@ def inline_updates(args: argparse.Namespace) -> dict:
         if args.priority is None:
             raise BoardBatchError("priorities --id needs --priority")
         value = args.priority.strip()
-        return {args.id: {"priority": int(value) if value.isdigit() else value}}
+        return {args.id: {"priority": int(value) if value.isdecimal() else value}}
     if not args.set:
         raise BoardBatchError("fields --id needs at least one --set FIELD=VALUE")
     fields: dict = {}

@@ -1285,20 +1285,24 @@ class InlineFormTests(unittest.TestCase):
     def test_an_incomplete_or_stray_inline_flag_is_refused(self):
         env = {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"}
         cases = (
-            ["priorities", "--id", "ENG-1"],
-            ["fields", "--id", "ENG-1"],
-            ["fields", "--id", "ENG-1", "--set", "nonsense"],
-            ["edges", "--blocker", "ENG-1"],
-            ["edges", "--pairs", "p.json", "--blocked", "ENG-2"],
-            ["priorities", "--updates", "u.json", "--priority", "2"],
+            (["priorities", "--id", "ENG-1"], "needs --priority"),
+            (["fields", "--id", "ENG-1"], "needs at least one --set"),
+            (["fields", "--id", "ENG-1", "--set", "nonsense"], "FIELD=VALUE"),
+            (["edges", "--blocker", "ENG-1"], "needs --blocked"),
+            # The file loader is stubbed with a valid payload, so only the
+            # stray-flag guard can be what refuses these three.
+            (["edges", "--pairs", "p.json", "--blocked", "ENG-2"], "inline form"),
+            (["priorities", "--updates", "u.json", "--priority", "2"], "inline form"),
+            (["fields", "--updates", "u.json", "--set", "state=Todo"], "inline form"),
         )
-        for argv in cases:
+        for argv, message in cases:
             with (
                 self.subTest(argv=argv),
                 mock.patch.object(bb, "env_var", side_effect=lambda n: env[n]),
+                mock.patch.object(bb, "load_json_file", return_value={"1": 2}),
                 mock.patch.object(bb, "_post") as posted,
             ):
-                with self.assertRaises(bb.BoardBatchError):
+                with self.assertRaisesRegex(bb.BoardBatchError, message):
                     bb.run(["prog", *argv])
                 posted.assert_not_called()
 

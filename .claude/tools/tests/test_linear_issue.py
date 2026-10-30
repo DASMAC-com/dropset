@@ -14,7 +14,8 @@ import os
 import shutil
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 import linear_issue as li
 
@@ -931,6 +932,62 @@ class BodyDir(_Stubbed):
         args = li._parse_args(["prog", "create", "--body-dir", "d"])
         self.assertEqual((args.body_dir, args.title), ("d", None))
 
+    def test_each_remaining_header_refusal_fires(self):
+        cases = (
+            ("title: t\ntitle: u\n\nb", "repeated"),
+            ("title: t\nmilestone:\n\nb", "no value"),
+            ("title:\n\nb", "no value"),
+            ("title: t\npriority: 9\n\nb", "not 0-4"),
+            ("title: t\npriority: high\n\nb", "not 0-4"),
+        )
+        for text, message in cases:
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(li.LinearIssueError, message):
+                    li.parse_body_file(text, "f.md")
+
+    def test_a_directory_with_no_body_files_is_refused(self):
+        tmp = self.write_dir({"notes.txt": "x"})
+        with self.assertRaisesRegex(li.LinearIssueError, "no \\*.md"):
+            li.load_body_dir(tmp)
+
+    def test_a_dry_run_failure_does_not_claim_a_filing(self):
+        tmp = self.write_dir({"a.md": "title: A\nverb: bogus\n\nb"})
+        with self.assertRaisesRegex(li.LinearIssueError, "nothing filed"):
+            li.create_many(
+                "k",
+                li.load_body_dir(tmp),
+                defaults={**self.DEFAULTS, "dry_run": True},
+                emit=lambda _l: None,
+            )
+
+    def run_cli(self, argv):
+        env = {"LINEAR_API_KEY": "k", "LINEAR_TEAM_ID": "t", "LINEAR_PROJECT_ID": "p"}
+        out = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, env),
+            redirect_stdout(out),
+            redirect_stderr(io.StringIO()),
+        ):
+            li.run(["prog", *argv])
+        return out.getvalue()
+
+    def test_the_cli_wires_dry_run_and_flags_through_to_each_filing(self):
+        tmp = self.write_dir({"a.md": "title: A\n\nb", "b.md": "title: B\n\nb"})
+        rec = self.install([])
+        out = self.run_cli(
+            ["create", "--body-dir", tmp, "--dry-run", "--milestone", "Session pending"]
+        )
+        self.assertEqual(rec.calls, [], "a dry run must not reach the wire")
+        self.assertIn("a.md: WOULD FILE A", out)
+        self.assertIn("milestone Session pending", out)
+
+    def test_the_cli_refuses_a_mixed_title_and_body_form(self):
+        tmp = self.write_dir({"a.md": "title: A\n\nb"})
+        with self.assertRaisesRegex(li.LinearIssueError, "header"):
+            self.run_cli(["create", "--body-dir", tmp, "--title", "T"])
+        with self.assertRaisesRegex(li.LinearIssueError, "--title is required"):
+            self.run_cli(["create", "--body-file", "f.md"])
+
 
 class Read(unittest.TestCase):
     """``read`` is ``linear_patch.py read`` under the tool sessions reach for
@@ -939,12 +996,15 @@ class Read(unittest.TestCase):
     def setUp(self):
         real = li.linear_patch._post
         self.addCleanup(lambda: setattr(li.linear_patch, "_post", real))
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = tmp.name
 
     def test_it_writes_the_body_and_prints_only_its_size(self):
         li.linear_patch._post = lambda *_a: {
             "issue": {"id": "u", "identifier": "ENG-7", "description": "SECRET body"}
         }
-        out = os.path.join(tempfile.mkdtemp(), "sub", "body.md")
+        out = os.path.join(self.tmp, "sub", "body.md")
         line = li.read_body("k", "ENG-7", out)
         self.assertNotIn("SECRET", line)
         self.assertIn("ENG-7", line)
@@ -954,7 +1014,7 @@ class Read(unittest.TestCase):
     def test_a_reader_failure_surfaces_as_this_tools_error(self):
         li.linear_patch._post = lambda *_a: {"issue": None}
         with self.assertRaises(li.LinearIssueError):
-            li.read_body("k", "ENG-404", os.path.join(tempfile.mkdtemp(), "b.md"))
+            li.read_body("k", "ENG-404", os.path.join(self.tmp, "b.md"))
 
     def test_the_cli_takes_the_identifier_positionally_or_as_id(self):
         for argv in (
@@ -963,6 +1023,18 @@ class Read(unittest.TestCase):
         ):
             args = li._parse_args(["prog", *argv])
             self.assertEqual(args.identifier or args.id, "ENG-1")
+
+    def test_the_cli_refuses_both_or_neither_identifier(self):
+        for argv in (
+            ["read", "--out", "o", "--id", "ENG-1", "ENG-2"],
+            ["read", "--out", "o"],
+        ):
+            with (
+                self.subTest(argv=argv),
+                mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}),
+            ):
+                with self.assertRaisesRegex(li.LinearIssueError, "once"):
+                    li.run(["prog", *argv])
 
 
 if __name__ == "__main__":

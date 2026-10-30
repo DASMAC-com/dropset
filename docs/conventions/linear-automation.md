@@ -1096,7 +1096,7 @@ failure, which is the worst moment for it:
 Every one takes `--dry-run` except the two `read`s and
 `linear_gate.py approvals`, also a read. `board_batch.py fields`,
 `priorities` and `edges` each take one write as flags in place of
-the file (`--id` with `--set FIELD=VALUE` / `--priority N`;
+the file (`--id` with `--set FIELD=VALUE` / `--priority N|name`;
 `--blocker` with `--blocked`). `linear_gate.py` covers the
 dispatch gate's calls the MCP cannot reach: `approvals` is the
 gate's read half, exiting non-zero on any state other than Todo and
