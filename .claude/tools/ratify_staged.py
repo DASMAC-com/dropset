@@ -58,6 +58,30 @@ drives through the same machinery:
   and this tool has no ``--retoken``.
 * ``gate --pool inbox`` is refused: nothing is staged in that pool.
 
+**The operator walk.** ``--pool operator`` is the Todo ``[Operator]`` items
+with no milestone — the hand-executed work a tick moved to Todo, which the
+curator carries one per batch until Done. A chore-token item is never a
+member: it is Todo work the scheduler dispatches.
+
+* ``list --pool operator`` ranks it Urgent first, then oldest (lowest
+  number) first, so its first line is the item the next ask carries.
+* ``ask --operator <id>`` adds that one item as its own question after the
+  review checkboxes — the "fifth box", since a question holds four. ``--ids``
+  may then be omitted: the operator-items-only ask. The tool reads the item's
+  comments and counts the curator's dated deferral replies (a comment whose
+  body starts ``Deferred YYYY-MM-DD:``), so the description says how often
+  and how long it has waited, and from the third deferral on it recommends
+  cancel under the necessity gate.
+* ``approve --pool operator`` takes at most one ``--ids`` and moves it to
+  Done; ``--cancel`` cancels as above.
+* ``approve --chore <id>`` retitles the operator item's ``[Operator]`` token to
+  ``[Chore/Bedrock]`` and changes nothing else, leaving it in Todo for the
+  scheduler to dispatch under the fleet gate. The operator's ``attended
+  chore`` comment is what licenses that one token change; there is still no
+  general ``--retoken``.
+* ``review --pool operator`` reads the item's open threads like any pool;
+  ``gate`` is refused for it.
+
 **The curator's mark.** An inbox member carrying the ``Curator pending``
 milestone is still an inbox member: ``list --pool inbox`` lists it (marked
 ``[curator pending]``) and ``approve --pool inbox`` accepts it, clearing the
@@ -98,11 +122,17 @@ Usage:
         --cancel ENG-2
     python3 .claude/tools/ratify_staged.py mark --ids ENG-1 ENG-2
     python3 .claude/tools/ratify_staged.py unmark --all
+    python3 .claude/tools/ratify_staged.py list --pool operator
+    python3 .claude/tools/ratify_staged.py ask --pool inbox --ids ENG-1 \\
+        --operator ENG-9 --notes notes.json --out ask.json
+    python3 .claude/tools/ratify_staged.py approve --pool operator --ids ENG-9
+    python3 .claude/tools/ratify_staged.py approve --chore ENG-9
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import re
 import sys
@@ -115,14 +145,37 @@ MILESTONE = "Session pending"
 # writes it, and an inbox member carrying it is still an inbox member.
 CURATOR_MILESTONE = "Curator pending"
 
-POOLS = ("staged", "inbox")
+POOLS = ("staged", "inbox", "operator")
 # How each pool's membership reads in a refusal or a skip.
 POOL_WHERE = {
     "staged": f"open under {MILESTONE}",
     "inbox": f"open in Backlog with no milestone or {CURATOR_MILESTONE}",
+    "operator": "an [Operator] item open in Todo with no milestone",
 }
 INBOX_STATE = "Backlog"
+OPERATOR_STATE = "Todo"
 OPERATOR_TOKEN = "[operator]"
+# The state an approval moves a task to, per pool: a staged or inbox task is
+# approved into Todo, an operator item's tick is its Done.
+APPROVED_STATE = {"staged": "Todo", "inbox": "Todo", "operator": "Done"}
+# The one retoken this tool writes: an operator item the operator's `attended
+# chore` comment hands to the scheduler as a chore.
+CHORE_TOKEN = "[Chore/Bedrock]"
+
+# The fifth box: one operator item, its own question after the review ticks.
+OPERATOR_TEXT = (
+    "Is this one done? Tick it once it is. Leave a comment to put it off, "
+    "`drop` to cancel it, or `attended chore` to hand it to the scheduler."
+)
+OPERATOR_HEADER = "Operator"
+NOT_TODAY_OPTION = {
+    "label": "Not today",
+    "description": "Leave it unticked; it stays in Todo and comes back next batch.",
+}
+# The curator's dated deferral reply, which the next ask counts.
+DEFERRAL = re.compile(r"\s*Deferred (\d{4}-\d{2}-\d{2}):")
+# The deferral count from which the ask recommends cancel (ruling 3).
+CANCEL_AT_DEFERRALS = 3
 
 # The verbatim review ask (operator direction, 2026-10-23).
 ASK_TEXT = (
@@ -193,7 +246,8 @@ def parse_ids(raw: list[str]) -> list[str]:
 def in_pool(issue: dict, pool: str) -> bool:
     """Open and a member of ``pool``: still carrying the parking milestone for
     ``staged``; in Backlog with no milestone, or the curator's own
-    ``Curator pending`` mark, for ``inbox``."""
+    ``Curator pending`` mark, for ``inbox``; an ``[Operator]`` item in Todo
+    with no milestone, never a chore-token one, for ``operator``."""
     milestone = (issue.get("projectMilestone") or {}).get("name")
     state = issue.get("state") or {}
     if state.get("type") in RESOLVED_TYPES:
@@ -201,6 +255,14 @@ def in_pool(issue: dict, pool: str) -> bool:
     if pool == "inbox":
         return milestone in (None, "", CURATOR_MILESTONE) and (
             str(state.get("name", "")).lower() == "backlog"
+        )
+    if pool == "operator":
+        tokens = [t.lower() for t in board_batch.title_token(issue.get("title", ""))]
+        return (
+            not milestone
+            and str(state.get("name", "")).lower() == OPERATOR_STATE.lower()
+            and OPERATOR_TOKEN in tokens
+            and not any(t.startswith("[chore/") for t in tokens)
         )
     return milestone == MILESTONE
 
@@ -212,6 +274,60 @@ def curator_marked(issue: dict) -> bool:
 def is_operator_item(issue: dict) -> bool:
     """An ``[Operator]`` (hand-executed) item, by its title token."""
     return OPERATOR_TOKEN in str(issue.get("title", "")).lower()
+
+
+def chore_title(issue: dict) -> str:
+    """``issue``'s title with its leading ``[Operator]`` token swapped for
+    ``[Chore/Bedrock]``, the rest kept byte for byte; refused when the leading
+    token run carries no ``[Operator]``, or a ``[Verb/Substrate]`` token beside
+    it that the swap would leave as a second launch line."""
+    title = str(issue.get("title") or "")
+    end = board_batch._TITLE_TOKEN.match(title).end(1)
+    run = title[:end]
+    if any("/" in t for t in board_batch.title_token(title)):
+        raise RatifyError(
+            f"{issue.get('identifier')}: the title already carries a "
+            "[Verb/Substrate] token — fix the title by hand, not by a swap"
+        )
+    swapped = re.sub(r"\[operator\]", CHORE_TOKEN, run, count=1, flags=re.I)
+    if swapped == run:
+        raise RatifyError(
+            f"{issue.get('identifier')}: no leading [Operator] token to hand over"
+        )
+    return swapped + title[end:]
+
+
+def deferrals(comments: list[dict]) -> list[datetime.date]:
+    """The dates of the curator's deferral replies, oldest first."""
+    dates = []
+    for comment in comments:
+        match = DEFERRAL.match(comment.get("body") or "")
+        if match:
+            try:
+                dates.append(datetime.date.fromisoformat(match.group(1)))
+            except ValueError:
+                continue
+    return sorted(dates)
+
+
+def operator_note(base: str, dates: list[datetime.date], today: datetime.date) -> str:
+    """The fifth box's description: the curator's line (or the title), then
+    the deferral history and, from the third deferral on, the cancel
+    recommendation."""
+    if not dates:
+        return base
+    waited = (today - dates[0]).days
+    note = (
+        f"{base} — deferred {len(dates)} time{'s' if len(dates) > 1 else ''} "
+        f"since {dates[0].isoformat()} (waited {waited} day"
+        f"{'' if waited == 1 else 's'})"
+    )
+    if len(dates) >= CANCEL_AT_DEFERRALS:
+        note += (
+            "; I recommend cancel under the necessity gate — comment `drop` "
+            "and I will cancel it"
+        )
+    return note
 
 
 def priority_rank(issue: dict) -> tuple[int, int]:
@@ -380,10 +496,12 @@ def build_ask(
     issues: list[dict],
     notes: dict[str, str] | None = None,
     proposals: list[dict] | None = None,
+    operator: dict | None = None,
 ) -> dict:
     """The review ask as ``AskUserQuestion`` payloads, one per call: a checkbox
-    per task (its note as the description, else its title), then any
-    proposals as further questions."""
+    per task (its note as the description, else its title), then the one
+    ``operator`` option (the fifth box, already described) as its own
+    question, then any proposals as further questions."""
     notes = notes or {}
     options = [
         {
@@ -393,6 +511,10 @@ def build_ask(
         for issue in issues
     ]
     questions = _questions(options, ASK_TEXT, ASK_HEADER, NOT_YET_OPTION)
+    if operator is not None:
+        questions += _questions(
+            [operator], OPERATOR_TEXT, OPERATOR_HEADER, NOT_TODAY_OPTION
+        )
     questions += _questions(
         list(proposals or []), PROPOSALS_TEXT, PROPOSALS_HEADER, SKIP_PROPOSAL_OPTION
     )
@@ -449,7 +571,11 @@ def review_lines(
     """``(report lines, held ids)`` for the ticked tasks."""
     lines: list[str] = []
     held: list[str] = []
-    outside = "NOT STAGED" if pool == "staged" else "NOT IN INBOX"
+    outside = {
+        "staged": "NOT STAGED",
+        "inbox": "NOT IN INBOX",
+        "operator": "NOT AN OPERATOR ITEM",
+    }[pool]
     for issue in issues:
         ident = issue["identifier"]
         if not in_pool(issue, pool):
@@ -466,14 +592,14 @@ def review_lines(
     return lines, held
 
 
-def already_moved(issue: dict, cancel: bool) -> bool:
+def already_moved(issue: dict, cancel: bool, target: str = "Todo") -> bool:
     """A task an earlier, partly failed run of the batch already wrote: an
-    approval sits in Todo with no milestone, a reject is canceled."""
+    approval sits in ``target`` with no milestone, a reject is canceled."""
     state = issue.get("state") or {}
     if cancel:
         return state.get("type") in ("canceled", "duplicate")
     milestone = issue.get("projectMilestone")
-    return not milestone and str(state.get("name", "")).lower() == "todo"
+    return not milestone and str(state.get("name", "")).lower() == target.lower()
 
 
 def plan_approval(
@@ -484,16 +610,22 @@ def plan_approval(
     batch cannot run yet. Skipping the already-moved ids is what lets a write
     that failed partway be re-run with the same arguments.
 
-    The inbox pool approves one task per write, and clears a task's milestone
-    only when it carries the curator's ``Curator pending`` mark."""
-    if pool == "inbox" and len(approve) > 1:
+    The inbox and operator pools approve one task per write; the inbox clears
+    a task's milestone only when it carries the curator's ``Curator pending``
+    mark, and an operator item's approval is its Done."""
+    if pool in ("inbox", "operator") and len(approve) > 1:
         raise RatifyError(
-            "refusing the batch, nothing written — the inbox approves one task "
-            f"at a time, got {len(approve)}: "
+            f"refusing the batch, nothing written — the {pool} pool approves one "
+            f"task at a time, got {len(approve)}: "
             + ", ".join(i["identifier"] for i in approve)
         )
+    target = APPROVED_STATE[pool]
     overlap = {i["identifier"] for i in approve} & {i["identifier"] for i in cancel}
-    already = [i["identifier"] for i in approve if already_moved(i, cancel=False)]
+    already = [
+        i["identifier"]
+        for i in approve
+        if already_moved(i, cancel=False, target=target)
+    ]
     already += [i["identifier"] for i in cancel if already_moved(i, cancel=True)]
     approve = [i for i in approve if i["identifier"] not in already]
     cancel = [i for i in cancel if i["identifier"] not in already]
@@ -515,7 +647,7 @@ def plan_approval(
             return {"milestone": None}
         return {}
 
-    updates = {i["identifier"]: {**clear(i), "state": "Todo"} for i in approve}
+    updates = {i["identifier"]: {**clear(i), "state": target} for i in approve}
     updates.update({i["identifier"]: {**clear(i), "state": "Canceled"} for i in cancel})
     return updates, already
 
@@ -568,7 +700,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     sub = parser.add_subparsers(dest="cmd", required=True)
     listing = sub.add_parser("list", help="every open issue in the pool")
     ask = sub.add_parser("ask", help="the one-checkbox-per-task review ask")
-    ask.add_argument("--ids", nargs="+", required=True)
+    ask.add_argument("--ids", nargs="+", default=[])
+    ask.add_argument(
+        "--operator",
+        help="the one operator item, its own question after the review ticks; "
+        "with no --ids, the operator-items-only ask",
+    )
     ask.add_argument("--notes", help="JSON id -> note, inline or a file path")
     ask.add_argument("--proposals", help="JSON list of edges / kills / merges")
     ask.add_argument("--out", help="write the JSON here instead of stdout")
@@ -581,6 +718,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--title",
         help="inbox only: retitle the one approved task in the same write; the "
         "leading token run must not change",
+    )
+    approve.add_argument(
+        "--chore",
+        help=f"retoken this one operator item {CHORE_TOKEN}, leaving it in Todo "
+        "for the scheduler; on the operator's `attended chore` comment only",
     )
     approve.add_argument("--dry-run", action="store_true")
     gate = sub.add_parser("gate", help="fail while any id is still staged")
@@ -634,10 +776,18 @@ def run(argv: list[str]) -> int:
             board_batch.env_var("LINEAR_PROJECT_ID"),
         )
     pool = args.pool
-    if args.cmd == "gate" and pool == "inbox":
+    if args.cmd == "gate" and pool != "staged":
         raise RatifyError(
-            "gate is for the staged pool — nothing is staged in the inbox, so "
-            "there is nothing for a close gate to hold"
+            f"gate is for the staged pool — nothing is staged in the {pool} "
+            "pool, so there is nothing for a close gate to hold"
+        )
+    if args.cmd == "ask" and pool == "operator":
+        raise RatifyError(
+            "an operator item rides --operator on an inbox ask, never --ids"
+        )
+    if args.cmd == "ask" and args.operator and pool != "inbox":
+        raise RatifyError(
+            "--operator rides the curator's inbox batch — pass --pool inbox"
         )
     key = board_batch.env_var("LINEAR_API_KEY")
     project = board_batch.env_var("LINEAR_PROJECT_ID")
@@ -647,6 +797,13 @@ def run(argv: list[str]) -> int:
             issues = board_batch.fetch_issues(key, project, states=[INBOX_STATE])
             members = [i for i in issues if in_pool(i, pool)]
             lines = format_pool_listing(members) or [f"none {POOL_WHERE[pool]}"]
+        elif pool == "operator":
+            issues = board_batch.fetch_issues(key, project, states=[OPERATOR_STATE])
+            members = sorted((i for i in issues if in_pool(i, pool)), key=priority_rank)
+            # One line at a time: format_listing re-sorts by number, and the
+            # order here is the walk's.
+            lines = [line for i in members for line in board_batch.format_listing([i])]
+            lines = lines or [f"none is {POOL_WHERE[pool]}"]
         else:
             issues = board_batch.fetch_open_in_milestones(key, project, [MILESTONE])
             lines = board_batch.format_listing(issues) or [f"none under {MILESTONE}"]
@@ -655,17 +812,34 @@ def run(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "ask":
-        ids = parse_ids(args.ids)
-        issues = resolve_all(key, project, ids)
+        if not args.ids and not args.operator:
+            raise RatifyError("nothing to ask: pass --ids, --operator or both")
+        ids = parse_ids(args.ids) if args.ids else []
+        issues = resolve_all(key, project, ids) if ids else []
         staged = [i for i in issues if in_pool(i, pool)]
         skipped = [i["identifier"] for i in issues if not in_pool(i, pool)]
-        if not staged:
+        if ids and not staged:
             raise RatifyError(f"none of these is {POOL_WHERE[pool]}")
+        operator_ids = parse_ids([args.operator]) if args.operator else []
+        if len(operator_ids) > 1:
+            raise RatifyError("--operator takes one item: the fifth box is one box")
         # Checked against the requested ids, so a note for an id that has
         # since left the pool is skipped with it rather than refusing the ask.
-        notes = parse_notes(load_json_arg(args.notes), ids)
+        notes = parse_notes(load_json_arg(args.notes), ids + operator_ids)
         proposals = parse_proposals(load_json_arg(args.proposals))
-        payload = build_ask(staged, notes, proposals)
+        operator = None
+        if operator_ids:
+            (item,) = resolve_all(key, project, operator_ids)
+            ident = item["identifier"]
+            if not in_pool(item, "operator"):
+                raise RatifyError(f"{ident} is not {POOL_WHERE['operator']}")
+            dates = deferrals(fetch_comments(key, ident))
+            base = notes.pop(ident, None) or item["title"]
+            operator = {
+                "label": ident,
+                "description": operator_note(base, dates, datetime.date.today()),
+            }
+        payload = build_ask(staged, notes, proposals, operator)
         if skipped:
             payload["skipped"] = skipped
         text = json.dumps(payload, indent=2)
@@ -673,6 +847,7 @@ def run(argv: list[str]) -> int:
             with open(args.out, "w", encoding="utf-8") as handle:
                 handle.write(text + "\n")
             print(f"WROTE {args.out} | {len(staged)} task(s)", end="")
+            print(f", operator {operator['label']}" if operator else "", end="")
             print(f", skipped {', '.join(skipped)}" if skipped else "")
         else:
             print(text)
@@ -682,6 +857,28 @@ def run(argv: list[str]) -> int:
         issues = resolve_all(key, project, parse_ids(args.ids))
         lines, _ = review_lines(key, issues, pool)
         print("\n".join(lines))
+        return 0
+
+    if args.cmd == "approve" and args.chore is not None:
+        if args.ids or args.cancel or args.title is not None:
+            raise RatifyError(
+                "--chore is its own write: pass it alone, with no --ids, "
+                "--cancel or --title"
+            )
+        chore_ids = parse_ids([args.chore])
+        if len(chore_ids) != 1:
+            raise RatifyError("--chore hands over one operator item at a time")
+        (item,) = resolve_all(key, project, chore_ids)
+        ident = item["identifier"]
+        if not in_pool(item, "operator"):
+            raise RatifyError(f"{ident} is not {POOL_WHERE['operator']}")
+        board_batch.apply_fields(
+            key,
+            {ident: {"title": chore_title(item)}},
+            {int(item["number"]): item},
+            dry_run=args.dry_run,
+            retoken=True,
+        )
         return 0
 
     if args.cmd == "approve":

@@ -678,8 +678,19 @@ it runs every day, named by its date. The division of labour:
 **The pool is the un-parked Backlog**: state Backlog, no milestone,
 `[Operator]` items included. Todo means "should this be done", so an
 operator item is reviewed and ticked like any other, surfaced once in
-priority order; the tick moves it to Todo, where the Next view holds it
-until the operator's Done, and dispatch refuses it downstream.
+review in priority order, then carried on every batch until Done: the
+tick moves it to Todo, where dispatch refuses it, and every later batch
+ask carries one Todo operator item (Urgent first, then oldest) as a
+fifth checkbox after the four review ticks. A tick there writes Done; a
+comment is a deferral, answered with a dated reply in its thread whose
+count the next ask shows, and from the third deferral the curator
+recommends cancel under the necessity gate, executed only by the
+operator's `drop`. A comment `attended chore` swaps its token
+for `[Chore/Bedrock]` and leaves it in Todo for the scheduler to dispatch
+under the fleet gate — the curator dispatches no chore, and a
+chore-token item never takes the fifth box. With the inbox empty the
+curator asks one operator item per ask until none is left or the
+operator says "stop for today".
 The curator's own `Curator pending` mark keeps a task in the pool (see
 "The curator marks its batch" below).
 `Session pending` (another session's review),
@@ -874,8 +885,9 @@ table it reads against, with each verb's default substrate, is in
   for a Done that releases an edge or a login the gate needs, a worker
   for a ratification, the curator for a kill). One that cannot be done
   in the moment is filed at Urgent, Backlog, no milestone, and the
-  curator surfaces it once: `[Operator]`, which lives in Todo until the
-  operator's Done, or a chore when a session can do the surrounding
+  curator surfaces it once in review: `[Operator]`, which lives in Todo,
+  carried one per curator batch, until the operator's Done, or a chore
+  when a session can do the surrounding
   work, which runs to In Review like any chore. There is no third
   path — nothing recites an operator-actions list.
 - **A close never recites a captured operator action.** An operator
