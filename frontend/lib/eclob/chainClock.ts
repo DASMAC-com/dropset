@@ -305,6 +305,7 @@ export const gateNowUnix = (): WallTime => {
  * Takes the slot rather than reading one so the gate and the account fetch
  * stay pinned to the same commitment (see `useOrderBook`), and so a caller
  * pays one `getSlot` for both this and {@link syncChainClock}.
+ * {@link readGateClocks} does that pairing; reach for it rather than this.
  *
  * Pass the **raw** slot to {@link syncChainClock} and the margined one only
  * here: `getBlockTime` is asking for the production time of a block that
@@ -316,3 +317,30 @@ export const gateNowUnix = (): WallTime => {
  */
 export const gateNowSlot = (finalizedSlot: bigint | number): SlotTime =>
   slotTime(Number(finalizedSlot) + SLOT_SAFETY_MARGIN_SLOTS);
+
+/**
+ * The structural `getSlot` this module reads, declared for the same reason as
+ * {@link BlockTimeRpc}.
+ */
+export type SlotRpc = {
+  getSlot: (...args: never[]) => { send: () => Promise<bigint> };
+};
+
+/**
+ * Both halves of the gate for one tick: read the `finalized` slot, sync the
+ * wall clock against it, and margin each. The one entry point every gating
+ * consumer uses, so the raw-versus-margined rule lives here rather than at
+ * each call site: {@link syncChainClock} gets the **raw** slot (it needs a
+ * block that exists), and only the gate gets it nudged forward by
+ * {@link gateNowSlot}.
+ *
+ * `finalized` on purpose: the order book pins its account fetch to the same
+ * commitment, so the slot it gates against and the state it reads agree.
+ */
+export const readGateClocks = async (
+  rpc: SlotRpc & BlockTimeRpc,
+): Promise<{ nowSlot: SlotTime; nowUnix: WallTime }> => {
+  const slot = await rpc.getSlot({ commitment: "finalized" } as never).send();
+  await syncChainClock(rpc, slot);
+  return { nowSlot: gateNowSlot(slot), nowUnix: gateNowUnix() };
+};

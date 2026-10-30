@@ -232,6 +232,25 @@ describe("the gate against a cached chain offset", () => {
     await syncChainClock(rpcReturning(BigInt(DEVICE_SECS) * 1_000n), 1n);
     expect(gateNowUnix()).toBe(DEVICE_SECS + CLOCK_SAFETY_MARGIN_SECS);
   });
+
+  // The rule `readGateClocks` exists to keep in one place: the sync asks for
+  // the RAW finalized slot's block time, and only the gate is margined.
+  it("syncs on the raw finalized slot and margins only the gate", async () => {
+    const { readGateClocks } = await import("./chainClock");
+    const getSlot = vi.fn((_config: unknown) => ({ send: async () => 1_000n }));
+    const getBlockTime = vi.fn((_slot: unknown) => ({
+      send: async (): Promise<bigint | null> => BigInt(DEVICE_SECS + 60),
+    }));
+
+    const clocks = await readGateClocks({ getSlot, getBlockTime });
+
+    expect(getSlot).toHaveBeenCalledWith({ commitment: "finalized" });
+    expect(getBlockTime).toHaveBeenCalledWith(1_000n);
+    expect(clocks).toEqual({
+      nowSlot: 1_000 + SLOT_SAFETY_MARGIN_SLOTS,
+      nowUnix: DEVICE_SECS + 60 + CLOCK_SAFETY_MARGIN_SECS,
+    });
+  });
 });
 
 describe("slot gate", () => {

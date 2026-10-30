@@ -11,6 +11,7 @@ import type { VaultPosition } from "../data/positions";
 import { BALANCE_REFETCH_DELAY_MS, VAULTS_REFRESH_MS } from "../data/timings";
 import type { VaultMarket } from "../data/vaults";
 import { useAppEvent } from "../events";
+import { type PollNext, startPollChain } from "./pollChain";
 
 export type ChainVaultsState = {
   // "loading" until the first read lands; "error" only when no read has ever
@@ -29,9 +30,9 @@ const INITIAL: ChainVaultsState = {
 };
 
 // Poll the live vaults and, with a wallet connected, its positions in them.
-// Same lifecycle as useOrderBook: paused while the tab is hidden, self-healing
-// through a transient RPC error, and generation-guarded so a refocus cannot
-// leave two poll chains running.
+// The shared poll chain (lib/hooks/pollChain.ts), so paused while the tab is
+// hidden and guarded so a refocus cannot leave two chains running; it
+// self-heals through a transient RPC error.
 export function useChainVaults(): ChainVaultsState {
   const client = useSolanaClient();
   const wallet = useWallet();
@@ -43,24 +44,10 @@ export function useChainVaults(): ChainVaultsState {
   const restartRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    let timer: number | undefined;
-    let cancelled = false;
-    let generation = 0;
     let lastGood: VaultMarket[] = [];
     const rpc = client.runtime.rpc;
 
-    const schedule = (delay: number, gen: number) => {
-      if (cancelled || gen !== generation) return;
-      if (timer !== undefined) window.clearTimeout(timer);
-      timer = window.setTimeout(() => void fire(gen), delay);
-    };
-
-    const fire = async (gen: number): Promise<void> => {
-      if (cancelled || gen !== generation) return;
-      if (document.visibilityState !== "visible") {
-        schedule(VAULTS_REFRESH_MS, gen);
-        return;
-      }
+    const fire = async (isLive: () => boolean): Promise<PollNext> => {
       try {
         const read = await fetchChainVaultMarkets(rpc);
         // A pair whose read failed this round keeps its last good market, so
@@ -81,58 +68,49 @@ export function useChainVaults(): ChainVaultsState {
             positions = null;
           }
         }
-        if (cancelled || gen !== generation) return;
+        if (!isLive()) return "stop";
         setState((prev) => ({
           status: "ready",
           markets,
           positions: positions ?? prev.positions,
         }));
       } catch {
-        if (cancelled || gen !== generation) return;
+        if (!isLive()) return "stop";
         // Checked against state, not a flag local to this effect, so a
         // wallet switch (which re-runs it) cannot wipe a table that loaded.
         setState((prev) =>
           prev.status === "ready" ? prev : { ...INITIAL, status: "error" },
         );
       }
-      schedule(VAULTS_REFRESH_MS, gen);
+      return "again";
     };
 
     // A wallet switch re-keys the positions; drop the previous wallet's rows
     // rather than showing them under the new one until the next read lands.
     setState((prev) => ({ ...prev, positions: new Map() }));
-    schedule(0, generation);
+    const chain = startPollChain({
+      intervalMs: VAULTS_REFRESH_MS,
+      initialDelayMs: 0,
+      fire,
+    });
 
-    // Restart the poll chain now: a new generation, so the old chain's
-    // pending tick lapses instead of running alongside.
-    const restart = () => {
-      generation += 1;
-      if (timer !== undefined) window.clearTimeout(timer);
-      schedule(0, generation);
-    };
-    const onVisible = () => {
-      if (document.visibilityState === "visible") restart();
-    };
-    document.addEventListener("visibilitychange", onVisible);
     // After a confirmed transaction: read now, and once more after the same
     // short delay the balance cache waits out, since the node can report a
     // signature confirmed before its account reads reflect it.
     let followUp: number | undefined;
     restartRef.current = () => {
-      restart();
+      chain.restart();
       if (followUp !== undefined) window.clearTimeout(followUp);
       followUp = window.setTimeout(() => {
         followUp = undefined;
-        if (!cancelled) restart();
+        chain.restart();
       }, BALANCE_REFETCH_DELAY_MS);
     };
 
     return () => {
       restartRef.current = null;
-      cancelled = true;
       if (followUp !== undefined) window.clearTimeout(followUp);
-      if (timer !== undefined) window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisible);
+      chain.stop();
     };
   }, [client, owner]);
 
