@@ -732,11 +732,12 @@ decks-build: check-pnpm
 # It takes the whole compose project down rather than only what the demo
 # started. It has no way to tell — `collectors-up` is idempotent, so a demo
 # cannot distinguish the collectors it launched from ones already running —
-# and the project name is shared across worktrees, so a sibling's indexer goes
-# too. All three profiles are named so every profiled service is in scope,
-# however a given Compose version treats a profile left off the command line.
-# Nothing it removes holds validator or key state: the validator's ledger is
-# the TUI's own temp directory and `keys/` is a read-only bind mount.
+# and the project name is shared across worktrees, so a sibling worktree's
+# localnet containers (its indexer, say) go too. All three profiles are named
+# so every profiled service is in scope, however a given Compose version treats
+# a profile left off the command line. Nothing it removes holds validator or
+# key state: the validator's ledger is the TUI's own temp directory and `keys/`
+# is a read-only bind mount.
 #
 # `DEMO_CLEANUP` still disarms the trap (`trap -`) as its first act. INT and
 # EXIT are both trapped and the shell runs the EXIT handler after the INT one,
@@ -751,8 +752,13 @@ DEMO_FRONTEND = $(MAKE) --no-print-directory frontend-localnet \
 	>$(FRONTEND_LOG) 2>&1 </dev/null
 DEMO_DOWN = docker compose -f infra/localnet/docker-compose.yml \
 	--profile taker --profile fx --profile pyth down --remove-orphans
+# Make runs a `$(MAKE)` line even under `-n`, so `make -n demo` arms this trap
+# for real; the guard keeps a dry run from taking the live stack down. It reads
+# `MFLAGS`, which carries flags but never variable assignments, minus the long
+# options; a 3.81 sub-make puts those before `-n`, so no first-word test works.
+DEMO_DRY_RUN = $(findstring n,$(filter-out --%,$(MFLAGS)))
 DEMO_CLEANUP = trap - INT TERM EXIT; kill -TERM -$$group 2>/dev/null; \
-	$(DEMO_DOWN)
+	$(if $(DEMO_DRY_RUN),,$(DEMO_DOWN))
 .PHONY: demo
 demo: check-docker check-frontend
 	@echo "frontend logs → $(FRONTEND_LOG) (kept off the TUI screen)"
