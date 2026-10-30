@@ -740,7 +740,8 @@ brief:
    assignment, `ssh-add`, `ssh-keygen -Y sign`, and `--session`.
 1. The **mainnet cockpit** — the TUI pointed at mainnet, which signs
    through the 1Password SSH agent, every prompt approved by the
-   operator with biometrics: `make tui-mainnet`; `make teardown` (or
+   operator with biometrics — and the key-handling commands the hook
+   groups with it: `make tui-mainnet`; `make teardown` (or
    `dropset-teardown`) with a non-localnet `--rpc-url`, `ARGS` given as
    a make argument or set in the environment; `dropset-tui` or any
    `cargo run` with `--cluster mainnet` or `--keys-file`.
