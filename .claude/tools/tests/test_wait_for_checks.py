@@ -635,6 +635,11 @@ class WatchRunTests(unittest.TestCase):
     read, so here gh's ``--exit-status`` code *is* the verdict — which is why a
     timeout must not be allowed to look like a pass."""
 
+    # The bound for a shim that exits at once. It only catches a hang, so it is
+    # generous: at 30s a busy machine's slow `sh` spawn hit it, the child was
+    # killed before writing, and an assertion on the log read back ``''``.
+    SETTLE = 300
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.bin = Path(self._tmp.name)
@@ -651,7 +656,7 @@ class WatchRunTests(unittest.TestCase):
 
     def test_a_green_run_settles_zero_and_captures_the_tree(self):
         self._shim("echo 'X  build  1m0s'")
-        settled, code = wfc.watch_run("99", "o/r", 30, self.log)
+        settled, code = wfc.watch_run("99", "o/r", self.SETTLE, self.log)
         self.assertTrue(settled)
         self.assertEqual(code, 0)
         self.assertIn("build", self.log.read_text(encoding="utf-8"))
@@ -659,7 +664,7 @@ class WatchRunTests(unittest.TestCase):
     def test_a_dequeued_run_is_non_zero(self):
         """`--exit-status` is what keeps a dequeue from reading as a merge."""
         self._shim("exit 1")
-        settled, code = wfc.watch_run("99", "o/r", 30, self.log)
+        settled, code = wfc.watch_run("99", "o/r", self.SETTLE, self.log)
         self.assertTrue(settled)
         self.assertNotEqual(code, 0)
 
@@ -671,7 +676,7 @@ class WatchRunTests(unittest.TestCase):
 
     def test_the_log_is_owner_only(self):
         self._shim("echo hi")
-        wfc.watch_run("99", "o/r", 30, self.log)
+        wfc.watch_run("99", "o/r", self.SETTLE, self.log)
         self.assertEqual(self.log.stat().st_mode & 0o777, 0o600)
 
     def test_wait_run_maps_exit_codes_to_conclusions(self):
@@ -703,7 +708,8 @@ class WatchRunTests(unittest.TestCase):
         """gh run watch defaults to 3s; a caller throttling a long queue wait
         must not be silently ignored."""
         self._shim('echo "$@"')
-        wfc.watch_run("99", "o/r", 30, self.log, interval=45)
+        settled, _ = wfc.watch_run("99", "o/r", self.SETTLE, self.log, interval=45)
+        self.assertTrue(settled, "the shim was killed before it could log")
         self.assertIn("--interval 45", self.log.read_text(encoding="utf-8"))
 
 

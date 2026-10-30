@@ -56,14 +56,16 @@ coupling skill tooling to the program's toolchain.
   module named tests"). Keep `make tools-tests` whole for checkpoints.
 
   **PyYAML is the one suite-only dependency.** `test_dashboard_sql`
-  cross-checks the stdlib YAML reader against a real parser, and it
-  fails, deliberately, rather than skip without one. Both targets
-  run under `TOOLS_PY`: where **`uv`** is installed, that is the same
-  `python3` with PyYAML added through `uv run --with pyyaml` (cached
-  after the first run), so an externally managed Homebrew Python stays
-  green with nothing installed into it. Install `uv` locally
-  (`brew install uv`). CI has no `uv` and its `python3` ships PyYAML, so
-  CI exercises the plain `python3` fallback.
+  cross-checks the stdlib YAML reader against a real parser. Without
+  one it **fails under `CI`**, where a quiet skip would let a merge
+  through unchecked, and **skips elsewhere**, so a local run's exit
+  status still means something. Both targets run under `TOOLS_PY`:
+  where **`uv`** is installed, that is the same `python3` with PyYAML
+  added through `uv run --with pyyaml` (cached after the first run), so
+  an externally managed Homebrew Python runs the check with nothing
+  installed into it. Install `uv` locally (`brew install uv`). CI has
+  no `uv`, and its `python3` gets PyYAML with `pre-commit`, so CI
+  exercises the plain `python3` fallback.
 
 - A skill drives its tool through a stable interface — usually a
   `make` target (e.g. `make session-metrics`) so the skill's
