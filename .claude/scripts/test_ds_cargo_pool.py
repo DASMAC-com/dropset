@@ -12,12 +12,13 @@ unset, because in another Anchor repo a pooled target dir re-keys its program).
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+from zsh_test_env import hermetic_env
 
 INIT = Path(__file__).resolve().parents[1] / "shell" / "init.zsh"
 
@@ -31,17 +32,15 @@ ZSH = shutil.which("zsh")
 # Linux CI runner ships none unless the workflow installs it.
 _NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
 
-#: Cleared from the inherited environment so a case tests the helper rather than
-#: the operator's own shell, which (once this lands) exports all of them.
+#: Cleared from the inherited environment on top of `hermetic_env`'s families,
+#: so a case tests the helper rather than the operator's own shell, which
+#: exports all of them.
 _SUITE_OWNED_ENV = (
     "CARGO_BUILD_JOBS",
     "CARGO_HOME",
     "CARGO_TARGET_DIR",
     "CLIPPY_CONF_DIR",
-    "DS_CARGO_LANES",
-    "DS_CARGO_POOL",
     "RUSTC_WORKSPACE_WRAPPER",
-    "_DS_REPO",
 )
 
 #: The per-checkout key, relative to a checkout root.
@@ -83,10 +82,9 @@ class CargoPoolHarness(unittest.TestCase):
             hops,
         )
         script += "; ".join('print -r -- "${%s-%s}"' % (n, _UNSET) for n in names)
-        child_env = {**os.environ}
-        for name in _SUITE_OWNED_ENV:
-            child_env.pop(name, None)
-        child_env.update(env or {})
+        child_env = hermetic_env(
+            Path(self.outside) / "claude-home", *_SUITE_OWNED_ENV, env=env
+        )
         result = subprocess.run(
             [ZSH, "-c", script],
             capture_output=True,

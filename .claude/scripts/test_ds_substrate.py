@@ -34,6 +34,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from zsh_test_env import hermetic_env
+
 INIT = Path(__file__).resolve().parents[1] / "shell" / "init.zsh"
 
 # No case may reach a real iTerm tab, whatever it forgets to stub: inherited by
@@ -44,35 +46,6 @@ os.environ["DS_ITERM_DISABLED"] = "1"
 # and the Linux CI runner ships no zsh: without this guard every case fails with
 # FileNotFoundError, which says nothing about the code under test.
 _NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
-
-#: Cleared from the inherited environment so a case tests the helper rather than
-#: the operator's own shell profile — several of these are exactly what an
-#: operator running Bedrock sessions has exported.
-_SUITE_OWNED_ENV = (
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_MODEL",
-    "AWS_BEARER_TOKEN_BEDROCK",
-    "AWS_REGION",
-    "CLAUDE_CODE_SUBAGENT_MODEL",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "DS_BEDROCK_FAST_MODEL",
-    "DS_BEDROCK_MODEL",
-    "DS_BEDROCK_PROBE",
-    "DS_BEDROCK_REGION",
-    "DS_MODEL_BACKGROUND",
-    "DS_MODEL_ADVISOR",
-    "DS_MODEL_ADVISOR_SUBSTRATE",
-    "DS_MODEL_EXECUTOR",
-    "DS_MODEL_EXECUTOR_SUBSTRATE",
-    "DS_MODEL_HELPER",
-    "DS_MODEL_HELPER_SUBSTRATE",
-    "DS_OP_ACCOUNT",
-    "DS_OP_BEDROCK_REF",
-    "ENABLE_PROMPT_CACHING_1H",
-    "_DS_REPO",
-)
 
 
 @unittest.skipUnless(shutil.which("zsh"), _NEEDS_ZSH)
@@ -92,15 +65,10 @@ class SubstrateHarness(unittest.TestCase):
             f'_DS_SUBSTRATE_DIR="{self.repo}/.claude/session-substrate"; '
             f"{body}"
         )
-        child_env = {**os.environ}
-        for name in _SUITE_OWNED_ENV:
-            child_env.pop(name, None)
         # `_ds_session` globs the projects tree for a session id, so a case must
-        # never see the operator's real transcripts.
-        child_env["CLAUDE_CONFIG_DIR"] = str(self.claude_home)
-        # The fleet knobs every launch requires (`_ds_fleet_knobs`).
-        child_env.update(_FLEET)
-        child_env.update(env or {})
+        # never see the operator's real transcripts. The fleet knobs every
+        # launch requires (`_ds_fleet_knobs`) go under the case's own `env`.
+        child_env = hermetic_env(self.claude_home, env={**_FLEET, **(env or {})})
         return subprocess.run(
             ["zsh", "-c", script],
             capture_output=True,

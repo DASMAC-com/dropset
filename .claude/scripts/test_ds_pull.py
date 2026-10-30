@@ -18,13 +18,14 @@ two-repository git fixture.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import tempfile
 import time
 import unittest
 from pathlib import Path
+
+from zsh_test_env import hermetic_env
 
 INIT = Path(__file__).resolve().parents[1] / "shell" / "init.zsh"
 
@@ -35,9 +36,6 @@ INIT = Path(__file__).resolve().parents[1] / "shell" / "init.zsh"
 # `FileNotFoundError: 'zsh'`, which says nothing about the code under test.
 _NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
 
-#: Variables this suite asserts about, cleared from the inherited environment so
-#: a case tests the helper rather than the operator's shell profile.
-_SUITE_OWNED_ENV = ("DS_PULL_DEBUG", "_DS_REPO", "_DS_PULL_LAST_OUTCOME")
 
 # Fixture commits must not inherit the operator's signing config: this repo
 # signs every commit, and a fixture has no key requirement.
@@ -106,10 +104,7 @@ class PullHarness(unittest.TestCase):
         # unconditionally meant an operator who exports `DS_PULL_DEBUG=1` — the
         # very variable the debug tests exist to prove is honored — failed the
         # silence test on a precondition rather than on behavior.
-        child_env = {**os.environ}
-        for name in _SUITE_OWNED_ENV:
-            child_env.pop(name, None)
-        child_env.update(env or {})
+        child_env = hermetic_env(Path(self._tmp.name) / "claude-home", env=env)
         result = subprocess.run(
             ["zsh", "-c", script],
             capture_output=True,

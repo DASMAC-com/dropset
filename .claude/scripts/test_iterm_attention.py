@@ -354,16 +354,23 @@ class AMissingMonitorIsRestarted(Harness):
         result = self.shell(f'SCRIPT_DIR="{self.fake_dir}"; ensure_monitor "{tty}"')
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def started(self) -> bool:
-        for _ in range(40):  # the spawn is backgrounded
+    # How long an assert that a monitor DOES start waits for the backgrounded
+    # spawn. A busy machine overran the old fixed 2s and read a slow spawn as a
+    # missing one; the asserts that NONE starts keep the short default window.
+    STARTS_WITHIN = 30.0
+
+    def started(self, within: float = 2.0) -> bool:
+        deadline = time.monotonic() + within
+        while True:
             if self.marker.exists():
                 return True
+            if time.monotonic() >= deadline:
+                return False
             time.sleep(0.05)
-        return False
 
     def test_none_running_starts_one_and_records_its_pid(self):
         self.ensure()
-        self.assertTrue(self.started())
+        self.assertTrue(self.started(self.STARTS_WITHIN))
         self.assertTrue(self.read(self.pid_file).isdigit())
 
     def test_a_live_monitor_is_left_alone(self):
@@ -375,7 +382,7 @@ class AMissingMonitorIsRestarted(Harness):
         dead = subprocess.run(["bash", "-c", "echo $$"], capture_output=True, text=True)
         self.pid_file.write_text(dead.stdout, encoding="utf-8")
         self.ensure()
-        self.assertTrue(self.started())
+        self.assertTrue(self.started(self.STARTS_WITHIN))
 
     def test_a_non_tty_gets_no_monitor(self):
         self.ensure(tty=str(self.tty))

@@ -348,8 +348,10 @@ migrations or generation inputs, and whether it spans crates.
    advice does not apply. When the diff touches what a `.claude/tools/`
    checker validates (`.claude/tools/**`, `market-data/grafana/**`),
    run `python3 .claude/tools/run_quiet.py -- make tools-tests`, whole,
-   before pushing; it runs on Linux, so a macOS-only test needs a
-   `unittest.skipUnless` guard (`history.md` → "Lint workflow beyond
+   before pushing — it runs every tree even past a failing one, and
+   make's `-k` epilogue names each failed `tools-tests-<tree>`; CI
+   runs on Linux, so a macOS-only test needs a `unittest.skipUnless`
+   guard (`history.md` → "Lint workflow beyond
    the hooks").
 
    **Reading lint output and config**: filter a captured log with

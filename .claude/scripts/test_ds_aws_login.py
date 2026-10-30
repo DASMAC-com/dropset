@@ -23,6 +23,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from zsh_test_env import hermetic_env
+
 INIT = Path(__file__).resolve().parents[1] / "shell" / "init.zsh"
 
 # No case may reach a real iTerm tab, whatever it forgets to stub: inherited by
@@ -39,22 +41,6 @@ ZSH = shutil.which("zsh")
 # FileNotFoundError, which says nothing about the code under test.
 _NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
 
-#: Cleared from the inherited environment so a case tests the helper rather than
-#: the operator's own shell profile. `DS_AWS_PROFILE` and the `AWS_*` trio are
-#: exactly what an operator with a live SSO session has exported, and
-#: `AWS_REGION` in particular changes what the real CLI would do.
-_SUITE_OWNED_ENV = (
-    "AWS_BEARER_TOKEN_BEDROCK",
-    "AWS_PROFILE",
-    "AWS_REGION",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "DS_AWS_PROFILE",
-    # The Bedrock launcher resolves a bearer token from these, so a case must
-    # not inherit the operator's: CI has none.
-    "DS_OP_ACCOUNT",
-    "DS_OP_BEDROCK_REF",
-    "_DS_REPO",
-)
 
 # A stub `aws` that records every invocation and dispatches on the subcommand.
 # `sts` returns whatever `STS_RC` currently holds, so a case can make the probe
@@ -115,23 +101,17 @@ class GateHarness(unittest.TestCase):
         """Run `_ds_aws_login` against the stub and return (rc, recorded calls)."""
         body = _STUB if stub else ""
         script = 'source "%s" 2>/dev/null; %s_ds_aws_login testverb' % (INIT, body)
-        child_env = {**os.environ}
-        for name in _SUITE_OWNED_ENV:
-            child_env.pop(name, None)
-        child_env.update(
-            {
+        child_env = hermetic_env(
+            f"{self.calls}.claude-home",
+            env={
                 "CALLS": str(self.calls),
-                # `plan`'s reopen check globs the transcript tree, so a case
-                # must never see the operator's real sessions: today's live
-                # `plan` would turn a create into a reopen on its substrate.
-                "CLAUDE_CONFIG_DIR": f"{self.calls}.claude-home",
                 "STS_RC": str(sts_rc),
                 "LOGIN_RC": str(login_rc),
                 "POST_LOGIN_STS_RC": str(post_login_sts_rc),
                 "LOGIN_HELP_RC": str(login_help_rc),
-            }
+                **(env or {}),
+            },
         )
-        child_env.update(env or {})
         # `ZSH` with no `or "zsh"` fallback: the class-level `skipUnless` already
         # guarantees it resolved, so a fallback here is unreachable — and it would
         # reintroduce the bare-`zsh`-on-emptied-`PATH` failure the constant exists
@@ -363,16 +343,10 @@ class TheGateActuallyGates(unittest.TestCase):
             '_ds_session() { print -r -- "1|LAUNCHED" >> "$CALLS" }; '
             "%s" % (INIT, _STUB, verb)
         )
-        child_env = {**os.environ}
-        for name in _SUITE_OWNED_ENV:
-            child_env.pop(name, None)
-        child_env.update(
-            {
+        child_env = hermetic_env(
+            f"{self.calls}.claude-home",
+            env={
                 "CALLS": str(self.calls),
-                # `plan`'s reopen check globs the transcript tree, so a case
-                # must never see the operator's real sessions: today's live
-                # `plan` would turn a create into a reopen on its substrate.
-                "CLAUDE_CONFIG_DIR": f"{self.calls}.claude-home",
                 "STS_RC": str(sts_rc),
                 "LOGIN_RC": str(login_rc),
                 "POST_LOGIN_STS_RC": str(post_login_sts_rc),
@@ -383,7 +357,7 @@ class TheGateActuallyGates(unittest.TestCase):
                 # The verb-level cases never exercise the old-CLI branch, so the
                 # subcommand-exists probe always succeeds here.
                 "LOGIN_HELP_RC": "0",
-            }
+            },
         )
         result = subprocess.run(
             [ZSH, "-c", script],

@@ -26,6 +26,7 @@ INIT = REPO / ".claude" / "shell" / "init.zsh"
 sys.path.insert(0, str(REPO / ".claude" / "tools"))
 
 import resolve_session as rs  # noqa: E402
+from zsh_test_env import hermetic_env  # noqa: E402
 
 # No case may reach a real iTerm tab, whatever it forgets to stub: inherited by
 # every zsh this spawns (`iterm_api.DISABLED_ENV`).
@@ -92,11 +93,10 @@ class CycleLoop(unittest.TestCase):
         midnight: bool = False,
         verb: str = "plan",
     ) -> subprocess.CompletedProcess:
-        env = {**os.environ}
         # A suite run from inside a planning session inherits the launcher's
-        # DS_PLAN_DATE, which would mask a launcher that stopped passing it.
-        for inherited in ("DS_PLAN_DATE", "DS_DAILY_KIND", "MIDNIGHT"):
-            env.pop(inherited, None)
+        # DS_PLAN_DATE, which would mask a launcher that stopped passing it;
+        # `hermetic_env` drops it with every other `DS_*`.
+        env = hermetic_env(self.home, "MIDNIGHT")
         if midnight:
             env["MIDNIGHT"] = "1"
         env |= {
@@ -107,7 +107,6 @@ class CycleLoop(unittest.TestCase):
             "STATE": str(self.state),
             "CALLS": str(self.calls),
             "CYCLES": str(cycles),
-            "CLAUDE_CONFIG_DIR": str(self.home),
         }
         return subprocess.run(
             [ZSH, "-c", _SCRIPT], capture_output=True, text=True, env=env, check=False
@@ -285,12 +284,11 @@ class PreLaunch(unittest.TestCase):
         self.marker = self.state / f"plan-prelaunch-{self.day}"
 
     def _plan(self, word: str = "", **extra: str):
-        env = {k: v for k, v in os.environ.items() if k != "DS_LAUNCH_SCHEDULER"}
+        env = hermetic_env(self.home)
         env |= {
             "INIT": str(INIT),
             "REPO": str(REPO),
             "STATE": str(self.state),
-            "CLAUDE_CONFIG_DIR": str(self.home),
             "WORD": word,
             "DISPATCH_OUT": "plan (free) -> /dev/a\nlaunch (free) -> /dev/b",
             **extra,
@@ -416,7 +414,7 @@ class UpkeepHelper(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         calls = Path(tmp.name) / "calls"
         calls.touch()
-        env = {k: v for k, v in os.environ.items() if k != "DS_SKIP_UPKEEP"}
+        env = hermetic_env(Path(tmp.name) / "claude-home")
         env |= {"INIT": str(INIT), "REPO": str(REPO), "CALLS": str(calls), **extra}
         proc = subprocess.run(
             [ZSH, "-c", _UPKEEP_SCRIPT],

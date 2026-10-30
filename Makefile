@@ -1473,11 +1473,12 @@ ci-metrics:
 	python3 .claude/tools/ci_metrics.py $(ARGS)
 
 # The interpreter the tools suites run under. The tools are stdlib-only, but
-# `test_dashboard_sql` cross-checks its stdlib YAML reader against PyYAML
-# and fails, by design, without it. Where `uv` is installed it supplies PyYAML
-# to the same `python3` in a cached ephemeral environment, so a Homebrew
-# Python (externally managed, no PyYAML) stays green; CI has no `uv`, and its
-# `python3` ships PyYAML, so CI takes the plain fallback.
+# `test_dashboard_sql` cross-checks its stdlib YAML reader against PyYAML;
+# without it the check fails under `CI` and skips elsewhere. Where `uv` is
+# installed it supplies PyYAML to the same `python3` in a cached ephemeral
+# environment, so a Homebrew Python (externally managed, no PyYAML) still runs
+# the check; CI has no `uv`, and its `python3` gets PyYAML with `pre-commit`,
+# so CI takes the plain fallback.
 TOOLS_PY_UV := uv run --quiet --no-project --with pyyaml \
 	--python $(shell command -v python3) python
 TOOLS_PY := $(if $(shell command -v uv),$(TOOLS_PY_UV),python3)
@@ -1506,12 +1507,31 @@ deps-audit:
 # `.claude/tools/tests/test_hook_self_tests.py`, which shells each guard's
 # `--self-test`. Before that they ran only when a human typed the flag by hand,
 # which left the most security-sensitive files here the least covered.
+#
+# One sub-target per tree, run under `-k`: a single recipe stops at the first
+# failing discover, so a red tools tree hid whether the later trees passed at
+# all, and they reached CI never having run locally. The target still exits
+# non-zero when any tree fails.
 .PHONY: tools-tests
 tools-tests:
+	$(MAKE) --no-print-directory -k tools-tests-tools tools-tests-scripts \
+		tools-tests-keys tools-tests-release
+
+.PHONY: tools-tests-tools
+tools-tests-tools:
 	$(TOOLS_PY) -m unittest discover \
 		-s .claude/tools/tests -t .claude/tools -p 'test_*.py'
+
+.PHONY: tools-tests-scripts
+tools-tests-scripts:
 	$(TOOLS_PY) -m unittest discover -s .claude/scripts -p 'test_*.py'
+
+.PHONY: tools-tests-keys
+tools-tests-keys:
 	$(TOOLS_PY) -m unittest discover -s keys -p 'test_*.py'
+
+.PHONY: tools-tests-release
+tools-tests-release:
 	$(TOOLS_PY) -m unittest discover -s programs/dropset/release -p 'test_*.py'
 
 # Run ONE test module from any of the tools-tests trees — the inner-loop form

@@ -450,6 +450,10 @@ class FetchModeTests(unittest.TestCase):
                 "user.email=t@example.com",
                 "-c",
                 "user.name=Test",
+                # A `rebase` replays commits and so re-signs them under the
+                # host's global `commit.gpgsign`; a locked signer would fail it.
+                "-c",
+                "commit.gpgsign=false",
                 *args,
             ],
             cwd=cwd,

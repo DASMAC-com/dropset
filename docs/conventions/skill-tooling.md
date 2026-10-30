@@ -39,7 +39,10 @@ coupling skill tooling to the program's toolchain.
   and the failure, when it comes, is one clear line naming the install
   rather than an `ImportError` traceback. CI's lint job installs
   `pre-commit` and nothing else, so a hard import would make the whole
-  suite un-runnable there.
+  suite un-runnable there. A test that must never go quiet where it
+  gates a merge (`test_dashboard_sql`'s PyYAML cross-check, which
+  rides in on `pre-commit`) skips locally but fails when `CI` is set,
+  so a dev Python without the package still reads green.
 
 - **Cover them with stdlib `unittest`** in `.claude/tools/tests/`
   (one `test_<tool>.py` per tool), run via `make tools-tests` (no
