@@ -655,6 +655,11 @@ class OperatorPoolTests(unittest.TestCase):
         parked["projectMilestone"] = {"name": rs.MILESTONE}
         self.assertFalse(rs.in_pool(parked, "operator"))
         self.assertFalse(rs.in_pool(_operator(6, state_type="completed"), "operator"))
+        # An [Operator] item that already carries a chore token is the
+        # scheduler's, never the fifth box's.
+        self.assertFalse(
+            rs.in_pool(_operator(7, title="[Operator] [Chore/Bedrock] X"), "operator")
+        )
 
     def test_the_chore_title_swaps_only_the_operator_token(self):
         self.assertEqual(
@@ -663,12 +668,16 @@ class OperatorPoolTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RatifyError, "no leading \\[Operator\\]"):
             rs.chore_title(_operator(2, title="Rotate the [Operator] key"))
+        # A swap beside another launch token would leave two launch lines.
+        with self.assertRaisesRegex(RatifyError, "already carries"):
+            rs.chore_title(_operator(3, title="[Operator][Explore/Anthropic] X"))
 
     def test_the_deferral_history_and_the_third_deferral_recommendation(self):
         today = rs.datetime.date(2026, 10, 30)
         comments = [
             _deferral("2026-10-29"),
             {"id": "x", "body": "Not a deferral"},
+            _deferral("2026-13-40"),
             _deferral("2026-10-27"),
         ]
         dates = rs.deferrals(comments)
@@ -677,6 +686,8 @@ class OperatorPoolTests(unittest.TestCase):
         note = rs.operator_note("Step", dates, today)
         self.assertIn("deferred 2 times since 2026-10-27 (waited 3 days)", note)
         self.assertNotIn("recommend cancel", note)
+        one_day = rs.operator_note("Step", dates[1:], today)
+        self.assertIn("deferred 1 time since 2026-10-29 (waited 1 day)", one_day)
         dates.append(rs.datetime.date(2026, 10, 30))
         self.assertIn("recommend cancel", rs.operator_note("Step", dates, today))
 
@@ -747,6 +758,11 @@ class OperatorRunTests(unittest.TestCase):
             self._run(fake, ["ask", "--pool", "inbox", "--operator", "ENG-9"])
         with self.assertRaisesRegex(RatifyError, "rides --operator"):
             self._run(fake, ["ask", "--pool", "operator", "--ids", "ENG-9"])
+        with self.assertRaisesRegex(RatifyError, "pass --pool inbox"):
+            self._run(fake, ["ask", "--ids", "ENG-1", "--operator", "ENG-9"])
+        two = FakeLinear([_operator(8), _operator(9)])
+        with self.assertRaisesRegex(RatifyError, "the fifth box is one box"):
+            self._run(two, ["ask", "--pool", "inbox", "--operator", "ENG-8,ENG-9"])
 
     def test_a_tick_writes_done_one_at_a_time(self):
         fake = FakeLinear([_operator(9), _operator(8)])
@@ -767,6 +783,22 @@ class OperatorRunTests(unittest.TestCase):
         with self.assertRaisesRegex(RatifyError, "still held by an open thread"):
             self._run(fake, ["approve", "--pool", "operator", "--ids", "ENG-9"])
         self.assertEqual(fake.writes, [])
+        _, out = self._run(fake, ["review", "--pool", "operator", "--ids", "ENG-9"])
+        self.assertIn("HELD ENG-9", out)
+
+    def test_a_drop_cancels_the_operator_item_even_while_held(self):
+        thread = {"id": "t1", "parentId": None, "resolvedAt": None, "body": "drop"}
+        fake = FakeLinear([_operator(9)], comments={"ENG-9": [thread]})
+        code, _ = self._run(
+            fake, ["approve", "--pool", "operator", "--cancel", "ENG-9"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.writes, [("uuid-9", {"stateId": "s-Canceled"})])
+
+    def test_review_names_an_item_outside_the_operator_pool(self):
+        fake = FakeLinear([_inbox(2)])
+        _, out = self._run(fake, ["review", "--pool", "operator", "--ids", "ENG-2"])
+        self.assertIn("NOT AN OPERATOR ITEM ENG-2", out)
 
     def test_attended_chore_swaps_the_token_and_leaves_it_in_todo(self):
         fake = FakeLinear([_operator(9, title="[Operator] Rotate the key")])
@@ -777,6 +809,8 @@ class OperatorRunTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RatifyError, "is its own write"):
             self._run(fake, ["approve", "--chore", "ENG-9", "--ids", "ENG-9"])
+        with self.assertRaisesRegex(RatifyError, "one operator item at a time"):
+            self._run(fake, ["approve", "--chore", "ENG-8,ENG-9"])
         with self.assertRaisesRegex(RatifyError, "is not an \\[Operator\\]"):
             self._run(FakeLinear([_inbox(3)]), ["approve", "--chore", "ENG-3"])
 

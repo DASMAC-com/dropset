@@ -313,8 +313,8 @@ python3 .claude/tools/ratify_staged.py review --pool operator --ids <id>
   the line `Deferred <YYYY-MM-DD>: <the operator's reason>` (the
   tool counts exactly that prefix) and resolve it. It stays in Todo
   and leads the next ask. On the **third** deferral the reply also
-  recommends cancel under the necessity gate; only the operator's
-  `drop` executes it.
+  recommends cancel under the necessity gate, after the same
+  opening prefix; only the operator's `drop` executes it.
 
 - **Unticked, no thread**: nothing is written; it leads the next
   ask.
@@ -443,7 +443,8 @@ for the day". On it:
    ```
 
 1. State the **inbox remaining** and the **operator items
-   remaining**: each count and its ids.
+   remaining**: each count and its ids — ids only, never the
+   actions restated.
 
 1. Session metrics, unprompted (`session-metrics`), and the day's
    cost in one line.

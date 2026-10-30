@@ -279,10 +279,16 @@ def is_operator_item(issue: dict) -> bool:
 def chore_title(issue: dict) -> str:
     """``issue``'s title with its leading ``[Operator]`` token swapped for
     ``[Chore/Bedrock]``, the rest kept byte for byte; refused when the leading
-    token run carries no ``[Operator]``."""
+    token run carries no ``[Operator]``, or a ``[Verb/Substrate]`` token beside
+    it that the swap would leave as a second launch line."""
     title = str(issue.get("title") or "")
     end = board_batch._TITLE_TOKEN.match(title).end(1)
     run = title[:end]
+    if any("/" in t for t in board_batch.title_token(title)):
+        raise RatifyError(
+            f"{issue.get('identifier')}: the title already carries a "
+            "[Verb/Substrate] token — fix the title by hand, not by a swap"
+        )
     swapped = re.sub(r"\[operator\]", CHORE_TOKEN, run, count=1, flags=re.I)
     if swapped == run:
         raise RatifyError(
@@ -778,6 +784,10 @@ def run(argv: list[str]) -> int:
     if args.cmd == "ask" and pool == "operator":
         raise RatifyError(
             "an operator item rides --operator on an inbox ask, never --ids"
+        )
+    if args.cmd == "ask" and args.operator and pool != "inbox":
+        raise RatifyError(
+            "--operator rides the curator's inbox batch — pass --pool inbox"
         )
     key = board_batch.env_var("LINEAR_API_KEY")
     project = board_batch.env_var("LINEAR_PROJECT_ID")
