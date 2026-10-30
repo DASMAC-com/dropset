@@ -331,7 +331,7 @@ anything, **and** the marker itself where the input is wanted.
 Searching for `NEEDS-` then walks every one of them in order.
 An entry's `§N` or `#anchor` must name the section the
 marker's **own line** sits in (or one enclosing it): a real
-reference binds, so one naming a neighbour fails the check
+reference binds, so one naming a sibling fails the check
 even when the entry's text matches.
 On 2026-10-26 a second draft put its markers in the index only,
 and the operator, jumping marker to marker in an editor, could
