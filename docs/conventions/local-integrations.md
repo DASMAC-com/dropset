@@ -738,7 +738,10 @@ brief:
    carry the `op run` the collectors and the keyed frontend need.
 1. Any `SSH_AUTH_SOCK`, `OP_SESSION_*` or `OP_SERVICE_ACCOUNT_TOKEN`
    assignment, `ssh-add`, `ssh-keygen -Y sign`, and `--session`.
-1. The **mainnet cockpit**: `make tui-mainnet`; `make teardown` (or
+1. The **mainnet cockpit** — the TUI pointed at mainnet, which signs
+   through the 1Password SSH agent, every prompt approved by the
+   operator with biometrics — and the key-handling commands the hook
+   groups with it: `make tui-mainnet`; `make teardown` (or
    `dropset-teardown`) with a non-localnet `--rpc-url`, `ARGS` given as
    a make argument or set in the environment; `dropset-tui` or any
    `cargo run` with `--cluster mainnet` or `--keys-file`.
@@ -1423,8 +1426,10 @@ operator again. Commit signing is untouched: it goes through the
 1Password SSH agent, not the CLI sign-in.
 
 **A 1Password SSH prompt naming a private key, raised by any process
-but the cockpit (the deploy ceremony's key-handling commands), is
-refused** — the commit-signing key's prompt from git excepted.
+but the cockpit (the mainnet cockpit TUI, whose prompts the operator
+approves with biometrics; defined under "The private-key guard hook"
+above), is refused** — the commit-signing key's prompt from git
+excepted.
 
 The coordinates above are placeholders. The real account domain, vault
 name, and item titles appear only in the untracked runtime config —
