@@ -3901,6 +3901,16 @@
       "code": 6064,
       "name": "VaultSeqMismatch",
       "msg": "vault sector is occupied by a different vault than expected (seq mismatch)"
+    },
+    {
+      "code": 6065,
+      "name": "ZeroAddress",
+      "msg": "pubkey argument is the zero address, which no key can sign for"
+    },
+    {
+      "code": 6066,
+      "name": "LeaderAccountMismatch",
+      "msg": "supplied leader account is not the vault's leader"
     }
   ],
   "types": [
