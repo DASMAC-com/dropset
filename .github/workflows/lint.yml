@@ -1,7 +1,7 @@
 ---
 env:
   PRE_COMMIT_VERSION: '4.5.1'
-  PYTHON_VERSION: '3.14.4'
+  PYTHON_VERSION: '3.14.10'
 jobs:
   lint:
     env:
@@ -12,7 +12,7 @@ jobs:
     # default, since pnpm, pip and pre-commit run third-party install scripts.
     permissions:
       contents: 'read'
-    runs-on: 'ubuntu-24.04'
+    runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
     # Resolves the compiler from the workspace `rust-toolchain.toml` by giving
@@ -102,12 +102,24 @@ jobs:
     # restore, `install-hooks` and the save, so it costs up to about two
     # runner-minutes after each merge, off the critical path. A same-key
     # restore on main hits and the save is skipped, so a push rewrites this
-    # cache only when the config, pre-commit, Node or Python moves (the pip
-    # cache setup-python keeps follows the requirements file instead).
+    # cache only when the config, pre-commit, Node, Python or the runner image
+    # moves (the pip cache setup-python keeps follows the requirements file
+    # instead).
+    #
+    # The image is in the key because `runner.os` reads `Linux` on every
+    # Ubuntu image, while the hook environments link against the image's own
+    # system libraries: when `ubuntu-latest` moves to a new release, an exact
+    # hit on a previous image's entry would restore environments built for
+    # the old one. `ImageOS` (`ubuntu24`, `ubuntu26`, ...) is a runner
+    # environment variable, not a workflow `env` one, so it cannot be read in
+    # an expression and is surfaced as a step output instead.
+    - id: 'runner-image'
+      run: 'echo "os=$ImageOS" >> "$GITHUB_OUTPUT"'
     - id: 'pre-commit-cache'
       uses: 'actions/cache/restore@v5'
       with:
-        key: 'pre-commit-lint-${{ runner.os }}-${{ runner.arch }}-node-${{
+        key: 'pre-commit-lint-${{ steps.runner-image.outputs.os }}-${{
+              runner.arch }}-node-${{
               steps.setup-node.outputs.node-version }}-python-${{
               env.PYTHON_VERSION }}-pre-commit-${{ env.PRE_COMMIT_VERSION
               }}-${{ hashFiles(env.CONFIG_PATH) }}'
@@ -126,7 +138,8 @@ jobs:
         always() && steps.pre-commit-cache.outputs.cache-hit != 'true'
       uses: 'actions/cache/save@v5'
       with:
-        key: 'pre-commit-lint-${{ runner.os }}-${{ runner.arch }}-node-${{
+        key: 'pre-commit-lint-${{ steps.runner-image.outputs.os }}-${{
+              runner.arch }}-node-${{
               steps.setup-node.outputs.node-version }}-python-${{
               env.PYTHON_VERSION }}-pre-commit-${{ env.PRE_COMMIT_VERSION
               }}-${{ hashFiles(env.CONFIG_PATH) }}'
@@ -148,7 +161,7 @@ jobs:
     name: 'Lint (${{ matrix.hook }})'
     permissions:
       contents: 'read'
-    runs-on: 'ubuntu-24.04'
+    runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
     - uses: >- # v1.17.0
@@ -178,6 +191,13 @@ jobs:
     # restore on every later run — making the critical path slower, which is
     # the opposite of the point. Only the test jobs write; lint-rust and sdk
     # read.
+    #
+    # The key names no image (`runner.os` reads `Linux` on every Ubuntu one),
+    # which is safe only while every job sharing it runs on the same
+    # `runs-on`. Pin this job to a release older than the writers' and it
+    # would restore build-script and proc-macro binaries linked against a
+    # newer glibc, which fail to load with an error that does not point at
+    # the cache.
     #
     # A corollary worth stating, because it has been missed before: while
     # `save-if: false` stands below, every save-side rust-cache input here is

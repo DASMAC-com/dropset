@@ -521,11 +521,7 @@ read them with `gh api repos/{owner}/{repo}/rulesets/{id}`):
 
 `Lint (clippy)` and `Lint (rustdoc)` are the two legs of `lint.yml`'s
 `lint-rust` matrix job, split out of `Lint` so the cargo-backed hooks
-run beside the rest instead of after them. Until the ruleset adds those
-two (held until every open PR is rebased past the split, since a PR
-not yet rebased never emits them), only the rest are enforced: this
-list leads the ruleset by those two, and a clippy or rustdoc failure
-does not yet gate. Drop these two sentences when the ruleset edit lands.
+run beside the rest instead of after them.
 
 Note these are **job** names, not step names. A workflow can therefore
 add or remove a *step* inside a required job with no ruleset change at
