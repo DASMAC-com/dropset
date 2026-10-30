@@ -316,6 +316,19 @@ class LensTests(unittest.TestCase):
         self.assertLess(out.index("## Standing marker"), out.index("# Lens:"))
         self.assertIn("`correctness` lens", out)
 
+    def test_the_first_call_rule_sits_directly_above_the_lens_task(self):
+        out = lp.compose(self.root, [], ["A fact."], lens="correctness")
+        self.assertLess(out.index("## Standing marker"), out.index(lp.FIRST_CALL))
+        self.assertTrue(out.index(lp.FIRST_CALL) < out.index("# Lens:"))
+        between = out[
+            out.index(lp.FIRST_CALL) + len(lp.FIRST_CALL) : out.index("# Lens:")
+        ]
+        self.assertEqual(between.strip(), "")
+
+    def test_no_lens_means_no_first_call_section(self):
+        out = lp.compose(self.root, [], ["A fact."])
+        self.assertNotIn(lp.FIRST_CALL, out)
+
     def test_the_default_cap_fills_the_placeholder_and_is_stripped(self):
         out = lp.compose(self.root, [], ["A fact."], lens="correctness")
         self.assertIn("**Your cap: ≤ 4 turns / ≤ 6 tool calls, hard stop.**", out)

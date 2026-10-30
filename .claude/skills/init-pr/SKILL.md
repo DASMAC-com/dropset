@@ -179,7 +179,7 @@ shape (dry runs included), never polling a backgrounded log,
 `make tools-tests` whole, `wait_for_checks.py` for CI, and never
 re-reading what you authored. A refused search leaves its question
 unanswered, never zero hits (`docs/conventions/shell-commands.md`).
-Six reminders neither states:
+Seven reminders neither states:
 
 - **Test one tools module with the wrapper**:
   `make tools-test T=test_<tool>` (`K=<name>` narrows). It resolves the
@@ -225,6 +225,13 @@ Six reminders neither states:
   sites already renamed (`MAX_ATTEMPTS` → `REALIZED_FILL_MAX_ATTEMPTS`
   mangles an existing import), and surfaces as an error naming the
   *correct* symbol.
+
+- **A Makefile edit is verified by `make -n` on every target that
+  expands the changed variable or recipe, re-run after each edit.**
+  Lint (the Makefile linter included), the suites and CI all pass a
+  lazily expanded `=` variable that fails to parse (a bare `#` inside
+  `$(shell …)` starts a comment); only the recipes that expand it fail
+  ([`history.md`](history.md) → "Makefile dry-run").
 
 ## Steps
 

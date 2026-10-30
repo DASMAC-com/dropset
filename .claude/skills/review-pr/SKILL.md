@@ -180,10 +180,29 @@ migrations or generation inputs, and whether it spans crates.
      git add <resolved files>
      ```
 
+   - **The committed WASM binary is the one mechanical resolution.**
+     `sdk/ts/src/wasm/dropset_interface_bg.wasm` is never hand-merged
+     or rebased: its only correct content is a rebuild from the merged
+     tree, and the triage's `artifact_gates` reason names it when it
+     overlaps. Keep it in its own `Rebuild WASM bindings` commit (step
+     9's tool writes it that way). On a base move, drop that commit in
+     place, run the rebase above, then let step 9's regeneration
+     rebuild and recommit it. Never `reset --soft`, and never take a
+     side by hand (`history.md` → "WASM binary overlap"):
+
+     ```sh
+     git rebase --onto <wasm-commit>~1 <wasm-commit>
+     ```
+
+     Add `--no-gpg-sign` on `LOCKED`; abort a rebase the conflict
+     already stopped first.
+
    - **A clean rebase that integrated base commits** can still hide a
      *semantic* conflict (the base renamed something this branch
      calls): flag it for steps 5 and 11. History was rewritten, so step
-     12 force-pushes with `--force-with-lease`.
+     12 force-pushes with `--force-with-lease`. A fix the rebase forces
+     (a broken helper) is committed first, and the push is a later call
+     made only once that commit returns success.
 
    **Act on the triage's `rerun` block**: each of `lint`, `program`,
    `frontend_install`, `artifact_gates` and `may_enqueue_unverified`
@@ -1130,7 +1149,9 @@ migrations or generation inputs, and whether it spans crates.
    excluded, since `wasm-opt` isn't byte-reproducible), and
    `sdk/ts/src/wasm.conformance.test.ts` runs the **committed**
    binary against the conformance vectors — so a stale binary is a
-   real behavioral divergence, not a formatting nit.
+   real behavioral divergence, not a formatting nit. They back step
+   2's drop-and-regenerate, so **never fold the WASM rebuild commit
+   into another** (no squash, no amend).
 
 1. **Refresh the Audit registry if the diff changed the
    platform shape.** Rotations read the subsystems,
@@ -1318,6 +1339,11 @@ migrations or generation inputs, and whether it spans crates.
    ```sh
    git push --force-with-lease
    ```
+
+   **Push only after every fix commit has returned success — never in
+   the same parallel batch as a `git commit`.** A batched push still
+   runs when its commit fails (a locked signer), and lands the tree
+   without the fix (`commit-changes` → "Push").
 
    **If the branch carries unsigned commits and the signer answers
    now, sign here instead** — the tool pushes with its own pinned
@@ -1559,6 +1585,20 @@ migrations or generation inputs, and whether it spans crates.
    Progress, and stop. On `unverified`, say so and hold. Only `green`
    proceeds.
 
+   **Then re-read each PR step 5's overlap probe named** — `green`
+   only says nothing conflicts *yet*, and an overlapping PR that lands
+   while this one waits in the queue dequeues it with
+   `merge_conflict` (`history.md` → "Overlap PR landed in the queue").
+   One read per named PR; free when the probe named none:
+
+   ```sh
+   gh pr view <N> --json state,mergedAt,autoMergeRequest
+   ```
+
+   **Merged** → rebase (step 2) and re-verify before enqueueing.
+   **Queued or carrying auto-merge** → wait for it to land, or enqueue
+   and say a dequeue is likely. **Open and idle** → proceed.
+
    **If this branch adds a migration, check for a cross-branch number
    collision before enqueueing.** The ascend guard and the schema-fence
    tests see one tree from an empty database, so a duplicate number is
@@ -1611,6 +1651,18 @@ migrations or generation inputs, and whether it spans crates.
    own diff is **unchanged** since the last green local pass. Otherwise
    verify locally. Say in the summary that the re-verify was skipped
    and why.
+
+   **A green PR held behind another PR's landing is parked, not
+   watched.** When the PR must wait (the operator or planning says
+   hold, or the overlap re-check above says wait), leave the issue In
+   Progress with the PR pushed and green, append a resume brief to the
+   issue (`linear_issue.py append`) holding only the PR number, the
+   hold reason (the PR waited on) and the gates still owed, then end
+   the session. The tail after a hold is rebases and gate re-runs
+   replayed against the whole review's prefix (`history.md` → "Held-PR
+   tails"). A fresh session, launched once the hold clears, resumes
+   from that brief alone: `/review-pr` at step 2, with no lens re-run
+   unless the rebase overlaps.
 
    **Then the final signing pass — nothing is enqueued unsigned.**
    Branch protection requires every commit on main signed, so a branch

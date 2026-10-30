@@ -64,6 +64,13 @@ is not repeated here.
   (≈4.3k).
 - **Manual CI polls.** Four `gh pr checks` calls (922 tokens) before
   one `wait_for_checks.py` (≈200).
+- **Makefile dry-run.** A late edit tightened a grep inside a
+  `$(shell …)` held in a recursive `=` variable to `'^[^#]*op://'`;
+  the bare `#` started a make comment and left the call unterminated.
+  `make -n` had run before that edit, not after. Lint (the Makefile
+  linter included), `make test`, CI and a five-lens review all passed it;
+  a post-rebase dry-run caught it, at one extra commit, lint pass and
+  CI cycle.
 
 ## Steps
 
