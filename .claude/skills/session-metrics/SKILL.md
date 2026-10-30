@@ -19,7 +19,8 @@ cost line on the issue is the close tool's write, not this skill's.
 listing the projects directory:
 
 1. **`env`** — `CLAUDE_SESSION_ID`, non-empty. Every launch verb
-   exports the id it seeded or resumed (`printenv CLAUDE_SESSION_ID`).
+   exports the id it seeded or resumed (`printenv CLAUDE_SESSION_ID`);
+   a `--continue` or picker resume names no id, so it is empty there.
 
 1. **`scratchpad`** — the directory name immediately above
    `scratchpad` in your scratchpad path, a bare UUID.

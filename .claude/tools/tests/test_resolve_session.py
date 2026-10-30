@@ -465,6 +465,15 @@ class LaunchAndChoreIdTests(unittest.TestCase):
         with self.assertRaises(rs.ResolveSessionError):
             rs.run(["resolve_session.py", "--daily-id", "chore", "--tag", "exp-x"])
 
+    def test_inputs_the_seed_never_uses_are_refused_not_ignored(self):
+        for argv in (
+            ["--daily-id", "chore", "--tag", "2348", "--date", "20261029"],
+            ["--daily-id", "chore", "--tag", "2348", "--cycle", "0"],
+            ["--daily-id", "launch", "--cycle", "2"],
+        ):
+            with self.assertRaises(rs.ResolveSessionError, msg=argv):
+                rs.run(["resolve_session.py", *argv])
+
 
 class CycleIdTests(unittest.TestCase):
     """A cycled scheduler session gets a fresh id under the same display name."""

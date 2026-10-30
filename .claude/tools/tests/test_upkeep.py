@@ -1355,7 +1355,10 @@ class ProgressTests(unittest.TestCase):
         # `cli` crashed last time, so it has no figure to name.
         ctx.data["previous_durations"] = {"pull": 71.0}
         ctx.data["previous_elapsed"] = 230.0
-        result = run_pass(ctx, ("pull", "cli"))
+        # A whole pass, shortened to `pull` and `cli`: only a whole pass
+        # compares against the stamped total.
+        with mock.patch.object(upkeep, "STEPS", upkeep.STEPS[:2]):
+            result = run_pass(ctx)
         self.assertEqual(
             lines[0],
             "upkeep: [1/2] pull — fast-forward main (per-call timeout 120s, last 71s)",
@@ -1382,6 +1385,20 @@ class ProgressTests(unittest.TestCase):
             upkeep.bar_line(6, 14, "notifications", 32, None),
             "upkeep: [6/14] notifications 32s",
         )
+        # Not full a moment early: the last cell waits for last time's figure.
+        self.assertEqual(
+            upkeep.bar_line(6, 14, "notifications", 70, 71),
+            "upkeep: [6/14] notifications ▓▓▓▓▓▓▓░ 70s / ~71s",
+        )
+
+    def test_a_prune_subset_names_no_whole_pass_total(self):
+        ctx = make_ctx(lambda cmd, timeout, cwd=None: (0, "", ""))
+        lines: list[str] = []
+        ctx.progress = lines.append
+        ctx.data["previous_elapsed"] = 250.0
+        result = run_pass(ctx, ("pull",))
+        self.assertNotIn("last", lines[-1])
+        self.assertNotIn("last_elapsed", result)
 
     def test_a_slow_step_draws_the_bar_in_place_then_clears_it(self):
         drawn: list[str] = []
@@ -1478,7 +1495,34 @@ class PreflightTests(unittest.TestCase):
             auth = upkeep.auth_preflight(make_ctx(run))
         self.assertIn("LINEAR_API_KEY is unset", auth["linear"])
         self.assertIn("expired", auth["aws"])
-        self.assertEqual(set(upkeep.preflight_skips(auth)), {"board", "parked", "cost"})
+        # AWS gates no whole step: the reconcile is skipped inside `step_cost`.
+        self.assertEqual(set(upkeep.preflight_skips(auth)), {"board", "parked"})
+
+    def test_an_expired_aws_session_skips_the_reconcile_but_keeps_the_local_day(self):
+        run, calls = self.fake(aws_rc=255)
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
+            ctx = make_ctx(run)
+            ctx.preflight = True
+            run_pass(ctx, ("cost",))
+        lines = {s["step"]: s["line"] for s in ctx.steps}
+        self.assertTrue(lines["fleet-cost"].startswith("skipped — aws sts"))
+        cost_calls = [c for c in calls if len(c) > 1 and c[1].endswith("fleet_cost.py")]
+        self.assertEqual([c[2] for c in cost_calls], ["local"])
+
+    def test_a_pass_with_no_cost_step_never_probes_aws(self):
+        run, calls = self.fake()
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
+            ctx = make_ctx(run)
+            ctx.preflight = True
+            run_pass(ctx, upkeep.PRUNE_STEPS)
+        self.assertFalse([c for c in calls if c[0] == "aws"])
+        self.assertNotIn("AWS", ctx.steps[0]["line"])
+
+    def test_gh_is_probed_for_the_active_account_only(self):
+        run, calls = self.fake()
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
+            upkeep.auth_preflight(make_ctx(run), aws=False)
+        self.assertIn(["gh", "auth", "status", "--active"], calls)
 
     def test_the_aws_probe_honors_the_configured_profile(self):
         run, calls = self.fake()
@@ -1624,6 +1668,16 @@ class CliTests(unittest.TestCase):
                 upkeep.run(["upkeep.py", "run"])
                 upkeep.run(["upkeep.py", "run"])
         self.assertEqual(seen, [(True, {}, None), (True, {"pull": 3.2}, 250.0)])
+
+    def test_a_non_tty_stderr_draws_no_bar(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            ctx = make_ctx(lambda cmd, timeout, cwd=None: (0, "", ""))
+            with contextlib.redirect_stderr(io.StringIO()):
+                upkeep.wire_terminal(ctx, base)
+        self.assertTrue(ctx.preflight)
+        self.assertIsNone(ctx.live)
 
     def test_a_malformed_timing_reads_as_none(self):
         with tempfile.TemporaryDirectory() as d:

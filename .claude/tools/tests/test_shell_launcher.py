@@ -126,6 +126,33 @@ class SharedLauncherTest(unittest.TestCase):
             self.assertEqual(got.returncode, 0, got.stderr)
             self.assertIn("SID=\n", got.stdout)
 
+    def _upkeep(self, **env: str) -> Path | None:
+        """Run `_ds_upkeep` with the pass, the secrets and the repo stubbed;
+        return the attend script's argument log, or None when never called."""
+        with tempfile.TemporaryDirectory() as d:
+            scripts = Path(d) / ".claude" / "scripts"
+            scripts.mkdir(parents=True)
+            attend = scripts / "iterm-attend.sh"
+            log = Path(d) / "attend.log"
+            attend.write_text(f'#!/bin/sh\necho "$@" > "{log}"\n')
+            attend.chmod(0o755)
+            got = run(
+                # `TTY` is zsh's own parameter (empty with no terminal), so it
+                # is set in the shell, not passed in the environment.
+                f"_ds_secrets() {{ :; }}; python3() {{ :; }}; _DS_REPO='{d}'; "
+                "TTY=/dev/ttys999; _ds_upkeep",
+                TERM_PROGRAM="iTerm.app",
+                **env,
+            )
+            self.assertEqual(got.returncode, 0, got.stderr)
+            return log.read_text().strip() if log.exists() else None
+
+    def test_the_upkeep_tab_is_marked_green_when_the_pass_ends(self) -> None:
+        self.assertEqual(self._upkeep(), "--tty /dev/ttys999 --mark")
+
+    def test_iterm_disabled_skips_the_upkeep_mark(self) -> None:
+        self.assertIsNone(self._upkeep(DS_ITERM_DISABLED="1"))
+
     def test_an_unresolved_helper_refuses_a_bedrock_launch(self) -> None:
         tiers = {k: v for k, v in TIERS.items() if k != "DS_MODEL_HELPER"}
         got = run('_ds_claude "claude-adv-1[1m]"', CLAUDE_CODE_USE_BEDROCK="1", **tiers)

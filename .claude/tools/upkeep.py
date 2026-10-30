@@ -77,13 +77,15 @@ refuses the whole pass, since every later step assumes it.
     with the delta against the previous run's ids kept beside the stamp.
     Report-only — never a CI gate.
 
-**Auth preflight.** Before the first step, ``gh auth status`` (bounded by
-``TIMEOUT_PREFLIGHT``, with ``GH_PROMPT_DISABLED`` set) and the Linear key's
-presence are checked once. A failed or timed-out ``gh`` skips the ``gh``-backed
-steps (``GH_STEPS``, and the digest's CI section) and a missing key the
-Linear-backed ones (``LINEAR_STEPS``), each with a one-line reason, rather than
-hanging the pass on an interactive prompt; the report's ``auth`` line names
-the re-authentication once.
+**Auth preflight.** Before the first step, ``gh auth status --active``
+(bounded by ``TIMEOUT_PREFLIGHT``, with ``GH_PROMPT_DISABLED`` set), the Linear
+key's presence and, when the cost step runs, the AWS identity are checked
+once. A failed or timed-out ``gh`` skips the ``gh``-backed steps
+(``GH_STEPS``, and the digest's CI section), a missing key the Linear-backed
+ones (``LINEAR_STEPS``), and an expired AWS session the fleet-cost reconcile
+alone, each with a one-line reason, rather than hanging the pass on an
+interactive prompt; the report's ``auth`` line names the re-authentication
+once.
 
 **Arming.** Steps 6 and 8 run as a dry run and touch nothing unless
 ``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. Step 7 is
@@ -121,6 +123,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -798,10 +801,22 @@ def cost_day_line(day: str, summary: dict) -> str:
 
 def step_cost(ctx: Ctx) -> None:
     # Exit 1 is a settled day flagged: a finding the report carries, not a
-    # failed read. Exit 2 (an AWS error, expired credentials included) is.
-    report = _json_tool(
-        ctx, "fleet-cost", "fleet_cost.py", "reconcile", "--json", timeout=TIMEOUT_COST
-    )
+    # failed read. Exit 2 (an AWS error, expired credentials included) is. A
+    # failed AWS preflight skips the reconcile alone: the local-day table
+    # below meters transcripts and only marks its billed column unread.
+    aws_down = (ctx.data.get("auth") or {}).get("aws")
+    if aws_down:
+        ctx.record("fleet-cost", f"skipped — {aws_down}", False)
+        report = None
+    else:
+        report = _json_tool(
+            ctx,
+            "fleet-cost",
+            "fleet_cost.py",
+            "reconcile",
+            "--json",
+            timeout=TIMEOUT_COST,
+        )
     if report is not None:
         ctx.data["fleet_cost"] = report
         days = sorted(report.get("days", {}).items())
@@ -1109,11 +1124,12 @@ STEP_LABELS = {
 PRUNE_STEPS = ("prs", "board", "prune", "notifications")
 
 
-# The steps each credential gates; the digest's CI section is gated by `gh`
-# inside `step_digest`.
+# The steps each credential gates. Two gates sit inside a step instead, since
+# the rest of the step needs no credential: `gh` drops the digest's CI section
+# (`step_digest`), and AWS drops the fleet-cost reconcile while the local-day
+# table, read from transcripts, still prints (`step_cost`).
 GH_STEPS = ("prs", "notifications", "deps")
 LINEAR_STEPS = ("board", "parked")
-AWS_STEPS = ("cost",)
 REAUTH = {
     "gh": "gh auth login",
     "linear": "export LINEAR_API_KEY",
@@ -1132,34 +1148,41 @@ def _auth_reason(rc: int, out: str, err: str, what: str) -> str:
     return f"{what} failed: {why[:160] or f'exit {rc}'}"
 
 
-def auth_preflight(ctx: Ctx) -> dict[str, str | None]:
+def auth_preflight(ctx: Ctx, aws: bool = True) -> dict[str, str | None]:
     """Why each credential family cannot be used this pass, or None when it can:
-    ``gh``, ``linear`` (the key's presence) and ``aws`` (the fleet-cost
-    profile's identity — an expired SSO session is the failure that recurs)."""
-    rc, out, err = ctx.run(["gh", "auth", "status"], TIMEOUT_PREFLIGHT, str(ctx.base))
-    gh = None if rc == 0 else _auth_reason(rc, out, err, "gh auth status")
+    ``gh`` (the active account only, so a stale secondary one does not skip
+    steps the active one can run), ``linear`` (the key's presence) and, when
+    ``aws``, the fleet-cost profile's identity — an expired SSO session is the
+    failure that recurs. A pass with no cost step never probes AWS."""
+    rc, out, err = ctx.run(
+        ["gh", "auth", "status", "--active"], TIMEOUT_PREFLIGHT, str(ctx.base)
+    )
+    found: dict[str, str | None] = {
+        "gh": None if rc == 0 else _auth_reason(rc, out, err, "gh auth status")
+    }
     try:
         linear_api.env_var("LINEAR_API_KEY")
-        linear = None
+        found["linear"] = None
     except linear_api.LinearApiError as e:
-        linear = first_line(str(e))
-    cmd = ["aws", "sts", "get-caller-identity", "--output", "json"]
-    profile = os.environ.get("DS_AWS_PROFILE", "").strip()
-    if profile:
-        cmd += ["--profile", profile]
-    rc, out, err = ctx.run(cmd, TIMEOUT_PREFLIGHT, None)
-    aws = None if rc == 0 else _auth_reason(rc, out, err, "aws sts get-caller-identity")
-    return {"gh": gh, "linear": linear, "aws": aws}
+        found["linear"] = first_line(str(e))
+    if aws:
+        cmd = ["aws", "sts", "get-caller-identity", "--output", "json"]
+        profile = os.environ.get("DS_AWS_PROFILE", "").strip()
+        if profile:
+            cmd += ["--profile", profile]
+        rc, out, err = ctx.run(cmd, TIMEOUT_PREFLIGHT, None)
+        found["aws"] = (
+            None
+            if rc == 0
+            else _auth_reason(rc, out, err, "aws sts get-caller-identity")
+        )
+    return found
 
 
 def preflight_skips(auth: dict[str, str | None]) -> dict[str, str]:
     """Each gated step's skip line, keyed by step name."""
     skips: dict[str, str] = {}
-    for family, steps in (
-        ("gh", GH_STEPS),
-        ("linear", LINEAR_STEPS),
-        ("aws", AWS_STEPS),
-    ):
+    for family, steps in (("gh", GH_STEPS), ("linear", LINEAR_STEPS)):
         if auth.get(family):
             for name in steps:
                 skips[name] = f"skipped — {auth[family]}"
@@ -1169,9 +1192,10 @@ def preflight_skips(auth: dict[str, str | None]) -> dict[str, str]:
 def auth_line(auth: dict[str, str | None]) -> tuple[str, bool]:
     down = [f for f in ("gh", "linear", "aws") if auth.get(f)]
     if not down:
-        return "gh signed in, Linear key present, AWS identity resolves", True
+        checked = ", AWS identity resolves" if "aws" in auth else ""
+        return f"gh signed in, Linear key present{checked}", True
     parts = [f"{auth[f]} (re-authenticate: {REAUTH[f]})" for f in down]
-    return "; ".join(parts) + "; the steps it gates are skipped", False
+    return "; ".join(parts) + "; what each gates is skipped", False
 
 
 def clock_text(seconds: float) -> str:
@@ -1211,7 +1235,10 @@ def bar_line(
     head = f"upkeep: [{index}/{total}] {name}"
     if not expected:
         return f"{head} {elapsed:.0f}s"
-    filled = min(BAR_CELLS, round(BAR_CELLS * elapsed / expected))
+    # A started cell counts (32s of 71s is four cells, the spec's example), but
+    # the last one only fills once last time's figure is reached.
+    filled = math.ceil(BAR_CELLS * elapsed / expected)
+    filled = min(filled, BAR_CELLS if elapsed >= expected else BAR_CELLS - 1)
     bar = "▓" * filled + "░" * (BAR_CELLS - filled)
     return f"{head} {bar} {elapsed:.0f}s / ~{expected:.0f}s"
 
@@ -1253,7 +1280,9 @@ def run_pass(ctx: Ctx, only: tuple[str, ...] | None = None) -> dict:
     previous = ctx.data.get("previous_durations") or {}
     skips: dict[str, str] = {}
     if ctx.preflight:
-        auth = auth_preflight(ctx)
+        # Said first: the probes can take a timeout each before any step line.
+        say("upkeep: auth — checking the gh, Linear and AWS credentials")
+        auth = auth_preflight(ctx, aws=any(n == "cost" for n, _ in chosen))
         ctx.data["auth"] = auth
         line, ok = auth_line(auth)
         ctx.record("auth", line, ok)
@@ -1287,7 +1316,9 @@ def run_pass(ctx: Ctx, only: tuple[str, ...] | None = None) -> dict:
             durations[name] = round(elapsed, 1)
         say(step_end_line(index, len(chosen), name, elapsed, crashed))
     total = ctx.clock() - began
-    last_total = ctx.data.get("previous_elapsed")
+    # The stamped total is the whole pass's, so only a whole pass compares
+    # against it; a `prune` subset names per-step figures alone.
+    last_total = ctx.data.get("previous_elapsed") if only is None else None
     say(total_line(len(chosen), total, crashes, last_total))
     result = {
         "ran_at": ctx.now.isoformat(),

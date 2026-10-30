@@ -995,9 +995,10 @@ _ds_iterm_role() {
   printf '\e]1337;SetUserVar=ds_role=%s\a' "$(print -rn -- "$1" | base64)"
 }
 
-# Internal: title this iTerm tab $1 (OSC 1, the tab title, which no Claude
-# session is around to overwrite in a shell-only tab). Same guard as the role,
-# plus `DS_ITERM_DISABLED=1`, which opts out of every escape.
+# Internal: title this iTerm tab $1 (OSC 1, the tab title). It holds after the
+# prompt returns until something retitles the tab — a Claude session started
+# in it, or a prompt theme's own title hook. Same guard as the role, plus
+# `DS_ITERM_DISABLED=1`, which opts out of every escape.
 _ds_iterm_title() {
   [[ "$DS_ITERM_DISABLED" != 1 && "$TERM_PROGRAM" == iTerm.app && -t 1 ]] ||
     return 0

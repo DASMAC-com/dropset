@@ -503,6 +503,13 @@ def run(argv: list[str]) -> int:
     repo = Path(os.path.abspath(args.repo if args.repo else Path.cwd()))
 
     if args.daily_id in TOPIC_KINDS:
+        # Refused, not ignored: a day or cycle has no part in a number seed,
+        # and silently dropping one hides a wrong question.
+        if args.date or args.cycle is not None:
+            raise ResolveSessionError(
+                f"--daily-id {args.daily_id} is seeded by issue number alone; "
+                f"--date and --cycle do not apply"
+            )
         if not args.tag:
             raise ResolveSessionError(
                 f"--daily-id {args.daily_id} needs --tag <n>, the issue number"
@@ -517,6 +524,11 @@ def run(argv: list[str]) -> int:
         # wrong value still hashes to a well-formed id naming no session.
         if cycle is not None and cycle < 0:
             raise ResolveSessionError(f"--cycle must be >= 0, got {cycle}")
+        if cycle and args.daily_id not in CYCLING_KINDS:
+            raise ResolveSessionError(
+                f"--daily-id {args.daily_id} never cycles (the launcher seeds "
+                f"cycle 0 only), got --cycle {cycle}"
+            )
         if cycle is None:
             cycle = (
                 read_cycle(repo, date, args.daily_id)
