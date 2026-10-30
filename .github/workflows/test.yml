@@ -88,9 +88,9 @@ jobs:
           - '!pnpm-lock.yaml'
           - '!pnpm-workspace.yaml'
           - '!cfg/**'
-          # Only the CloudFormation tree: Rust tests read the localnet compose
-          # file and the secrets template (`include_str!` in db-schema,
-          # market-data and feeds), so infra/localnet/ stays relevant.
+          # Only the CloudFormation tree: Rust tests in db-schema, market-data
+          # and feeds read the localnet compose file and the secrets template,
+          # so infra/localnet/ stays relevant.
           - '!infra/aws/**'
           # Grafana dashboard JSON, its provisioning, and the generated SQL
           # mirror under market-data/grafana/sql/. No Rust target reads any of
