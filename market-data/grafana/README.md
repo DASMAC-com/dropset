@@ -172,10 +172,11 @@ break that hook while leaving the mirror check green — a failure in the
 gate least related to the change. The tool instead implements YAML's
 block-scalar rule directly to lift `rawSql`, which is a structural read
 rather than a regex sweep. What keeps it honest is a test, not a
-promise: the suite runs under the ambient interpreter, where PyYAML *is*
-available, and asserts the two agree byte-for-byte on the committed
-files. A rule using YAML the subset reader cannot handle fails that test
-rather than silently mirroring the wrong text. A folded (`>`) `rawSql`
+promise: CI's Lint job has PyYAML (it arrives with `pre-commit`), and
+there the suite asserts the two agree byte-for-byte on the committed
+files; a missing PyYAML fails it under `CI` and skips it locally. A
+rule using YAML the subset reader cannot handle fails that test rather
+than silently mirroring the wrong text. A folded (`>`) `rawSql`
 is refused outright, since folding rewrites newlines.
 
 Mirror filenames are keyed on the **rule `uid`** for alerts, which is a
