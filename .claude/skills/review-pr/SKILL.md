@@ -1818,31 +1818,35 @@ migrations or generation inputs, and whether it spans crates.
 
    - [ ] **Session metrics** — step 21, unprompted.
 
-   - [ ] **Close** — the follow-up ledger, then the one question.
-     Each follow-up is addressed, handed to the scheduler, or filed
-     as N — each filing messaged to the curator (`curate-<day>`, via
-     `ListAgents`; with none live, the scheduler). A captured
-     operator action is never restated, and the close question is
-     the last word (`docs/conventions/linear-automation.md` → "A
-     close never recites a captured operator action"). Then ask via
-     `AskUserQuestion` — *"all follow-up complete: metrics captured,
-     feedback forwarded — mark Done?"* — offering **"Mark Done and
-     remove the worktree (Recommended)"** first and **"Mark Done, keep
-     the worktree"** second. Only this approval moves the issue to
-     Done. Both run one tool as the session's **last** tool call, so
-     the state write lands before any removal:
+   - [ ] **Close** — the leftover ledger, then the one question.
+     Every warning, nit and left-for-you item in the summary and PR
+     body is filed, handed to a live session or dropped with a reason
+     — by you, never handed to the operator; the PR body is no
+     disposition (`docs/conventions/linear-automation.md` → "Every
+     leftover has a disposition before the close"), each filing
+     messaged to the curator (`curate-<day>`, via `ListAgents`; else
+     the scheduler). A captured operator action is never restated,
+     and the close question is the last word (same doc → "A close
+     never recites a captured operator action"). Run the tool below
+     with `--dry-run`; ask only once it passes, via `AskUserQuestion`
+     — *"N leftovers disposed, metrics captured — mark Done? Removing
+     the worktree ends shell, file writes and memory saves here."* —
+     **"Mark Done and remove the worktree (Recommended)"** first,
+     **"Mark Done, keep the worktree"** second. Only this approval
+     moves the issue to Done. Both run one tool as the **last** tool
+     call, so the state write lands before any removal:
 
      ```sh
-     python3 .claude/tools/close_session.py --state Done --session-id <uuid>
+     python3 .claude/tools/close_session.py --state Done --session-id <uuid> \
+       --leftovers-file <scratchpad>/leftovers.json
      ```
 
      (`--keep-worktree` for the second option; the id appends the
-     cost line). It refuses with
-     nothing changed when it cannot prove the close safe — a dirty
-     tree, an unpushed commit, an open or unreadable PR, a lock another
-     session holds, a failed state write — naming the reason in
-     `refused`. Exit 2 means Done landed and the removal did not; relay
-     its note.
+     cost line). It refuses with nothing changed when it cannot prove
+     the close safe — an undisposed leftover, a dirty tree, an
+     unpushed commit, an open or unreadable PR, a foreign lock, a
+     failed state write — naming it in `refused`. Exit 2 means Done
+     landed and the removal did not; relay its note.
 
    If you want the landed content anyway — a merge resolution, say —
    slice it with `python3 .claude/tools/show_at_ref.py <ref> <path>`;

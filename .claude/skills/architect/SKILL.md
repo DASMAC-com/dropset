@@ -387,8 +387,13 @@ branch is not `eng-###`, so name the issue):
 
 ```sh
 python3 .claude/tools/close_session.py --state Done --issue ENG-### \
-  --session-id <uuid>
+  --session-id <uuid> --leftovers-file <scratchpad>/leftovers.json
 ```
+
+The ledger names every open thread the session did not land as a
+task, each filed, handed or dropped first (`linear-automation.md` →
+"Every leftover has a disposition before the close"); `[]` when the
+filed tasks hold everything.
 
 This replaces a "the fold is the cleanup — close the PR and
 remove the worktree in one act" rule from the 09-11 shape. With

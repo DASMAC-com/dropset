@@ -112,13 +112,29 @@ class FakeRun:
         raise AssertionError(f"unexpected command {cmd}")
 
 
+def ledger_file(entries) -> str:
+    """A leftover ledger on disk, removed when the test run ends."""
+    fd, path = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(entries if isinstance(entries, str) else json.dumps(entries))
+    unittest.addModuleCleanup(os.unlink, path)
+    return path
+
+
+EMPTY_LEDGER = None
+
+
 def ns(**kw):
+    global EMPTY_LEDGER
+    if EMPTY_LEDGER is None:
+        EMPTY_LEDGER = ledger_file([])
     base = {
         "state": "Done",
         "issue": None,
         "keep_worktree": False,
         "dry_run": False,
         "session_id": None,
+        "leftovers_file": EMPTY_LEDGER,
     }
     base.update(kw)
     return SimpleNamespace(**base)
@@ -358,6 +374,86 @@ class CloseTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("git"), "git not installed")
+class LeftoverTests(unittest.TestCase):
+    """The ledger gate: every leftover filed, handed or dropped before a
+    Done close, refused before any write otherwise."""
+
+    GOOD = [
+        {"item": "stale USD fallback", "disposition": "filed", "ref": "ENG-2400"},
+        {"item": "proxy query", "disposition": "handed", "ref": "schedule-30"},
+        {"item": "nit: rename", "disposition": "Dropped", "ref": "landed in #730"},
+    ]
+
+    def test_every_disposition_passes_and_counts(self):
+        rc, result, _, writer = run_close(
+            args=ns(leftovers_file=ledger_file(self.GOOD))
+        )
+        self.assertEqual(rc, 0, result)
+        self.assertEqual(result["leftovers"], 3)
+        self.assertEqual(len(writer.calls), 1)
+
+    def test_gaps_name_each_undisposed_item(self):
+        gaps = close_session.leftover_gaps(
+            [
+                {"item": "a", "disposition": "noted in the PR body", "ref": "#594"},
+                {"item": "b", "disposition": "filed", "ref": "later"},
+                {"item": "c", "disposition": "dropped"},
+                {"disposition": "filed", "ref": "ENG-1"},
+                "d",
+                {"item": "e", "disposition": "handed", "ref": "Operator"},
+            ]
+        )
+        self.assertEqual(len(gaps), 6, gaps)
+        self.assertIn("not a live session", gaps[5])
+        self.assertIn("'noted in the PR body'", gaps[0])
+        self.assertIn("no ENG-###", gaps[1])
+        self.assertIn("no ref", gaps[2])
+        self.assertIn("names no item", gaps[3])
+        self.assertIn("not an object", gaps[4])
+        self.assertEqual(close_session.leftover_gaps([]), [])
+        self.assertEqual(len(close_session.leftover_gaps({})), 1)
+
+    def test_bad_ledgers_refuse_before_the_write(self):
+        cases = {
+            "missing flag": (None, "needs --leftovers-file"),
+            "unreadable": ("/nonexistent/ledger.json", "unreadable --leftovers-file"),
+            "not json": (ledger_file("not json"), "unreadable --leftovers-file"),
+            "undisposed": (
+                ledger_file([{"item": "x", "disposition": "pr-body", "ref": "#1"}]),
+                "1 leftover(s) have no disposition",
+            ),
+        }
+        for name, (path, why) in cases.items():
+            with self.subTest(name):
+                for keep in (False, True):
+                    rc, result, _, writer = run_close(
+                        args=ns(leftovers_file=path, keep_worktree=keep)
+                    )
+                    self.assertEqual(rc, 1, result)
+                    self.assertIn(why, result["refused"])
+                    self.assertEqual(writer.calls, [])
+
+    def test_dry_run_runs_the_gate(self):
+        path = ledger_file([{"item": "x", "disposition": "", "ref": ""}])
+        rc, result, _, writer = run_close(args=ns(leftovers_file=path, dry_run=True))
+        self.assertEqual(rc, 1)
+        self.assertIn("no disposition", result["refused"])
+        self.assertEqual(writer.calls, [])
+
+    def test_live_handoff_needs_no_ledger(self):
+        rc, result, _, _ = run_close(
+            args=ns(state="In Review", keep_worktree=True, leftovers_file=None)
+        )
+        self.assertEqual(rc, 0, result)
+        self.assertIsNone(result["leftovers"])
+
+    def test_parse_args_takes_the_ledger(self):
+        args = close_session.parse_args(
+            ["close_session.py", "--state", "Done", "--leftovers-file", "l.json"]
+        )
+        self.assertEqual(args.leftovers_file, "l.json")
+
+
 class CostLineTests(unittest.TestCase):
     LINE = "**Cost actual**: $72 estimate, 140 turns, peak prefix 310k, 2026-10-27\n"
 

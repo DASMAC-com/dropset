@@ -1045,6 +1045,38 @@ class PassTests(unittest.TestCase):
             steps["deny-rules"]["line"], "1 missing private-key deny rule(s)"
         )
         self.assertEqual(steps["deny-rules"]["missing"], ["Bash(op:*)"])
+        # A report predating the fail-closed field reads as none.
+        self.assertEqual(steps["fail-open"]["closed"], [])
+
+    def test_fail_closed_guards_get_their_own_line(self):
+        base_run = FakeRun()
+
+        def run(cmd, timeout, cwd=None):
+            if len(cmd) > 1 and Path(cmd[1]).name == "hook_wiring.py":
+                report = {
+                    "unwired": [],
+                    "mismatched": {},
+                    "misdirected": {},
+                    "fail_closed": {
+                        "no_git_grep.py": [".claude/settings.local.json"],
+                        "no_compound_bash.py": [".claude/settings.local.json"],
+                    },
+                    "deny_missing": [],
+                }
+                return 1, json.dumps(report), ""
+            return base_run(cmd, timeout, cwd)
+
+        ctx = make_ctx(run)
+        run_pass(ctx)
+        steps = {s["step"]: s for s in ctx.steps}
+        self.assertEqual(steps["hook-wiring"]["inert"], [])
+        self.assertEqual(steps["fail-open"]["line"], "2 fail-closed guard(s)")
+        self.assertEqual(
+            steps["fail-open"]["closed"], ["no_compound_bash.py", "no_git_grep.py"]
+        )
+        # The report names them, as it names inert guards.
+        text = render({"ran_at": "t", "armed": True, "steps": ctx.steps})
+        self.assertIn("no_compound_bash", text)
 
     def test_only_an_actual_removal_frees_slugs_in_the_purge(self):
         removed = {

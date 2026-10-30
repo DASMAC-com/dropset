@@ -906,6 +906,25 @@ table it reads against, with each verb's default substrate, is in
   surfaces after the yes is a defect of the session's ordering. The
   operator reads Linear for what they must do, never a block of
   closing prose.
+- **Every leftover has a disposition before the close.** Each
+  warning, nit and "left for human review" item a session surfaced
+  and did not do is **filed** as a follow-up (`linear-task`, the
+  curator messaged), **handed** to a live session by message, or
+  **dropped** with a reason, and the session does it itself: a close
+  never ends by handing the operator a list to decide or file.
+  "Noted in the PR body" is a record, not a disposition. The ledger
+  is mechanical: `close_session.py --leftovers-file` takes it as a
+  JSON array of `{"item", "disposition", "ref"}` (`ref` the
+  `ENG-###`, the session — never the operator — or the reason; `[]`
+  when nothing was left over), a Done or Canceled close refuses
+  without one or with any item undisposed, before any write, and
+  `review-pr` and `wrap` run it as a `--dry-run` before asking the
+  close question. The order is load-bearing: once the
+  close removes the worktree, guard wiring that predates "Wiring
+  fails open" (`local-integrations.md`) blocks every Bash and file
+  write, so nothing can be filed afterwards except through raw MCP.
+  An In Review handoff keeps its leftovers on the live issue and
+  needs no ledger.
 - **A Linear-title signal only** — never a PR title, branch or worktree
   name, which keep their own forms.
 - **The title is the authority.** The operator re-routes an issue by

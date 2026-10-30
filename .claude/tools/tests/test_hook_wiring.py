@@ -38,6 +38,20 @@ def _settings(commands, event="PreToolUse", matcher="Bash", deny=None):
 WIRING = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py"'
 
 
+def fail_open(path):
+    """The documented fail-open spelling of a guard's command."""
+    return (
+        f"test -f \"{path}\" || {{ echo 'guard script missing: failing open' "
+        f'>&2 ; exit 0 ; }} ; python3 "{path}"'
+    )
+
+
+OPEN_WIRING = [
+    fail_open("$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py"),
+    fail_open(".claude/hooks/no_git_grep.py"),
+]
+
+
 class RepoFixture(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -485,15 +499,44 @@ class CliTests(RepoFixture):
     def test_exits_zero_when_everything_is_wired(self):
         self._write(
             "settings.local.json",
-            _settings(
-                [WIRING, "python3 .claude/hooks/no_git_grep.py"],
-                deny=hw.REQUIRED_DENY_RULES,
-            ),
+            _settings(OPEN_WIRING, deny=hw.REQUIRED_DENY_RULES),
         )
         code, out, _ = self._capture(["hook_wiring.py", "--repo", str(self.repo)])
         self.assertEqual(code, 0)
         self.assertIn("every committed guard hook is wired", out)
+        self.assertIn("every wired guard fails open", out)
         self.assertNotIn("UNWIRED", out)
+
+    def test_a_fail_closed_guard_exits_one_and_is_named(self):
+        self._write(
+            "settings.local.json",
+            _settings(
+                [WIRING, OPEN_WIRING[1]],
+                deny=hw.REQUIRED_DENY_RULES,
+            ),
+        )
+        code, out, _ = self._capture(["hook_wiring.py", "--repo", str(self.repo)])
+        self.assertEqual(code, 1)
+        self.assertIn("every committed guard hook is wired", out)
+        self.assertIn("FAIL-CLOSED no_compound_bash.py", out)
+        self.assertNotIn("FAIL-CLOSED no_git_grep.py", out)
+
+    def test_a_good_reference_does_not_mask_a_fail_closed_one(self):
+        """A bare duplicate pointed at a gone path blocks every call now;
+        the open reference beside it keeps the guard `wired`, so only the
+        fail-closed check can name it."""
+        self._write(
+            "settings.local.json",
+            _settings(
+                [*OPEN_WIRING, "python3 /gone/checkout/no_git_grep.py"],
+                deny=hw.REQUIRED_DENY_RULES,
+            ),
+        )
+        result = hw.scan(self.repo, self.no_user)
+        self.assertIn("no_git_grep.py", result["wired"])
+        self.assertEqual(
+            result["fail_closed"], {"no_git_grep.py": [".claude/settings.local.json"]}
+        )
 
     def test_the_report_names_the_script_not_a_settings_diff(self):
         code, out, _ = self._capture(["hook_wiring.py", "--repo", str(self.repo)])
@@ -648,6 +691,59 @@ class DenyRuleTests(RepoFixture):
         )
         for tool in hw.EXPECTED_TOOLS["no_private_key_access.py"]:
             self.assertTrue(hw.matcher_selects(matchers[0], [tool]), tool)
+
+
+class FailOpenTests(unittest.TestCase):
+    """A missing guard script must not block every call: `python3 <gone>`
+    exits 2, the blocking code, so the wiring probes the path first."""
+
+    P = "$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py"
+
+    def test_spellings(self):
+        cases = {
+            fail_open(self.P): True,
+            f'test -f "{self.P}" || exit 0 ; python3 "{self.P}"': True,
+            f'[ -f "{self.P}" ] || exit 0 ; python3 "{self.P}"': True,
+            # A message naming the path stops the read before `exit 0`.
+            f'test -f "{self.P}" || {{ echo "{self.P}" >&2 ; exit 0 ; }} ; '
+            f'python3 "{self.P}"': False,
+            f'test -f "{self.P}" || {{ echo "guard gone" >&2 ; exit 0 ; }} ; '
+            f'python3 "{self.P}"': True,
+            f'test -f "{self.P}" || exit 0; python3 "{self.P}"': True,
+            f'python3 "{self.P}"': False,
+            # The probe names another path, so it proves nothing.
+            f'test -f "/elsewhere/x.py" || exit 0 ; python3 "{self.P}"': False,
+            # `&&` runs the guard only when present but exits 1 when absent —
+            # a non-blocking error, yet not the documented spelling.
+            f'test -f "{self.P}" && python3 "{self.P}"': False,
+            f'test -f "{self.P}" || exit 2 ; python3 "{self.P}"': False,
+            "unbalanced 'quote": False,
+        }
+        for command, want in cases.items():
+            with self.subTest(command):
+                self.assertIs(hw.fails_open(command, self.P), want)
+
+    def test_the_fail_open_spelling_is_still_wired_in_executable_position(self):
+        self.assertEqual(
+            hw.script_reference(fail_open(self.P), "no_compound_bash.py"), self.P
+        )
+
+    def test_every_guard_paste_block_in_the_convention_fails_open(self):
+        """The doc's paste blocks are what an operator copies; each must be
+        the spelling this tool accepts."""
+        commands = [
+            line.split('"command": ', 1)[1].rstrip(",")
+            for line in CONVENTION.read_text(encoding="utf-8").splitlines()
+            if '"command": ' in line and ".claude/hooks/" in line
+        ]
+        self.assertGreaterEqual(len(commands), 6)
+        for raw in commands:
+            command = json.loads(raw)
+            script = Path(command.rsplit("/", 1)[1].rstrip('"')).name
+            token = hw.script_reference(command, script)
+            with self.subTest(script):
+                self.assertIsNotNone(token)
+                self.assertTrue(hw.fails_open(command, token), command)
 
 
 PK_WIRING = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/no_private_key_access.py"'
@@ -874,10 +970,7 @@ class ItermDriftTests(RepoFixture):
         self._deploy()
         self._write(
             "settings.local.json",
-            _settings(
-                [WIRING, "python3 .claude/hooks/no_git_grep.py"],
-                deny=hw.REQUIRED_DENY_RULES,
-            ),
+            _settings(OPEN_WIRING, deny=hw.REQUIRED_DENY_RULES),
         )
         out = io.StringIO()
         with redirect_stdout(out):
