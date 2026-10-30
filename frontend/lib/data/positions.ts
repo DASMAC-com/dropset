@@ -6,8 +6,8 @@
 // See docs/architecture.md → "Depositor positions and cost basis": the
 // VaultDepositor account stores the depositor's claim (`shares`) and cost
 // basis (`netDeposits`, `entryRefPrice`, `entryVps`, `openedAt`). It's a
-// soulbound PDA seeded by ("vault_depositor", vault, owner), so there is at
-// most one position per (owner, vault).
+// soulbound PDA seeded by ("vault_depositor", market, vault_idx, signer)
+// (findVaultDepositorPda), so there is at most one position per (owner, vault).
 export type VaultPosition = {
   vaultPubkey: string;
   owner: string;

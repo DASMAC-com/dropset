@@ -272,12 +272,24 @@ describe("contributeClosedReason", () => {
     expect(contributeClosedReason(PAIR, full)).toMatch(
       /cap of 19 times the leader's stake.*5%/,
     );
+    // 1,000 leader shares over the floor leave 20,000 shares (about $25).
+    expect(
+      contributeClosedReason(
+        PAIR,
+        vault({ leaderShares: 101_000n, minLeaderSharePpm: 50_000 }),
+      ),
+    ).toBeNull();
+  });
+
+  it("closes when the room left is under one real deposit", () => {
+    // One leader share over the floor leaves 20 shares of room: about $0.03,
+    // under MIN_CONTRIBUTE_ROOM_USD, though the integer check still fits one.
     expect(
       contributeClosedReason(
         PAIR,
         vault({ leaderShares: 100_001n, minLeaderSharePpm: 50_000 }),
       ),
-    ).toBeNull();
+    ).toMatch(/^Full/);
   });
 
   it("decides the floor in integers, exactly at one share of room", () => {

@@ -37,6 +37,7 @@ import {
   vaultPinMatches,
   vaultRefPrice,
 } from "@/lib/data/vaults";
+import { realizedVault } from "@/lib/eclob/vaultTx";
 import { emit, useAppEvent } from "@/lib/events";
 import { FORMATS } from "@/lib/format/formats";
 import { useChainVaults } from "@/lib/hooks/useChainVaults";
@@ -115,8 +116,10 @@ function PositionValue({
   position: VaultPosition;
 }) {
   const refNow = vaultRefPrice(vault) ?? position.entryRefPrice;
-  const { currentValue } = positionPnl(position, vault, refNow);
-  const at = allTimePnl(position, vault, refNow);
+  // Against the fee-realized share count, so it matches what a withdraw pays.
+  const realized = realizedVault(vault);
+  const { currentValue } = positionPnl(position, realized, refNow);
+  const at = allTimePnl(position, realized, refNow);
   return (
     <span className="flex flex-col items-end font-mono text-xs tabular-nums">
       <span className="text-foreground">
@@ -543,8 +546,11 @@ function VaultsInner() {
     (vault: Vault): number => {
       const p = positionFor(vault);
       return p
-        ? positionPnl(p, vault, vaultRefPrice(vault) ?? p.entryRefPrice)
-            .currentValue
+        ? positionPnl(
+            p,
+            realizedVault(vault),
+            vaultRefPrice(vault) ?? p.entryRefPrice,
+          ).currentValue
         : 0;
     },
     [positionFor],

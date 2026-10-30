@@ -5,11 +5,13 @@ import {
   realizePerfFee,
 } from "@dropset/sdk";
 import { describe, expect, it } from "vitest";
+import type { Vault } from "../data/vaults";
 import { applySlippage } from "./eclobSwap";
 import {
   depositSizingError,
   leaderFloorHolds,
   realizedTotalShares,
+  realizedVault,
   sharesForFraction,
   sizeDeposit,
   sizeWithdraw,
@@ -169,6 +171,35 @@ describe("sizeWithdraw", () => {
 
     const belowHwm = { ...ACCRUED, hwm: VPS * 2n };
     expect(realizedTotalShares(belowHwm)).toBe(ACCRUED.totalShares);
+  });
+});
+
+describe("realizedVault", () => {
+  it("values positions against the share count a withdraw slices", () => {
+    const vault = {
+      totalShares: Number(ACCRUED.totalShares),
+      leaderShares: Number(ACCRUED.leaderShares),
+      vps: 1,
+      chain: { ...ACCRUED, index: 2, seq: 5n },
+    } as Vault;
+    const total = realizedTotalShares(ACCRUED);
+    const minted = Number(total - ACCRUED.totalShares);
+    const realized = realizedVault(vault);
+    expect(realized.totalShares).toBe(Number(total));
+    expect(minted).toBeGreaterThan(0);
+    // The fee shares are the leader's, and each share is worth less.
+    expect(realized.leaderShares).toBe(vault.leaderShares + minted);
+    expect(realized.vps).toBeCloseTo(vault.totalShares / Number(total), 12);
+    // The stored counts stay put: only the float model moves.
+    expect(realized.chain).toBe(vault.chain);
+  });
+
+  it("leaves a vault with no fee to realize as it is", () => {
+    const vault = {
+      totalShares: Number(VAULT.totalShares),
+      chain: { ...VAULT, index: 2, seq: 5n },
+    } as Vault;
+    expect(realizedVault(vault)).toBe(vault);
   });
 });
 

@@ -25,7 +25,11 @@ import {
   getCreateAssociatedTokenIdempotentInstructionAsync,
 } from "@solana-program/token";
 import { stablecoinMint } from "../data/currencies";
-import { depositClosedReason } from "../data/vaults";
+import {
+  depositClosedReason,
+  leaderFloorHolds,
+  type Vault,
+} from "../data/vaults";
 import { type Submitted, SwapError } from "../swap/types";
 import { applySlippage } from "./eclobSwap";
 import { type EclobRoute, resolveEclobRoute } from "./route";
@@ -49,11 +53,14 @@ import { assertWalletCanSign, submitInstructions } from "./submit";
 // less). The share balance shown after a transaction is read back from
 // chain, never taken from the preview.
 
+// The leader-floor check lives beside the table's "Full" state it must agree
+// with; re-exported for the send path's callers.
+export { leaderFloorHolds };
+
 type Rpc = SolanaClientRuntime["rpc"];
 
 const U64_MAX = (1n << 64n) - 1n;
 const BPS_DENOMINATOR = 10_000n;
-const PPM = 1_000_000n;
 
 // The tolerance on the leg a deposit derives and on a withdraw's floors,
 // covering the vault's mix moving (trades against its book, the fee they
@@ -205,20 +212,23 @@ export function sizeWithdraw(
   };
 }
 
-// Whether a deposit of `sharesOut` keeps the leader at or above their
-// min_leader_share floor — the program's own integer check, so it decides
-// exactly where the dialog's float warning only estimates.
-export function leaderFloorHolds(
-  vault: Pick<
-    VaultSummary,
-    "leaderShares" | "totalShares" | "minLeaderSharePpm"
-  >,
-  sharesOut: bigint,
-): boolean {
-  const totalAfter = vault.totalShares + sharesOut;
-  return (
-    vault.leaderShares * PPM >= BigInt(vault.minLeaderSharePpm) * totalAfter
-  );
+// `vault` as the program sees it once `realize_in_place` has minted the
+// leader's performance fee, for every position figure (the table's and the
+// dialog's), so each is sized against the share count a withdraw slices.
+// Above the high-water mark the fee dilutes every position, so the stored
+// count would overstate its value. The minted shares go to the leader, and
+// `vps` scales down with the count, so the yield % nets the fee too; `chain`
+// keeps the stored raw counts the SDK kernels realize from.
+export function realizedVault(vault: Vault): Vault {
+  const stored = vault.chain.totalShares;
+  const realized = realizedTotalShares(vault.chain);
+  if (realized === stored) return vault;
+  return {
+    ...vault,
+    totalShares: Number(realized),
+    leaderShares: Number(vault.chain.leaderShares + realized - stored),
+    vps: (vault.vps * Number(stored)) / Number(realized),
+  };
 }
 
 export type VaultRef = {
