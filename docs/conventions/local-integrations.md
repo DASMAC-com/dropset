@@ -725,10 +725,11 @@ brief:
    from `DS_OP_PRIVATE_KEYS_VAULT` in the session environment, comma
    separated for both — set it in the runtime init, since the committed
    script carries no real name), an `op://` reference to a **key item**
-   (`eBook`, `Admin`, `Lead`, `Quote` and their signing duplicates), or
-   the **1Password agent socket**. The bare titles match only inside an
-   `op://` reference: `Admin` and `Quote` are ordinary words here, and a
-   guard that blocks `grep Quote` gets turned off.
+   (titles read from `DS_OP_PRIVATE_KEY_ITEMS`, comma separated, each
+   matched on the item's leading words so a wallet record's `(SSH)`
+   signing duplicate matches too), or the **1Password agent socket**.
+   The titles match only inside an `op://` reference: their words may be
+   ordinary here, and a guard that blocks `grep Admin` gets turned off.
 1. **`op` at any command position** — after `env`, `sudo`, `xargs`,
    `find -exec`, a control operator, inside a `-c` payload, `eval` or a
    command substitution. An agent never types `op`: the make targets
@@ -786,7 +787,13 @@ takes three things.
 First, set `DS_OP_PRIVATE_KEYS_VAULT` (the vault's name, its id, or
 both comma separated) in the runtime init the session helpers source,
 so every session inherits it. Unset, the hook's vault-name check is
-silently off; the other four groups still hold.
+silently off; the other four groups still hold. Beside it, set
+`DS_OP_PRIVATE_KEY_ITEMS` to the key items' titles, comma separated,
+and update it whenever an item is renamed: a title missing from the
+list is a key the item check cannot see, while an extra or superseded
+title only over-blocks, so keep an old spelling until the rename is
+verified. Unset, the item check is off; a reference into the vault
+itself is still caught by name.
 
 Second, the hook entry. Unlike the other guards, this one's matcher
 names the edit tools **and** `Bash`, so it takes its own entry rather
