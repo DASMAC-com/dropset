@@ -110,8 +110,8 @@ still staged (``approve --parent`` approves every one not given to
 ``--cancel``, reports one an earlier run moved as ``ALREADY``, names any
 other as ``SKIPPED``, and refuses a ``--cancel`` id outside the set); ``gate``
 judges them all. A parent with no sub-issues is refused, never a vacuous
-``CLEAR``, and ``--parent`` is refused on the inbox pool, which approves by
-id.
+``CLEAR``, and ``--parent`` is refused on every pool but ``staged``: the
+inbox and operator pools approve by id.
 
 **The write is the operator's, executed.** ``approve`` runs only on the
 operator's final answer in the session's own tab (ruling 12's carve-out); it
@@ -887,10 +887,13 @@ def run(argv: list[str]) -> int:
     # `is not None` throughout, never truthiness: `--parent ""` must reach
     # `fetch_children`'s refusal, not fall back to an empty `--ids` set.
     parent = args.parent
-    if parent is not None and pool == "inbox":
+    if parent is not None and pool != "staged":
+        # Every other pool approves by id: on the operator pool an implicit
+        # sweep of a parent's children would move an operator item to Done
+        # unnamed.
         raise RatifyError(
-            "--parent names a seat session's staged set — the inbox is reviewed "
-            "by id, one task at a time"
+            f"--parent names a seat session's staged set — the {pool} pool is "
+            "reviewed by id, one task at a time"
         )
     key = board_batch.env_var("LINEAR_API_KEY")
     project = board_batch.env_var("LINEAR_PROJECT_ID")
@@ -928,11 +931,11 @@ def run(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "ask":
-        if not args.ids and not parent and not args.operator:
+        if not args.ids and parent is None and not args.operator:
             raise RatifyError(
                 "nothing to ask: pass --ids or --parent, --operator, or both"
             )
-        if parent:
+        if parent is not None:
             issues = fetch_children(key, project, parent)
             ids = [i["identifier"] for i in issues]
         else:
@@ -986,10 +989,10 @@ def run(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "approve" and args.chore is not None:
-        if args.ids or args.cancel or args.title is not None:
+        if args.ids or args.cancel or args.title is not None or parent is not None:
             raise RatifyError(
                 "--chore is its own write: pass it alone, with no --ids, "
-                "--cancel or --title"
+                "--parent, --cancel or --title"
             )
         chore_ids = parse_ids([args.chore])
         if len(chore_ids) != 1:
@@ -1010,7 +1013,7 @@ def run(argv: list[str]) -> int:
     if args.cmd == "approve":
         cancel_ids = parse_ids(args.cancel) if args.cancel else []
         approve_ids = parse_ids(args.ids) if args.ids else []
-        # `--parent` names a staged set, never the inbox, so this refuses a
+        # `--parent` is refused on every pool but staged, so this refuses a
         # `--title` beside it too.
         if args.title is not None and (pool != "inbox" or len(approve_ids) != 1):
             raise RatifyError(

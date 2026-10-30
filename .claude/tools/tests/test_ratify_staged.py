@@ -402,6 +402,24 @@ class ParentRunTests(_RunBase):
         with self.assertRaisesRegex(RatifyError, "inbox"):
             self._run(self._set(), ["review", "--pool", "inbox", "--parent", "ENG-9"])
 
+    def test_every_pool_but_staged_refuses_parent_before_any_read(self):
+        """On the operator pool an approve-all-children sweep would move an
+        operator item to Done without its id ever being named."""
+        for cmd in ("list", "review", "approve"):
+            with self.subTest(cmd=cmd):
+                fake = self._set()
+                with mock.patch.object(rs, "fetch_children") as fetched:
+                    with self.assertRaisesRegex(RatifyError, "the operator pool"):
+                        self._run(
+                            fake, [cmd, "--pool", "operator", "--parent", "ENG-9"]
+                        )
+                fetched.assert_not_called()
+                self.assertEqual(fake.writes, [])
+
+    def test_chore_refuses_a_parent_beside_it(self):
+        with self.assertRaisesRegex(RatifyError, "--chore is its own write"):
+            self._run(self._set(), ["approve", "--chore", "ENG-5", "--parent", "ENG-9"])
+
 
 def _inbox(number, title=None, priority=0, **kwargs):
     issue = _issue(number, milestone=None, **kwargs)
