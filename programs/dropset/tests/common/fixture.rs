@@ -1117,20 +1117,15 @@ impl Fixture {
     }
 
     /// `set_outside_deposits_approved` pinned to the sector's current
-    /// `Vault::seq` — the shape every honest caller sends. An out-of-range
-    /// sector pins `0`, leaving the program's own bounds check to refuse it.
+    /// `Vault::seq` ([`Self::sector_seq`]) — the shape every honest caller
+    /// sends.
     pub fn set_outside_deposits_approved(
         &mut self,
         admin: &Keypair,
         vault_idx: u32,
         flag: bool,
     ) -> Result<(), String> {
-        let acct = self.svm.get_account(&self.market).expect("market");
-        let off = vault_byte_offset(vault_idx);
-        let expected_seq = acct
-            .data
-            .get(off..off + core::mem::size_of::<Vault>())
-            .map_or(0, |b| bytemuck::pod_read_unaligned::<Vault>(b).seq.get());
+        let expected_seq = self.sector_seq(vault_idx);
         self.set_outside_deposits_approved_with_seq(admin, vault_idx, expected_seq, flag)
     }
 

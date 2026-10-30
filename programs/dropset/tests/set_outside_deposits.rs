@@ -3,9 +3,7 @@
 
 mod common;
 
-use anchor_v2_testing::Signer;
 use common::fixture::Fixture;
-use solana_pubkey::Pubkey;
 
 // ── set_allow_outside_depositors (leader-only) ───────────────────────
 
@@ -135,20 +133,7 @@ fn outside_deposits_approved_refuses_a_reused_sector() {
     // approval arrives carrying the first vault's seq.
     let mut f = Fixture::seeded(1_000_000, 1_000_000);
     let admin = f.authority.insecure_clone();
-    let leader = f.authority.insecure_clone();
-    let read_seq = f.vault(0).seq.get();
-
-    f.close_vault(&leader, 0).expect("tombstone");
-    let shares = f.vault(0).leader_shares.get();
-    f.withdraw_leader(0, shares, 0, 0)
-        .expect("full exit reclaims");
-    f.create_vault(1, f.authority.pubkey(), false, Pubkey::default())
-        .expect("re-create on the freed sector");
-    assert_ne!(
-        f.vault(0).seq.get(),
-        read_seq,
-        "reuse stamps a new identity"
-    );
+    let read_seq = f.close_and_reuse_sector_0();
 
     let err = f
         .set_outside_deposits_approved_with_seq(&admin, 0, read_seq, true)
