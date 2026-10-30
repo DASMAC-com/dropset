@@ -738,6 +738,26 @@ class AddedMigrations(unittest.TestCase):
         self.assertIn("truncated", err.getvalue())
         self.assertIn("verdict: hold", err.getvalue())
 
+    def test_a_usage_error_or_a_crash_is_a_hold_never_exit_one(self):
+        """Exit 1 is the collision code: an unanswered run must never reach it."""
+        for argv, patch in (
+            (["migration_collisions.py"], None),
+            (
+                ["migration_collisions.py", "--others", "x.json"],
+                mock.patch.object(mc, "run", side_effect=KeyError("boom")),
+            ),
+        ):
+            with self.subTest(argv=argv):
+                err = io.StringIO()
+                with mock.patch.object(mc.sys, "argv", argv), redirect_stderr(err):
+                    if patch is None:
+                        code = mc.main()
+                    else:
+                        with patch:
+                            code = mc.main()
+                self.assertEqual(code, 2)
+                self.assertIn("verdict: hold", err.getvalue().splitlines()[-1])
+
     def test_the_cli_exits_zero_when_clear(self):
         self._commit("0002_new.sql", "create table b();")
         others = os.path.join(self.root, "others.json")
@@ -752,6 +772,7 @@ class AddedMigrations(unittest.TestCase):
         parsed = json.loads(out.getvalue())
         self.assertTrue(parsed["clear"])
         self.assertEqual(parsed["status"], "clear")
+        self.assertEqual(parsed["verdict"], "clear")
         self.assertIn("safe to enqueue", err.getvalue())
 
     def _run(self, others_payload, *extra):

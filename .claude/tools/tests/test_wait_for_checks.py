@@ -936,7 +936,12 @@ class QueueWatchTests(unittest.TestCase):
         self.assertGreaterEqual(v["elapsed_seconds"], wfc.NOT_QUEUED_AFTER_SECONDS)
         self.assertEqual(
             v["not_queued"],
-            {"reading": "never_entered", "prior_runs": 0, "newest_prior": None},
+            {
+                "reading": "never_entered",
+                "prior_runs": 0,
+                "newest_prior": None,
+                "prior_failing_runs": [],
+            },
         )
 
     def test_a_not_queued_beside_an_old_cycles_run_says_so(self):
@@ -952,6 +957,10 @@ class QueueWatchTests(unittest.TestCase):
         self.assertEqual(
             v["not_queued"]["newest_prior"],
             {"run_id": "2", "conclusion": "success", "created_at": newer["created_at"]},
+        )
+        # The newest prior branch's failures ride along for classification.
+        self.assertEqual(
+            [r["run_id"] for r in v["not_queued"]["prior_failing_runs"]], ["1"]
         )
 
     def test_only_not_queued_carries_the_reading(self):
@@ -1442,6 +1451,7 @@ class QueueModeCliTests(unittest.TestCase):
         mergeable="MERGEABLE",
         stub=True,
         default_since=(None, None),
+        also=None,
     ):
         seen = {}
         real = wfc.wait_queue
@@ -1455,6 +1465,7 @@ class QueueModeCliTests(unittest.TestCase):
                 "pr": pr,
                 "queue_runs": list(runs),
                 "failing_runs": [r for r in runs if r.get("conclusion") == "failure"],
+                **json.loads(json.dumps(also or {})),
             }
 
         def settle(pr, repo, retries, delay):
@@ -1717,6 +1728,31 @@ class QueueModeCliTests(unittest.TestCase):
             seen["verdict"]["dequeue"]["classification"]["cause"], "transient"
         )
 
+    def test_a_not_queued_beside_a_failed_earlier_cycle_is_classified(self):
+        """A firing that began after a dequeue reads `not_queued`: the earlier
+        cycle's failures are classified, so the re-enqueue is never blind."""
+        failed = [{"run_id": "9", "conclusion": "failure"}]
+        _, seen = self._queue_mode(
+            "not_queued", also={"not_queued": {"prior_failing_runs": failed}}
+        )
+        self.assertEqual(seen["classified"], [failed])
+        self.assertEqual(
+            seen["verdict"]["not_queued"]["classification"]["cause"], "transient"
+        )
+        _, seen = self._queue_mode(
+            "not_queued", also={"not_queued": {"prior_failing_runs": []}}
+        )
+        self.assertNotIn("classified", seen)
+        self.assertNotIn("classification", seen["verdict"]["not_queued"])
+
+    def test_a_merge_with_verdict_out_writes_both_and_names_the_queue_file(self):
+        out = Path(tempfile.mkdtemp()) / "ci.json"
+        self.addCleanup(lambda: out.unlink(missing_ok=True))
+        _, seen = self._queue_mode("merged", ["--verdict-out", str(out)])
+        self.assertEqual(json.loads(out.read_text()), seen["verdict"])
+        self.assertNotIn(str(out), seen["stdout"])
+        self.assertIn("verdict.json", seen["stdout"])
+
     def test_a_no_run_dequeue_is_unknown_with_the_timelines_reason(self):
         _, seen = self._queue_mode("dequeued")
         self.assertNotIn("classified", seen)
@@ -1752,18 +1788,21 @@ class DefaultSinceTests(unittest.TestCase):
         with mock.patch.object(wfc, "_queue_graphql", gql):
             return wfc.default_since(285, REPO)
 
-    def test_auto_merge_time_first_then_the_queue_entry(self):
+    def test_the_newer_of_the_auto_merge_and_entry_times(self):
+        """An auto-merge request that survived an earlier dequeue is older
+        than this cycle's entry; anchoring on it would admit the old removal."""
         later = "2026-10-13T12:05:00Z"
-        self.assertEqual(
-            self._since(
-                {"auto": {"enabledAt": ENQUEUED}, "entry": {"enqueuedAt": later}}
-            ),
-            (ENQUEUED, "auto_merge"),
-        )
-        self.assertEqual(
-            self._since({"auto": None, "entry": {"enqueuedAt": later}}),
-            (later, "queue_entry"),
-        )
+        for node, expected in (
+            ({"auto": {"enabledAt": ENQUEUED}, "entry": {"enqueuedAt": later}},
+             (later, "queue_entry")),
+            ({"auto": {"enabledAt": later}, "entry": {"enqueuedAt": ENQUEUED}},
+             (later, "auto_merge")),
+            ({"auto": None, "entry": {"enqueuedAt": later}}, (later, "queue_entry")),
+            ({"auto": {"enabledAt": ENQUEUED}, "entry": None},
+             (ENQUEUED, "auto_merge")),
+        ):  # fmt: skip
+            with self.subTest(node=node):
+                self.assertEqual(self._since(node), expected)
 
     def test_neither_or_a_failed_read_leaves_the_watch_its_own_start(self):
         self.assertEqual(self._since({"auto": None, "entry": None}), (None, None))
@@ -1841,12 +1880,30 @@ class ClassifyDequeueTests(unittest.TestCase):
         c = self._classify(
             [
                 jobs_payload(
-                    failed_job("Rust", "Run pnpm install --frozen-lockfile"),
+                    failed_job("Rust", "Run actions/setup-node@v6"),
                     failed_job("SDK", None, conclusion="cancelled"),
                 )
             ]
         )
         self.assertEqual(c["cause"], "transient")
+        self.assertEqual(len(c["evidence"]), 2)
+
+    def test_a_locked_install_is_integration_not_setup_noise(self):
+        """The base moved a manifest or lockfile: re-enqueueing repeats it."""
+        for step in ("Run pnpm install --frozen-lockfile", "Run cargo fetch --locked"):
+            with self.subTest(step=step):
+                c = self._classify([jobs_payload(failed_job("SDK", step))])
+                self.assertEqual(c["cause"], "integration")
+        c = self._classify([jobs_payload(failed_job("SDK", "Run pnpm install"))])
+        self.assertEqual(c["cause"], "transient")
+
+    def test_an_unread_run_holds_a_transient_sibling_at_unknown(self):
+        """The unread run may be the integration failure: never re-enqueue
+        on the half that could be read."""
+        c = self._classify(
+            [jobs_payload(failed_job("SDK", "Run actions/cache@v5")), "empty stdout"]
+        )
+        self.assertEqual(c["cause"], "unknown")
         self.assertEqual(len(c["evidence"]), 2)
 
     def test_a_startup_failure_needs_no_read(self):
@@ -1877,10 +1934,17 @@ class EnqueueTests(unittest.TestCase):
         local=HEAD,
         fingerprint="fp1",
         reviewed="fp1",
+        pull=None,
     ):
         seen = {"commands": [], "sleeps": 0}
-        pull = {"head": {"sha": self.HEAD}, "base": {"ref": "main"}}
+        pull = pull or {"head": {"sha": self.HEAD}, "base": {"ref": "main"}}
         exits = iter(merge_exits)
+
+        def fingerprint_of(base):
+            if isinstance(fingerprint, Exception):
+                raise fingerprint
+            return fingerprint
+
         replies = iter(probes)
 
         def gh(args):
@@ -1899,7 +1963,7 @@ class EnqueueTests(unittest.TestCase):
         with mock.patch.object(wfc, "_gh_json", lambda args, what: pull), \
                 mock.patch.object(wfc, "_git", lambda args: (0, local.encode(), "")), \
                 mock.patch.object(wfc.review_diff, "diff_fingerprint",
-                                  lambda base: fingerprint), \
+                                  fingerprint_of), \
                 mock.patch.object(wfc, "merge_queue_active",
                                   lambda repo, base: queue_rule), \
                 mock.patch.object(wfc, "_gh", gh):  # fmt: skip
@@ -1948,6 +2012,40 @@ class EnqueueTests(unittest.TestCase):
         self.assertEqual(v["conclusion"], "not_queued")
         v, _ = self._enqueue([{}], merge_exits=(1, 1))
         self.assertEqual(v["conclusion"], "enqueue_failed")
+
+    def test_an_attempt_no_probe_answered_is_a_probe_failure_not_absence(self):
+        down = wfc.WaitForChecksError("graphql down")
+        v, _ = self._enqueue([down])
+        self.assertEqual(v["conclusion"], "probe_failed")
+        # One good read anywhere is an answer.
+        v, _ = self._enqueue([down, down, down, {}, {}])
+        self.assertEqual(v["conclusion"], "not_queued")
+
+    def test_an_unreadable_pull_or_fingerprint_raises_before_any_write(self):
+        for kwargs in (
+            {"pull": {"head": {}, "base": {"ref": "main"}}},
+            {"fingerprint": wfc.review_diff.ReviewDiffError("git diff failed")},
+        ):
+            with self.subTest(kwargs=list(kwargs)):
+                with self.assertRaises(wfc.WaitForChecksError):
+                    self._enqueue([{"entry": QUEUED}], **kwargs)
+
+    def test_the_queue_rule_read(self):
+        for reply, expected in (
+            ([{"type": "pull_request"}, {"type": "merge_queue"}], True),
+            ([{"type": "pull_request"}, "junk"], False),
+            ({"message": "Not Found"}, None),
+            (wfc.WaitForChecksError("403"), None),
+        ):  # fmt: skip
+            with self.subTest(reply=reply):
+
+                def read(args, what, reply=reply):
+                    if isinstance(reply, Exception):
+                        raise reply
+                    return reply
+
+                with mock.patch.object(wfc, "_gh_json", read):
+                    self.assertIs(wfc.merge_queue_active(REPO, "main"), expected)
 
     def test_a_merge_the_probe_sees_is_merged(self):
         v, _ = self._enqueue([{"gql_merged": True}])

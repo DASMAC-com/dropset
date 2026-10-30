@@ -1433,9 +1433,9 @@ migrations or generation inputs, and whether it spans crates.
    ```
 
    **Record the reviewed fingerprint here**, once every disposition of
-   the catalogue is committed: `fingerprint` from
-   `review_diff.py --base <base> --gate-only` (a patch id a rebase or
-   re-sign keeps). Step 20's enqueue refuses any other.
+   the catalogue is committed: `fingerprint` and `head` from
+   `review_diff.py --base <base> --gate-only` (a hash of the change that
+   a rebase or re-sign keeps). Step 20's enqueue refuses any other.
 
    Ready lets the human enable "Merge when ready" while CI finishes,
    but it does **not** end the run: success is reported only once real
@@ -1703,13 +1703,15 @@ migrations or generation inputs, and whether it spans crates.
 
      It refuses before any write when the local HEAD is not the PR's
      head, or the diff moved since review (`refused`, `error` naming
-     which): run a **scoped re-review of the delta**, then pass its
+     which): run a **scoped re-review of the delta**
+     (`git range-diff <base> <step-17 head> HEAD`), then pass its
      fingerprint. Otherwise it enqueues the way the base's rules want
      and probes the queue entry, since `--auto` can exit 0 and never
      queue (`history.md` → "Exit 0, never queued"). **`queued`,
      `merged` and `auto_merge_pending` proceed to step 22's watch;
-     `not_queued` re-runs it once; `enqueue_failed` reports `attempts`
-     and holds.**
+     `not_queued` and `probe_failed` re-run it once; `enqueue_failed`
+     reports `attempts` and holds, as does exit 2 (`error:` on stderr,
+     no verdict).**
 
    - **On decline**, leave the PR ready and the issue In Review, and
      note they can merge it (or enable "Merge when ready") themselves.
@@ -1761,8 +1763,10 @@ migrations or generation inputs, and whether it spans crates.
      → the issue **stays In Review**; run the post-merge tail below.
    - **`closed`** → abandoned, not landed; skip the tail. The close is
      `/wrap`'s.
-   - **`not_queued`** → re-run step 20's `--enqueue`, then the watch;
-     `not_queued.reading` says whether any earlier cycle ran.
+   - **`not_queued`** → when `not_queued.classification` is present an
+     earlier cycle failed and this watch began too late to see it: branch
+     on its `cause` as the `dequeued` bullet does. Otherwise re-run step 20's
+     `--enqueue`, then the watch — once; a second `not_queued` holds.
    - **`conflicting`** (or `dequeue_reason: merge_conflict`) → step 2's
      rebase straight from `dequeue.base_gained`, then re-run; on
      `dequeue.error`, read by hand only what is `null`.

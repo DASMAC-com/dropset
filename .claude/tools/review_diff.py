@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word textconv
 """Run ``review-pr`` step 5's diff-and-freshness preamble and print one verdict.
 
 The preamble was six fixed commands in a fixed order on **every** review —
@@ -135,6 +136,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import posixpath
@@ -994,20 +996,53 @@ def write_diff(base_ref: str, out_path: Path, only: list[str] | None = None) -> 
     return count_lines(out_path)
 
 
+# The fingerprint's diff form, pinned against user config: no context (so a
+# base edit beside a hunk drops out), renames as delete-plus-add (so a rename
+# moves it), binary payloads (so a binary edit does), one algorithm and fixed
+# prefixes (so `diff.*` settings cannot).
+FINGERPRINT_DIFF_ARGS = (
+    "--no-renames",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    "--no-relative",
+    "--binary",
+    "-U0",
+    "--diff-algorithm=myers",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+)
+
+# A hunk header's line numbers and function-context tail both move when the
+# base edits elsewhere in the file; the bare marker keeps the hunk boundary.
+_HUNK_HEADER_RE = re.compile(rb"^@@ [^@]* @@.*$")
+
+
 def diff_fingerprint(base_ref: str) -> str | None:
-    """The branch's whole review diff as one ``git patch-id --stable``.
+    """A sha256 of the branch's whole review diff, normalized.
 
     What the enqueue compares against the fingerprint the findings catalogue
-    was reviewed against (``wait_for_checks.py --enqueue``). A patch id hashes
-    the change itself — line numbers, hunk offsets and file order drop out —
-    so a rebase or a re-sign that moves no content keeps it, while any edit
-    to the branch's own change moves it. Always the full branch: ``--only``
+    was reviewed against (``wait_for_checks.py --enqueue``). The diff is
+    taken in :data:`FINGERPRINT_DIFF_ARGS`'s form with each ``index`` line
+    dropped (its blob ids move whenever the base edits the same file) and each
+    hunk header reduced to ``@@``. So a re-sign keeps it, and so does a rebase
+    whose base changed no line this branch changed; any edit to the branch's
+    own change moves it — whitespace, a rename, a mode change and a binary
+    edit included. Excluded generated families are not in it: step 9
+    regenerates them from inputs that are. Always the full branch: ``--only``
     narrows what a lens reads, never what was reviewed. ``None`` for an empty
     diff.
     """
     pathspec = [f":(top,exclude){p}" for p in DIFF_EXCLUDES]
     diff = subprocess.run(
-        ["git", "diff", f"{base_ref}...HEAD", "--", *pathspec],
+        [
+            "git",
+            "diff",
+            *FINGERPRINT_DIFF_ARGS,
+            f"{base_ref}...HEAD",
+            "--",
+            *pathspec,
+        ],
         capture_output=True,
         check=False,
     )
@@ -1016,17 +1051,12 @@ def diff_fingerprint(base_ref: str) -> str | None:
         raise ReviewDiffError(f"git diff failed: {detail or diff.returncode}")
     if not diff.stdout.strip():
         return None
-    patch_id = subprocess.run(
-        ["git", "patch-id", "--stable"],
-        input=diff.stdout,
-        capture_output=True,
-        check=False,
-    )
-    fields = patch_id.stdout.decode(errors="replace").split()
-    if patch_id.returncode != 0 or not fields:
-        detail = patch_id.stderr.decode(errors="replace").strip()
-        raise ReviewDiffError(f"git patch-id failed: {detail or 'no output'}")
-    return fields[0]
+    digest = hashlib.sha256()
+    for line in diff.stdout.split(b"\n"):
+        if line.startswith(b"index "):
+            continue
+        digest.update(_HUNK_HEADER_RE.sub(b"@@", line) + b"\n")
+    return digest.hexdigest()
 
 
 def count_lines(path: Path) -> int:
@@ -1980,6 +2010,7 @@ def gate(
         fingerprint = diff_fingerprint(base_ref)
     except ReviewDiffError:
         fingerprint = None
+    head = _git(["rev-parse", "HEAD"]).strip()
 
     ignored_hits = ignored_test_files(gate_paths)
     tools_hits = [p for p in gate_paths if matches_any(p, TOOLS_TESTS_INPUTS)]
@@ -2020,6 +2051,9 @@ def gate(
         # The whole branch's patch id, which `--enqueue` compares (see
         # `diff_fingerprint`); null on an empty diff or a failed read.
         "fingerprint": fingerprint,
+        # The head the fingerprint was taken at: a re-review after a refused
+        # enqueue reads `git range-diff <base> <head> HEAD` from it.
+        "head": head,
         "only": only or [],
         "files": files,
         # The tier decision's crate inputs. `code_crates` is the one to read:
@@ -2073,8 +2107,10 @@ GATE_ONLY_FIELDS = (
     "base_ahead",
     "base_drift",
     "diff_empty",
-    # The gate records it for the enqueue's stale-review check: one hash.
+    # The gate records both for the enqueue's stale-review check: one hash
+    # and the head it was taken at.
     "fingerprint",
+    "head",
     "ready",
     "blockers",
     "runs_rust_suites",

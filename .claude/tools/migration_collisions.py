@@ -49,11 +49,12 @@ the status still cannot enqueue through one.
 
 **One verdict line on stderr, so a gate need not decode exit codes.** It reads
 ``migration-collisions | verdict: <clear|collision|hold> | …``: ``clear``
-proceeds, ``collision`` and ``hold`` stop, the rest of the line says why (and
-the JSON carries the same ``verdict``). Underneath, three exit codes still
-match: ``1`` is a collision, ``0`` any other ``status``, and ``2`` means the
-tool **could not answer** — bad input, a `gh` failure, a truncated listing, a
-pathspec matching nothing — which is the ``hold``. Neither naive reading of the
+proceeds, ``collision`` and ``hold`` stop, the rest of the line says why (an
+answered run's JSON carries the same ``verdict``; a ``hold`` prints no JSON).
+Underneath, three exit codes still match: ``1`` is a collision, ``0`` any other
+``status``, and ``2`` means the tool **could not answer** — bad input or
+arguments, a `gh` failure, a truncated listing, a pathspec matching nothing,
+any unexpected error — which is the ``hold``. Neither naive reading of the
 status was safe: gating on *non-zero* reported an operational failure as a
 collision, and gating on *== 1* enqueued through an unanswered question.
 
@@ -625,7 +626,8 @@ def _detail(result: dict) -> str:
         # invisible in exactly the place the number is taken from.
         return (
             "this branch adds no migration, so nothing "
-            f"was compared — NOT a clear verdict on any number | next free "
+            f"was compared — clear only because nothing can collide, NOT a "
+            f"clear verdict on any number | next free "
             f"number: {result['next_free_number']:04d}{_self_note(result)} | if this "
             f"task adds one, take that number and re-run once the file exists"
         )
@@ -755,6 +757,15 @@ def main() -> int:
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or "").strip() or f"exit {exc.returncode}"
         print(hold_line(f"git failed: {detail}"), file=sys.stderr)
+        return 2
+    except SystemExit as exc:
+        # `--help` exits 0 and stays one; a usage error is unanswered.
+        if exc.code in (0, None):
+            raise
+        print(hold_line("bad arguments (see usage above)"), file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001 — never exit 1, the collision code
+        print(hold_line(f"{type(exc).__name__}: {exc}"), file=sys.stderr)
         return 2
 
 

@@ -92,7 +92,8 @@ Usage::
       --reviewed-fingerprint 3f1c…
 
 Options: exactly one of ``--pr`` / ``--run`` / ``--queue`` / ``--mergeable`` /
-``--enqueue`` (which takes ``--reviewed-fingerprint`` and nothing else),
+``--enqueue`` (which requires ``--reviewed-fingerprint`` and refuses the
+watch options),
 ``--repo`` (default ``DASMAC-com/dropset``), ``--verdict-out <path>`` (also
 write the verdict there), ``--snapshot <path>`` with ``--base`` (checks mode:
 see :func:`snapshot`),
@@ -192,7 +193,11 @@ its own. ``not_queued`` carries the run-list disambiguation
 (:func:`not_queued_reading`)::
 
       "not_queued": {"reading": "never_entered",  // | prior_cycle_only
-                     "prior_runs": 0, "newest_prior": null}
+                     "prior_runs": 0, "newest_prior": null,
+                     "prior_failing_runs": [],
+                     // only when an earlier cycle failed: classified as a
+                     // dequeue's would be, so a re-enqueue is never blind
+                     "classification": {"cause": "integration", …}}
 
 ``notifications`` is filled on **every exit but** ``probe_failed``: the watch
 marks the PR's GitHub notification threads done itself through
@@ -227,9 +232,11 @@ or, under ``--enqueue``::
       "pr": 285,
       "mode": "enqueue",
       "conclusion": "queued",    // queued | merged | auto_merge_pending |
-                                 // not_queued | enqueue_failed | refused
+                                 // not_queued | enqueue_failed |
+                                 // probe_failed | refused
       "reviewed_fingerprint": "3f1c…", "fingerprint": "3f1c…",
       "merge_queue": true,       // the base's rule; null when unreadable
+                                 // or never read (refused)
       "attempts": [{"command": "gh pr merge 285 --repo …", "exit": 0,
                     "stderr": null}],
       "entry": {"state": "QUEUED", "enqueuedAt": "…", "position": 3},
@@ -237,7 +244,8 @@ or, under ``--enqueue``::
       "error": null
     }
 
-Exit 0 on ``queued`` / ``merged`` / ``auto_merge_pending``, else 1.
+Exit 0 on ``queued`` / ``merged`` / ``auto_merge_pending``, else 1 — and 2,
+with no verdict, when the pull read or the fingerprint cannot be had.
 
 A dequeue with **no** queue run also settles the PR's ``mergeable`` (reported
 beside ``merge_state_status`` and ``mergeable_error``); a ``CONFLICTING`` / ``DIRTY`` read turns the
@@ -1236,8 +1244,10 @@ def not_queued_reading(every_run: list[dict]) -> dict:
     ``never_entered``: this PR has no queue run at all, so the enqueue did not
     take. ``prior_cycle_only``: its runs all predate this cycle's window, so
     they are an earlier enqueue's, never this one's — ``newest_prior`` says how
-    that cycle ended. Either way nothing queued this time, and the remedy is
-    the same: re-run ``--enqueue``.
+    that cycle ended. Nothing queued this time, but an earlier cycle that
+    FAILED may be the dequeue this call started too late to see:
+    ``prior_failing_runs`` (its newest queue branch's failures) is what the
+    queue watch classifies before any re-enqueue.
     """
     newest = max(
         every_run, key=lambda r: _parse_time(r.get("created_at")) or 0.0, default=None
@@ -1248,6 +1258,7 @@ def not_queued_reading(every_run: list[dict]) -> dict:
         "newest_prior": None
         if newest is None
         else {k: newest.get(k) for k in ("run_id", "conclusion", "created_at")},
+        "prior_failing_runs": _failing_on_latest(every_run),
     }
 
 
@@ -2175,6 +2186,9 @@ _INFRA_STEP_RE = re.compile(
     r"(?i)\b(set up|setup|checkout|cache|install|toolchain|platform-tools"
     r"|download|restore)\b"
 )
+# A locked install fails deterministically when the base moved a manifest or
+# lockfile, so it is integration, never re-enqueued as setup noise.
+_LOCKED_INSTALL_RE = re.compile(r"--(frozen-lockfile|locked|frozen)\b")
 # A failed step that builds the change: compile errors are integration.
 _BUILD_STEP_RE = re.compile(r"\b(make|cargo|pnpm|wasm-pack|anchor|node)\b")
 # A run that never started a job is infrastructure by definition.
@@ -2184,6 +2198,8 @@ TRANSIENT_RUN_CONCLUSIONS = frozenset({"startup_failure"})
 def step_cause(name: str) -> str:
     """``integration`` / ``transient`` / ``unknown`` for one failed step."""
     if classify_step(name) in ("lint_hook", "test_runner"):
+        return "integration"
+    if _LOCKED_INSTALL_RE.search(name or ""):
         return "integration"
     if _INFRA_STEP_RE.search(name or ""):
         return "transient"
@@ -2203,7 +2219,8 @@ def classify_dequeue(failing_runs: list[dict], repo: str) -> dict:
     when no job has one. Keyed on **job** conclusions, never the run's: a run
     can read ``in_progress`` with a job already failed. ``next_command`` reads
     the first failing run's log. The decision stays with the session; a failed
-    read is ``unknown`` evidence, never dropped.
+    read is ``unknown`` evidence in the decision, never dropped, so it holds
+    a transient sibling at ``unknown``.
     """
     stepped: list[dict] = []
     no_step: list[dict] = []
@@ -2220,8 +2237,10 @@ def classify_dequeue(failing_runs: list[dict], repo: str) -> dict:
         if error is None and not isinstance(jobs, list):
             error = "unexpected jobs payload shape"
         if error is not None:
-            no_step.append({"run_id": run_id, "job": None, "step": None,
-                             "cause": "unknown", "error": error})  # fmt: skip
+            # Into the deciding set: an unread run may be the integration
+            # failure, so it keeps a transient sibling from reading transient.
+            stepped.append({"run_id": run_id, "job": None, "step": None,
+                            "cause": "unknown", "error": error})  # fmt: skip
             continue
         for job in jobs:
             if not isinstance(job, dict):
@@ -2301,23 +2320,28 @@ def _settle_dequeue(verdict: dict, pr: int, repo: str) -> None:
 def default_since(pr: int, repo: str) -> tuple[str | None, str | None]:
     """The watch's ``since`` when none was passed, and where it came from.
 
-    The PR's auto-merge time (``auto_merge``), else its queue entry's
-    (``queue_entry``): each is the newest enqueue, so a cron firing carries no
-    state of its own and an older cycle's dequeue still predates the anchor.
-    ``(None, None)`` when neither exists or the read fails — the watch then
-    falls back to its own start, as before.
+    The newer of the PR's auto-merge time (``auto_merge``) and its queue
+    entry's (``queue_entry``), so a cron firing carries no state of its own.
+    The newer, never a fixed preference: an auto-merge request that survived
+    an earlier cycle's dequeue predates that dequeue, and anchoring on it
+    would read the old removal as this cycle's. ``(None, None)`` when neither
+    exists or the read fails — the watch then falls back to its own start.
     """
     try:
         node = _queue_graphql(pr, repo)
     except WaitForChecksError:
         return None, None
-    auto = (node.get("auto") or {}).get("enabledAt")
-    if _parse_time(auto) is not None:
-        return auto, "auto_merge"
-    entry = (node.get("entry") or {}).get("enqueuedAt")
-    if _parse_time(entry) is not None:
-        return entry, "queue_entry"
-    return None, None
+    candidates = [
+        (at, source)
+        for at, source in (
+            ((node.get("auto") or {}).get("enabledAt"), "auto_merge"),
+            ((node.get("entry") or {}).get("enqueuedAt"), "queue_entry"),
+        )
+        if _parse_time(at) is not None
+    ]
+    if not candidates:
+        return None, None
+    return max(candidates, key=lambda c: _parse_time(c[0]))
 
 
 def watch_queue(
@@ -2350,6 +2374,14 @@ def watch_queue(
             verdict["todays_merge_count"] = todays_merge_count(pr, repo)
         elif verdict["conclusion"] == "dequeued":
             _settle_dequeue(verdict, pr, repo)
+        elif verdict["conclusion"] == "not_queued":
+            # A firing that began after a dequeue sees only that cycle's
+            # failed runs: classify them, so a re-enqueue is never blind.
+            reading = verdict.get("not_queued") or {}
+            if reading.get("prior_failing_runs"):
+                reading["classification"] = classify_dequeue(
+                    reading["prior_failing_runs"], repo
+                )
     except Stopped as exc:
         # A stop after the watch concluded keeps that conclusion; only the
         # cause read it interrupted is missing.
@@ -2432,9 +2464,9 @@ def _probe_entry(pr, repo, queue_rule, probe, sleep) -> tuple[str | None, dict]:
     rule) concludes ``auto_merge_pending`` at once too: it waits on checks
     with no queue to enter. Under a queue rule, auto-merge with no entry is
     the exit-0-never-queued shape, so it keeps probing and concludes
-    nothing. ``node`` is the last good read.
+    nothing. ``node`` is the last good read, ``None`` when every read failed.
     """
-    node: dict = {}
+    node: dict | None = None
     for attempt in range(ENQUEUE_PROBES):
         if attempt:
             sleep(ENQUEUE_PROBE_DELAY)
@@ -2478,8 +2510,15 @@ def enqueue(
     ``conclusion``: ``queued`` (``entry`` carries its state and position),
     ``merged``, ``auto_merge_pending`` (auto-merge on, no entry yet — the
     queue watch follows it), ``not_queued`` (nothing took), ``enqueue_failed``
-    (every attempt exited non-zero), ``refused``. ``enqueued_at`` is the
-    entry's (or auto-merge's) time, which the queue watch defaults to.
+    (every attempt exited non-zero), ``probe_failed`` (an attempt took but no
+    probe answered), ``refused``. ``enqueued_at`` is the entry's (or
+    auto-merge's) time, which the queue watch defaults to.
+
+    Under a queue rule ``auto_merge_pending`` cannot tell checks still
+    running (the re-sign's re-run, legitimate) from auto-merge that will
+    never queue; it hands both to the watch, whose bounded wait on that
+    shape is a separate change. A pull read without a head or base, or a
+    fingerprint that cannot be computed, raises (exit 2, no verdict).
     """
     probe = probe or _queue_graphql
     verdict: dict = {
@@ -2528,6 +2567,7 @@ def enqueue(
     plain = ["pr", "merge", str(pr), "--repo", repo]
     commands = [plain, [*plain, "--auto"]] if queue_rule else [[*plain, "--auto"]]
     node: dict = {}
+    read_any = False
     conclusion = None
     for command in commands:
         rc, _, err = _gh(command)
@@ -2537,14 +2577,19 @@ def enqueue(
         )  # fmt: skip
         if rc != 0:
             continue
-        conclusion, node = _probe_entry(pr, repo, queue_rule, probe, sleep)
+        conclusion, read = _probe_entry(pr, repo, queue_rule, probe, sleep)
+        if read is not None:
+            node, read_any = read, True
         if conclusion is not None:
             break
     if conclusion is None:
-        if node.get("auto"):
-            conclusion = "auto_merge_pending"
-        elif all(a["exit"] != 0 for a in verdict["attempts"]):
+        if all(a["exit"] != 0 for a in verdict["attempts"]):
             conclusion = "enqueue_failed"
+        elif not read_any:
+            # An attempt took, but no probe ever answered: unknown, not absent.
+            conclusion = "probe_failed"
+        elif node.get("auto"):
+            conclusion = "auto_merge_pending"
         else:
             conclusion = "not_queued"
     entry = node.get("entry") or None
@@ -2696,14 +2741,18 @@ def run(argv: list[str]) -> int:
                 snapshot_path=args.snapshot,
                 base=args.base or "main",
             )
-    outputs = [args.verdict_out] if args.verdict_out is not None else []
-    if args.queue_pr is not None:
-        outputs.append(queue_verdict_path_for(args.queue_pr))
+    # The queue file first: it is the one the merged line names, so a bad
+    # `--verdict-out` path cannot leave that name pointing at nothing.
+    outputs = (
+        [queue_verdict_path_for(args.queue_pr)] if args.queue_pr is not None else []
+    )
+    if args.verdict_out is not None:
+        outputs.append(args.verdict_out)
     # Stdout first: a verdict can take an hour to earn, and a bad
     # `--verdict-out` path must not throw it away. A merge is one line: the
     # session's next act is the post-merge tail, which needs nothing more.
     if args.queue_pr is not None and verdict.get("conclusion") == "merged":
-        print(f"{merged_line(verdict)} | verdict: {outputs[-1]}")
+        print(f"{merged_line(verdict)} | verdict: {outputs[0]}")
     else:
         json.dump(verdict, sys.stdout, indent=2)
         sys.stdout.write("\n")
