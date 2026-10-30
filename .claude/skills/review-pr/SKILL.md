@@ -1648,11 +1648,21 @@ migrations or generation inputs, and whether it spans crates.
    **A green PR held behind another PR is parked, not watched.** On a
    hold (the operator, planning, or the re-check above), leave the
    issue In Progress with the PR pushed and green, append a resume
-   brief (`linear_issue.py append`: PR number, the PR waited on, gates
-   still owed) and end the session — a resident tail replays the whole
-   review's prefix per rebase (`history.md` → "Held-PR tails"). A
-   fresh session resumes from the brief alone at step 2, re-running no
-   lens unless the rebase overlaps.
+   brief (`linear_issue.py append`, headed `**Resume brief**`: PR
+   number, the PR waited on, gates still owed) and end the session — a
+   resident tail replays the whole review's prefix per rebase
+   (`history.md` → "Held-PR tails"). The ending is one call, the
+   session's last:
+
+   ```sh
+   python3 .claude/tools/close_session.py --park --session-id <uuid>
+   ```
+
+   It writes no state, keeps the worktree and branch, appends the cost
+   line, and refuses — naming what is missing — on a dirty or unpushed
+   tree, no open PR, or no brief naming this PR. A fresh session
+   resumes from the brief alone at step 2, re-running no lens unless
+   the rebase overlaps.
 
    **Then the final signing pass — nothing is enqueued unsigned.**
    Branch protection requires every commit on main signed, so a branch

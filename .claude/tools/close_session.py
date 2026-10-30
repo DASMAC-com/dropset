@@ -19,15 +19,28 @@ Usage (run from inside the worktree being closed):
     python3 .claude/tools/close_session.py --state 'In Review' --keep-worktree
     python3 .claude/tools/close_session.py --state Done --leftovers-file L.json \
         --dry-run
+    python3 .claude/tools/close_session.py --park --session-id <uuid>
 
-``--state`` is required and never guessed: an implementation session closes to
-Done, an ``architect`` / ``explore`` session hands off at In Review. The issue
+``--state`` is required (unless ``--park``) and never guessed: an
+implementation session closes to Done, an ``architect`` / ``explore`` session hands off at In Review. The issue
 is read from an ``eng-###`` or ``worktree-###`` branch; any other branch (a
 pre-rename ``worktree-ceo-…``) must pass ``--issue``. ``--keep-worktree`` is the report-only ending — the same gates
 and state write, with the removal left to the operator. It is **required** for
 any state other than Done / Canceled: removing a worktree whose issue still
 reads as live is the stranding this tool exists to prevent, and ``upkeep``
 would never collect it.
+
+``--park`` ends a session whose reviewed PR is **held** — behind another PR or
+a CI break (``review-pr``'s park, ``plan``'s hold message) — so its fleet slot
+frees while the PR stays open. It takes no ``--state`` and writes none (the
+issue keeps the state it has), keeps the worktree and branch for the resume,
+dismisses no notification threads (the PR is live), and appends the cost line
+when ``--session-id`` is given. Its gates replace the open-PR one: the tree is
+clean and pushed (the same check as below), the branch has an open PR, and the
+issue body carries a resume brief — a line naming ``resume brief`` with that
+PR's ``#N`` at or after it, so a brief left by an earlier park of another PR
+does not count. Each refuses with the missing precondition named. The open-PR
+refusal is unchanged for every other mode, Done and Canceled included.
 
 Every gate runs **before** any write, and each fails closed:
 
@@ -75,7 +88,7 @@ would be. A re-run after an exit 2 appends a second line; remove the tree by
 hand instead.
 
 Prints one JSON object ``{issue, state, worktree, branch, pr, dry_run,
-keep_worktree, refused, leftovers, state_written, notifications, removed,
+keep_worktree, park, refused, leftovers, state_written, notifications, removed,
 cost_line, notes}`` (``leftovers`` the ledger's item count, ``None`` when none
 was read; ``notifications`` the dismissal's one-line summary, ``None`` when no
 PR or no write). Exit 0 on a complete
@@ -119,6 +132,7 @@ ISSUE_BRANCH_RE = re.compile(
 )
 ISSUE_RE = re.compile(r"^ENG-\d+$")
 LOCK_PID_RE = re.compile(r"\(pid (\d+)\b")
+BRIEF_RE = re.compile(r"resume brief", re.IGNORECASE)
 NO_UPSTREAM_PREFIX = "no upstream"
 MAX_ANCESTRY = 64
 # Matched by name, lowercased: an unrecognized name fails closed into
@@ -288,6 +302,28 @@ def pr_verdict(prs: list[dict]) -> dict | None:
     if open_prs:
         raise Refusal(f"PR #{open_prs[0].get('number')} is still open")
     return prs[0] if prs else None
+
+
+def park_pr(prs: list[dict]) -> dict:
+    """The open PR a park holds; raises when there is none to hold."""
+    open_prs = [p for p in prs if p.get("state") == "OPEN"]
+    if not open_prs:
+        raise Refusal("--park needs an open PR on the branch; none is open")
+    return open_prs[0]
+
+
+def brief_verdict(body: str, number: int) -> None:
+    """Raises unless the last ``resume brief`` mention in ``body`` is followed
+    by ``#<number>`` — the brief names the PR it parks."""
+    marks = list(BRIEF_RE.finditer(body))
+    if not marks:
+        raise Refusal(
+            "--park needs a resume brief on the issue (linear_issue.py append "
+            "a 'Resume brief' naming the PR, the PR waited on, gates owed)"
+        )
+    tail = body[marks[-1].start() :]
+    if not re.search(rf"#{number}\b", tail):
+        raise Refusal(f"the issue's resume brief does not name PR #{number}")
 
 
 # --- probes ----------------------------------------------------------------
@@ -467,6 +503,12 @@ def append_line(issue: str, line: str) -> None:
     )
 
 
+def read_body(issue: str) -> str:
+    """The issue body, fetched zero-echo, for the park's brief gate."""
+    found = linear_issue.fetch_issue_body(board_batch.env_var("LINEAR_API_KEY"), issue)
+    return found.get("description") or ""
+
+
 def price_session(session_id: str | None, notes: list[str]) -> str | None:
     """The session's cost line, or ``None`` with a note saying why it is
     skipped. Priced before any write, so the close never waits on a
@@ -480,6 +522,32 @@ def price_session(session_id: str | None, notes: list[str]) -> str | None:
         return None
 
 
+def parked(
+    args: argparse.Namespace,
+    result: dict,
+    coster: Callable[[str | None, list[str]], str | None],
+    appender: Callable[[str, str], None],
+) -> tuple[int, dict]:
+    """The park's act, once its gates passed: the cost line and nothing else —
+    no state, no removal, no dismissal of a live PR's threads."""
+    line = coster(args.session_id, result["notes"])
+    if args.dry_run:
+        result["cost_line"] = line
+        result["notes"].append("dry run: park gates passed")
+        return 0, result
+    if line is not None:
+        try:
+            appender(result["issue"], line)
+            result["cost_line"] = line
+        except Exception as e:  # noqa: BLE001 — the park itself still holds
+            result["notes"].append(f"cost line not appended: {e}")
+    result["notes"].append(
+        f"parked: PR #{result['pr'].get('number')} open, state unchanged, "
+        "worktree and branch kept for the resume"
+    )
+    return 0, result
+
+
 def close(
     args: argparse.Namespace,
     run: Runner = real_run,
@@ -488,7 +556,9 @@ def close(
     alive: Callable[[int], bool] = pid_alive,
     coster: Callable[[str | None, list[str]], str | None] = price_session,
     appender: Callable[[str, str], None] = append_line,
+    body_reader: Callable[[str], str] = read_body,
 ) -> tuple[int, dict]:
+    park = getattr(args, "park", False)
     result: dict = {
         "issue": None,
         "state": args.state,
@@ -496,7 +566,8 @@ def close(
         "branch": None,
         "pr": None,
         "dry_run": args.dry_run,
-        "keep_worktree": args.keep_worktree,
+        "keep_worktree": args.keep_worktree or park,
+        "park": park,
         "refused": None,
         "leftovers": None,
         "state_written": False,
@@ -509,6 +580,20 @@ def close(
         worktree, branch, base, porcelain = locate(run)
         result.update(worktree=worktree, branch=branch)
         result["issue"] = issue_for(branch, args.issue)
+        if park:
+            if args.state is not None:
+                raise Refusal("--park writes no state; drop --state")
+            prs = read_prs(run, branch)
+            git_safety(run, worktree, branch, prs)
+            result["pr"] = park_pr(prs)
+            try:
+                body = body_reader(result["issue"])
+            except Exception as e:  # noqa: BLE001 — an unread brief is no brief
+                raise Refusal(f"could not read the issue body: {e}") from e
+            brief_verdict(body, int(result["pr"]["number"]))
+            return parked(args, result, coster, appender)
+        if args.state is None:
+            raise Refusal("--state is required unless --park")
         if (
             not args.keep_worktree
             and args.state.strip().lower() not in REMOVABLE_STATES
@@ -568,7 +653,12 @@ def close(
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="close_session.py")
     parser.add_argument(
-        "--state", required=True, help="closing state name, e.g. Done or 'In Review'"
+        "--state", default=None, help="closing state name, e.g. Done or 'In Review'"
+    )
+    parser.add_argument(
+        "--park",
+        action="store_true",
+        help="end a held session: PR open, no state write, worktree kept",
     )
     parser.add_argument("--issue", default=None, help="ENG-### when the branch is not")
     parser.add_argument(

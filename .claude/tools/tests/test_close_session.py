@@ -553,6 +553,132 @@ class CostLineTests(unittest.TestCase):
         self.assertEqual(order, [])
 
 
+class ParkTests(unittest.TestCase):
+    OPEN = [{"number": 715, "state": "OPEN", "headRefOid": "abc123"}]
+    BRIEF = (
+        "spec…\n\n**Resume brief**: PR #715 green, held behind #717; owed: enqueue\n"
+    )
+
+    def _park(self, body=BRIEF, session_id=None, dry_run=False, **fake):
+        fake.setdefault("prs", self.OPEN)
+        runner = FakeRun(**fake)
+        writer = Writer()
+        appended: list[tuple] = []
+        rc, result = close(
+            ns(state=None, park=True, session_id=session_id, dry_run=dry_run),
+            run=runner,
+            writer=writer,
+            pid=1000,
+            alive=lambda _pid: True,
+            coster=lambda sid, _notes: f"cost {sid}\n" if sid else None,
+            appender=lambda issue, line: appended.append((issue, line)),
+            body_reader=lambda _issue: body,
+        )
+        return rc, result, runner, writer, appended
+
+    def assert_untouched(self, runner, writer):
+        self.assertEqual(writer.calls, [])
+        for cmd in runner.calls:
+            self.assertNotIn("remove", cmd)
+            self.assertNotIn("-D", cmd)
+
+    def test_park_succeeds_with_an_open_pr(self):
+        rc, result, runner, writer, appended = self._park(session_id="sid-9")
+        self.assertEqual(rc, 0, result)
+        self.assertIsNone(result["refused"])
+        self.assertTrue(result["park"])
+        self.assertTrue(result["keep_worktree"])
+        self.assertEqual(result["pr"]["number"], 715)
+        self.assertFalse(result["state_written"])
+        self.assertFalse(result["removed"])
+        self.assertEqual(appended, [("ENG-1669", "cost sid-9\n")])
+        self.assertEqual(result["cost_line"], "cost sid-9\n")
+        self.assert_untouched(runner, writer)
+        # The PR is live: no notification thread is touched.
+        self.assertFalse([c for c in runner.calls if c[:2] == ["gh", "api"]])
+
+    def test_park_dry_run_appends_nothing(self):
+        rc, result, _, writer, appended = self._park(session_id="s", dry_run=True)
+        self.assertEqual(rc, 0, result)
+        self.assertEqual(appended, [])
+        self.assertEqual(result["cost_line"], "cost s\n")
+        self.assertEqual(writer.calls, [])
+
+    def test_park_refuses_a_dirty_tree(self):
+        rc, result, runner, writer, appended = self._park(status=" M src/lib.rs\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("uncommitted", result["refused"])
+        self.assertEqual(appended, [])
+        self.assert_untouched(runner, writer)
+
+    def test_park_refuses_an_unpushed_commit(self):
+        rc, result, runner, writer, appended = self._park(unpushed="2")
+        self.assertEqual(rc, 1)
+        self.assertIn("unpushed", result["refused"])
+        self.assertEqual(appended, [])
+        self.assert_untouched(runner, writer)
+
+    def test_park_refuses_without_a_brief(self):
+        rc, result, _, writer, appended = self._park(body="spec only\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("needs a resume brief", result["refused"])
+        self.assertEqual((writer.calls, appended), ([], []))
+
+    def test_park_refuses_a_brief_for_another_pr(self):
+        stale = "**Resume brief**: PR #600 held behind #599\n"
+        rc, result, *_ = self._park(body=stale)
+        self.assertEqual(rc, 1)
+        self.assertIn("does not name PR #715", result["refused"])
+
+    def test_park_refuses_an_unreadable_body(self):
+        def boom(_issue):
+            raise RuntimeError("linear down")
+
+        rc, result = close(
+            ns(state=None, park=True),
+            run=FakeRun(prs=self.OPEN),
+            writer=Writer(),
+            pid=1000,
+            body_reader=boom,
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("could not read the issue body", result["refused"])
+
+    def test_park_refuses_with_no_open_pr(self):
+        rc, result, *_ = self._park(
+            prs=[{"number": 503, "state": "MERGED", "headRefOid": "abc123"}]
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("needs an open PR", result["refused"])
+
+    def test_park_refuses_a_state(self):
+        rc, result, _, writer = run_close(ns(state="In Review", park=True))
+        self.assertEqual(rc, 1)
+        self.assertIn("drop --state", result["refused"])
+        self.assertEqual(writer.calls, [])
+
+    def test_done_and_canceled_with_an_open_pr_still_refuse(self):
+        for state in ("Done", "Canceled"):
+            for keep in (False, True):
+                rc, result, runner, writer = run_close(
+                    ns(state=state, keep_worktree=keep), prs=self.OPEN
+                )
+                self.assertEqual(rc, 1, (state, keep))
+                self.assertIn("#715 is still open", result["refused"])
+                self.assert_untouched(runner, writer)
+
+    def test_no_state_without_park_refuses(self):
+        rc, result, _, writer = run_close(ns(state=None))
+        self.assertEqual(rc, 1)
+        self.assertIn("--state is required", result["refused"])
+        self.assertEqual(writer.calls, [])
+
+    def test_cli_parses_park_without_state(self):
+        args = close_session.parse_args(["close_session.py", "--park"])
+        self.assertTrue(args.park)
+        self.assertIsNone(args.state)
+
+
 class NotifyingRun(FakeRun):
     """A closable session whose PR has notification threads: the repo-scoped
     list answers ``threads`` as ``(id, pr)``, and a mark-done DELETE fails for
