@@ -47,13 +47,16 @@ the compare deterministic and testable with no network call at all::
 Prints JSON and exits **non-zero on a collision**, so a caller that checks only
 the status still cannot enqueue through one.
 
-**Three exit codes, and a caller must distinguish all three.** ``1`` is a
-collision, ``0`` is any other ``status``, and ``2`` means the tool **could not
-answer** — bad input, a `gh` failure, a truncated listing, a pathspec matching
-nothing. So neither naive reading of the status is safe: gating on *non-zero*
-reports an operational failure as a collision, and gating on *== 1* treats an
-unanswered question as a clean bill of health and enqueues through it. Treat 2 as
-a hold.
+**One verdict line on stderr, so a gate need not decode exit codes.** It reads
+``migration-collisions | verdict: <clear|collision|hold> | …``: ``clear``
+proceeds, ``collision`` and ``hold`` stop, the rest of the line says why (an
+answered run's JSON carries the same ``verdict``; a ``hold`` prints no JSON).
+Underneath, three exit codes still match: ``1`` is a collision, ``0`` any other
+``status``, and ``2`` means the tool **could not answer** — bad input or
+arguments, a `gh` failure, a truncated listing, a pathspec matching nothing,
+any unexpected error — which is the ``hold``. Neither naive reading of the
+status was safe: gating on *non-zero* reported an operational failure as a
+collision, and gating on *== 1* enqueued through an unanswered question.
 
 ``status`` names three outcomes, and the exit code is 1 for the first only:
 
@@ -592,23 +595,46 @@ def _self_note(result: dict) -> str:
     return f" | no PR excluded (nothing matched this branch){override}{forks}"
 
 
+#: The one token a gate reads, so the exit codes need no prose: ``clear``
+#: proceeds, ``collision`` and ``hold`` stop. ``nothing_claimed`` is ``clear``
+#: to the enqueue gate (nothing of this branch's can collide) while its line
+#: still says nothing was compared.
+VERDICTS = {"collision": "collision", "clear": "clear", "nothing_claimed": "clear"}
+
+
+def hold_line(reason: str) -> str:
+    """The verdict line for a run that could not answer (exit 2)."""
+    return (
+        f"migration-collisions | verdict: hold | could not answer: {reason} | "
+        f"do not enqueue — fix the cause and re-run"
+    )
+
+
 def summarize(result: dict) -> str:
     """One human line — the verdict, and the tiebreak when it is needed."""
+    return (
+        f"migration-collisions | verdict: {VERDICTS[result['status']]} | "
+        f"{_detail(result)}"
+    )
+
+
+def _detail(result: dict) -> str:
     if result["status"] == "nothing_claimed":
         # `_self_note` belongs here too, even though no comparison ran: the
         # exclusion still shapes `next_free_number`, and this is the one line
         # `init-pr` reads — so without it a `--self-branch` override would be
         # invisible in exactly the place the number is taken from.
         return (
-            "migration-collisions | this branch adds no migration, so nothing "
-            f"was compared — NOT a clear verdict | next free number: "
-            f"{result['next_free_number']:04d}{_self_note(result)} | if this "
+            "this branch adds no migration, so nothing "
+            f"was compared — clear only because nothing can collide, NOT a "
+            f"clear verdict on any number | next free "
+            f"number: {result['next_free_number']:04d}{_self_note(result)} | if this "
             f"task adds one, take that number and re-run once the file exists"
         )
     added = ", ".join(str(n) for n in result["mine_numbers"])
     if result["status"] == "clear":
         return (
-            f"migration-collisions | adds {added} | no collision across "
+            f"adds {added} | no collision across "
             f"{result['prs_checked']} open PR(s){_self_note(result)} — safe to "
             f"enqueue"
         )
@@ -617,7 +643,7 @@ def summarize(result: dict) -> str:
         for c in result["collisions"]
     )
     return (
-        f"migration-collisions | adds {added} | COLLISION: {pairs}"
+        f"adds {added} | COLLISION: {pairs}"
         f"{_self_note(result)} | do not enqueue — the branch whose number is "
         f"already applied to the shared dev DB keeps it, the other renumbers"
     )
@@ -711,6 +737,7 @@ def run(argv: list[str]) -> int:
         "clear": not found,
         "status": "collision" if found else ("clear" if mine else "nothing_claimed"),
     }
+    result["verdict"] = VERDICTS[result["status"]]
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
     print(summarize(result), file=sys.stderr)
@@ -725,11 +752,20 @@ def main() -> int:
     try:
         return run(sys.argv)
     except MigrationCollisionsError as exc:
-        print(f"migration-collisions: {exc}", file=sys.stderr)
+        print(hold_line(str(exc)), file=sys.stderr)
         return 2
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or "").strip() or f"exit {exc.returncode}"
-        print(f"migration-collisions: git failed: {detail}", file=sys.stderr)
+        print(hold_line(f"git failed: {detail}"), file=sys.stderr)
+        return 2
+    except SystemExit as exc:
+        # `--help` exits 0 and stays one; a usage error is unanswered.
+        if exc.code in (0, None):
+            raise
+        print(hold_line("bad arguments (see usage above)"), file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001 — never exit 1, the collision code
+        print(hold_line(f"{type(exc).__name__}: {exc}"), file=sys.stderr)
         return 2
 
 

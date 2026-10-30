@@ -13,10 +13,12 @@ are written against it. `gh` survives in the cases enumerated below —
 count them from the list rather than from a number in this sentence,
 which drifted behind it twice:
 
-- **The merge-queue handoff** — the enqueue (a `gh pr merge --auto`
-  write, **no** strategy flag: this repo's merge queue sets the
-  strategy, so a `--squash` only warns) and a read-only dequeue probe
-  (a `gh api graphql … mergeQueueEntry` read). The enqueue stays on
+- **The merge-queue handoff** — the enqueue (a `gh pr merge` write,
+  plain where the `merge_queue` rule is active and `--auto` otherwise
+  or as its fallback, **no** strategy flag: this repo's merge queue
+  sets the strategy, so a `--squash` only warns) and a read-only
+  dequeue probe (a `gh api graphql … mergeQueueEntry` read), both made
+  inside `wait_for_checks.py --enqueue`. The enqueue stays on
   `gh` because the server exposes no auto-merge / merge-queue tool
   (`merge_pull_request` does an *immediate* merge, which bypasses the
   queue); the probe stays on `gh` because the server's
@@ -25,20 +27,20 @@ which drifted behind it twice:
   so the probe must read `mergeQueueEntry` (non-null while queued)
   over GraphQL to tell a still-queued PR from one that was dequeued.
 
-  **The enqueue prints nothing under this harness.** `gh` emits its
-  "Merge when ready" confirmation only to a TTY, and stdout here is
-  not one, so a successful `gh pr merge --auto` returns exit 0 and no
-  output whatsoever. Confirm from the exit status; there is no reply
-  text to read, and a run has misread the silence as a failure.
+  **The enqueue prints nothing under this harness, and its exit 0 is
+  not proof.** `gh` emits its confirmation only to a TTY, and an
+  `--auto` exit 0 shows only that auto-merge was enabled — a PR has
+  exited 0 and never queued. So the tool probes `mergeQueueEntry`
+  right after each attempt and returns one verdict.
 
-  **An all-null probe is ambiguous, and `gh run list` disambiguates
+  **An all-null probe is ambiguous, and the run list disambiguates
   it.** `mergeQueueEntry` and `autoMergeRequest` are *both* null during
   the registration window **and** after a dequeue, so the probe alone
   cannot tell a PR that has not registered yet from one that was kicked
   out. The queue branch settles it: a completed run set on
-  `pr-<number>-…` proves the entry existed. Check that **before**
-  concluding, not after — the ordering is spelled out in `review-pr`'s
-  merge-queue outcome step.
+  `pr-<number>-…` proves the entry existed. The queue watch reads those
+  runs itself, before concluding, and a `not_queued` verdict says
+  whether any earlier cycle's run exists.
 
   **But rule out "already merged" first, and read that as an
   invariant rather than a lag direction.** The all-null probe has a

@@ -934,6 +934,38 @@ class QueueWatchTests(unittest.TestCase):
         self.assertEqual(v["conclusion"], "not_queued")
         self.assertFalse(v["seen_queue_entry"])
         self.assertGreaterEqual(v["elapsed_seconds"], wfc.NOT_QUEUED_AFTER_SECONDS)
+        self.assertEqual(
+            v["not_queued"],
+            {
+                "reading": "never_entered",
+                "prior_runs": 0,
+                "newest_prior": None,
+                "prior_failing_runs": [],
+            },
+        )
+
+    def test_a_not_queued_beside_an_old_cycles_run_says_so(self):
+        """The run-list disambiguation, done by the tool: runs exist, all from
+        before this cycle's window, so they are an earlier enqueue's."""
+        old = queue_run("failure", created="2026-10-13T11:00:00Z", rid="1")
+        newer = queue_run("success", created="2026-10-13T11:10:00Z", rid="2")
+        v = self._watch([snap(runs=[old, newer])])
+        self.assertEqual(v["conclusion"], "not_queued")
+        self.assertEqual(v["queue_runs"], [])
+        self.assertEqual(v["not_queued"]["reading"], "prior_cycle_only")
+        self.assertEqual(v["not_queued"]["prior_runs"], 2)
+        self.assertEqual(
+            v["not_queued"]["newest_prior"],
+            {"run_id": "2", "conclusion": "success", "created_at": newer["created_at"]},
+        )
+        # The newest prior branch's failures ride along for classification.
+        self.assertEqual(
+            [r["run_id"] for r in v["not_queued"]["prior_failing_runs"]], ["1"]
+        )
+
+    def test_only_not_queued_carries_the_reading(self):
+        v = self._watch([snap(gql="MERGED", merged=True)])
+        self.assertNotIn("not_queued", v)
 
     def test_the_registration_window_is_not_a_dequeue(self):
         """All-null for the first few seconds, then QUEUED, then merged."""
@@ -1412,7 +1444,14 @@ class RecordedQueueScenarioTests(unittest.TestCase):
 
 class QueueModeCliTests(unittest.TestCase):
     def _queue_mode(
-        self, conclusion, extra=(), runs=(), mergeable="MERGEABLE", stub=True
+        self,
+        conclusion,
+        extra=(),
+        runs=(),
+        mergeable="MERGEABLE",
+        stub=True,
+        default_since=(None, None),
+        also=None,
     ):
         seen = {}
         real = wfc.wait_queue
@@ -1421,7 +1460,13 @@ class QueueModeCliTests(unittest.TestCase):
             seen.update(
                 pr=pr, repo=repo, interval=interval, timeout=timeout, since=since
             )
-            return {"conclusion": conclusion, "pr": pr, "queue_runs": list(runs)}
+            return {
+                "conclusion": conclusion,
+                "pr": pr,
+                "queue_runs": list(runs),
+                "failing_runs": [r for r in runs if r.get("conclusion") == "failure"],
+                **json.loads(json.dumps(also or {})),
+            }
 
         def settle(pr, repo, retries, delay):
             seen.setdefault("settled", []).append(pr)
@@ -1462,6 +1507,24 @@ class QueueModeCliTests(unittest.TestCase):
             seen.setdefault("counted", []).append((pr, repo))
             return 4
 
+        def since(pr, repo):
+            seen.setdefault("defaulted", []).append(pr)
+            return default_since
+
+        def classify(failing, repo):
+            seen.setdefault("classified", []).append(failing)
+            return {"cause": "transient", "evidence": [], "next_command": None}
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "verdict.json"
+        for name, value in (
+            ("default_since", since),
+            ("classify_dequeue", classify),
+            ("queue_verdict_path_for", lambda pr: path),
+        ):
+            self.addCleanup(setattr, wfc, name, getattr(wfc, name))
+            setattr(wfc, name, value)
         if stub:
             wfc.wait_queue = stub_wait
         wfc.dismiss_pr_notifications = dismiss
@@ -1475,7 +1538,8 @@ class QueueModeCliTests(unittest.TestCase):
             wfc.dismiss_pr_notifications = real_dismiss
             wfc.dequeue_cause = real_cause
             wfc.todays_merge_count = real_count
-        seen["verdict"] = json.loads(out.getvalue())
+        seen["stdout"] = out.getvalue()
+        seen["verdict"] = json.loads(path.read_text())
         return code, seen
 
     def test_a_merge_dismisses_the_prs_notifications(self):
@@ -1511,6 +1575,7 @@ class QueueModeCliTests(unittest.TestCase):
         for name, value in (
             ("wait_queue", lambda *a, **k: (_ for _ in ()).throw(OSError("disk"))),
             ("dismiss_pr_notifications", lambda pr, repo, merged: dismissed.append(pr)),
+            ("default_since", lambda pr, repo: (None, None)),
         ):
             self.addCleanup(setattr, wfc, name, getattr(wfc, name))
             setattr(wfc, name, value)
@@ -1622,6 +1687,83 @@ class QueueModeCliTests(unittest.TestCase):
                 code, _ = self._queue_mode(conclusion)
                 self.assertEqual(code, 1)
 
+    def test_a_merge_prints_one_line_and_files_the_full_verdict(self):
+        code, seen = self._queue_mode("merged")
+        self.assertEqual(code, 0)
+        lines = seen["stdout"].splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("merged: PR #285", lines[0])
+        self.assertIn("Today's merge count is now 4.", lines[0])
+        self.assertIn("notifications dismissed: 1", lines[0])
+        self.assertEqual(seen["verdict"]["todays_merge_count"], 4)
+
+    def test_every_other_exit_still_prints_the_json_verdict(self):
+        _, seen = self._queue_mode("dequeued")
+        self.assertEqual(json.loads(seen["stdout"]), seen["verdict"])
+
+    def test_a_failed_count_or_dismissal_says_so_in_the_line(self):
+        line = wfc.merged_line(
+            {"pr": 9, "todays_merge_count": None,
+             "notifications": {"dismissed": 0, "error": "403"}}
+        )  # fmt: skip
+        self.assertIn("unavailable", line)
+        self.assertIn("dismissal failed: 403", line)
+
+    def test_since_defaults_to_the_prs_own_enqueue_time(self):
+        _, seen = self._queue_mode("merged", default_since=(ENQUEUED, "auto_merge"))
+        self.assertEqual(seen["defaulted"], [285])
+        self.assertEqual(seen["since"], ENQUEUED)
+        self.assertEqual(seen["verdict"]["since_source"], "auto_merge")
+
+    def test_an_explicit_since_is_never_overridden(self):
+        _, seen = self._queue_mode("merged", ["--since", ENQUEUED])
+        self.assertNotIn("defaulted", seen)
+        self.assertEqual(seen["verdict"]["since_source"], "flag")
+
+    def test_a_dequeue_with_failed_runs_is_classified(self):
+        runs = [{"run_id": "1", "conclusion": "failure"}]
+        _, seen = self._queue_mode("dequeued", runs=runs)
+        self.assertEqual(seen["classified"], [runs])
+        self.assertEqual(
+            seen["verdict"]["dequeue"]["classification"]["cause"], "transient"
+        )
+
+    def test_a_not_queued_beside_a_failed_earlier_cycle_is_classified(self):
+        """A firing that began after a dequeue reads `not_queued`: the earlier
+        cycle's failures are classified, so the re-enqueue is never blind."""
+        failed = [{"run_id": "9", "conclusion": "failure"}]
+        _, seen = self._queue_mode(
+            "not_queued", also={"not_queued": {"prior_failing_runs": failed}}
+        )
+        self.assertEqual(seen["classified"], [failed])
+        self.assertEqual(
+            seen["verdict"]["not_queued"]["classification"]["cause"], "transient"
+        )
+        _, seen = self._queue_mode(
+            "not_queued", also={"not_queued": {"prior_failing_runs": []}}
+        )
+        self.assertNotIn("classified", seen)
+        self.assertNotIn("classification", seen["verdict"]["not_queued"])
+
+    def test_a_merge_with_verdict_out_writes_both_and_names_the_queue_file(self):
+        out = Path(tempfile.mkdtemp()) / "ci.json"
+        self.addCleanup(lambda: out.unlink(missing_ok=True))
+        _, seen = self._queue_mode("merged", ["--verdict-out", str(out)])
+        self.assertEqual(json.loads(out.read_text()), seen["verdict"])
+        self.assertNotIn(str(out), seen["stdout"])
+        self.assertIn("verdict.json", seen["stdout"])
+
+    def test_a_no_run_dequeue_is_unknown_with_the_timelines_reason(self):
+        _, seen = self._queue_mode("dequeued")
+        self.assertNotIn("classified", seen)
+        classification = seen["verdict"]["dequeue"]["classification"]
+        self.assertEqual(classification["cause"], "unknown")
+        self.assertEqual(classification["reason"], "merge_conflict")
+
+    def test_a_conflicting_verdict_is_not_classified(self):
+        _, seen = self._queue_mode("dequeued", mergeable="CONFLICTING")
+        self.assertNotIn("classification", seen["verdict"]["dequeue"])
+
     def test_queue_combined_with_another_mode_is_refused(self):
         with self.assertRaises(wfc.WaitForChecksError):
             with redirect_stdout(io.StringIO()):
@@ -1634,6 +1776,320 @@ class QueueModeCliTests(unittest.TestCase):
 
 
 REPO = wfc.DEFAULT_REPO
+
+
+class DefaultSinceTests(unittest.TestCase):
+    def _since(self, node):
+        def gql(pr, repo):
+            if isinstance(node, Exception):
+                raise node
+            return node
+
+        with mock.patch.object(wfc, "_queue_graphql", gql):
+            return wfc.default_since(285, REPO)
+
+    def test_the_newer_of_the_auto_merge_and_entry_times(self):
+        """An auto-merge request that survived an earlier dequeue is older
+        than this cycle's entry; anchoring on it would admit the old removal."""
+        later = "2026-10-13T12:05:00Z"
+        for node, expected in (
+            ({"auto": {"enabledAt": ENQUEUED}, "entry": {"enqueuedAt": later}},
+             (later, "queue_entry")),
+            ({"auto": {"enabledAt": later}, "entry": {"enqueuedAt": ENQUEUED}},
+             (later, "auto_merge")),
+            ({"auto": None, "entry": {"enqueuedAt": later}}, (later, "queue_entry")),
+            ({"auto": {"enabledAt": ENQUEUED}, "entry": None},
+             (ENQUEUED, "auto_merge")),
+        ):  # fmt: skip
+            with self.subTest(node=node):
+                self.assertEqual(self._since(node), expected)
+
+    def test_neither_or_a_failed_read_leaves_the_watch_its_own_start(self):
+        self.assertEqual(self._since({"auto": None, "entry": None}), (None, None))
+        self.assertEqual(
+            self._since(wfc.WaitForChecksError("graphql down")), (None, None)
+        )
+
+
+def jobs_payload(*jobs):
+    return {"jobs": list(jobs)}
+
+
+def failed_job(name, step, conclusion="failure"):
+    return {
+        "name": name,
+        "conclusion": conclusion,
+        "steps": [
+            {"name": "Set up job", "conclusion": "success"},
+            {"name": step, "conclusion": "failure"},
+        ]
+        if step
+        else [],
+    }
+
+
+class ClassifyDequeueTests(unittest.TestCase):
+    """The queue branch's failed job steps decide the dequeue's cause."""
+
+    def _classify(self, payloads, runs=None):
+        runs = runs or [{"run_id": str(i), "conclusion": "failure"}
+                        for i in range(len(payloads))]  # fmt: skip
+        replies = iter(payloads)
+
+        def fetch(args):
+            reply = next(replies)
+            return (None, reply) if isinstance(reply, str) else (reply, None)
+
+        with mock.patch.object(wfc, "_fetch_json", fetch):
+            return wfc.classify_dequeue(runs, REPO)
+
+    def test_a_toolchain_failure_before_any_test_is_transient(self):
+        c = self._classify(
+            [
+                jobs_payload(
+                    failed_job("Rust", "Run ./.github/actions/install-toolchain")
+                )
+            ]
+        )
+        self.assertEqual(c["cause"], "transient")
+        self.assertEqual(
+            c["evidence"][0]["step"], "Run ./.github/actions/install-toolchain"
+        )
+        self.assertIn("gh run view 0 --repo", c["next_command"])
+
+    def test_a_failing_test_or_build_step_is_integration(self):
+        for step in (
+            "Run cargo nextest run",
+            "Run make program",
+            "Run make tools-tests",
+        ):
+            with self.subTest(step=step):
+                c = self._classify([jobs_payload(failed_job("Rust", step))])
+                self.assertEqual(c["cause"], "integration")
+
+    def test_integration_anywhere_outranks_a_transient_sibling(self):
+        c = self._classify(
+            [
+                jobs_payload(failed_job("SDK", "Run actions/cache@v5")),
+                jobs_payload(failed_job("Rust", "Run cargo nextest run")),
+            ]
+        )
+        self.assertEqual(c["cause"], "integration")
+
+    def test_a_cancelled_sibling_with_no_failed_step_does_not_dilute(self):
+        c = self._classify(
+            [
+                jobs_payload(
+                    failed_job("Rust", "Run actions/setup-node@v6"),
+                    failed_job("SDK", None, conclusion="cancelled"),
+                )
+            ]
+        )
+        self.assertEqual(c["cause"], "transient")
+        self.assertEqual(len(c["evidence"]), 2)
+
+    def test_a_locked_install_is_integration_not_setup_noise(self):
+        """The base moved a manifest or lockfile: re-enqueueing repeats it."""
+        for step in ("Run pnpm install --frozen-lockfile", "Run cargo fetch --locked"):
+            with self.subTest(step=step):
+                c = self._classify([jobs_payload(failed_job("SDK", step))])
+                self.assertEqual(c["cause"], "integration")
+        c = self._classify([jobs_payload(failed_job("SDK", "Run pnpm install"))])
+        self.assertEqual(c["cause"], "transient")
+
+    def test_an_unread_run_holds_a_transient_sibling_at_unknown(self):
+        """The unread run may be the integration failure: never re-enqueue
+        on the half that could be read."""
+        c = self._classify(
+            [jobs_payload(failed_job("SDK", "Run actions/cache@v5")), "empty stdout"]
+        )
+        self.assertEqual(c["cause"], "unknown")
+        self.assertEqual(len(c["evidence"]), 2)
+
+    def test_a_startup_failure_needs_no_read(self):
+        c = self._classify([], runs=[{"run_id": "5", "conclusion": "startup_failure"}])
+        self.assertEqual(c["cause"], "transient")
+
+    def test_an_unnamed_step_or_a_failed_read_is_unknown(self):
+        self.assertEqual(
+            self._classify([jobs_payload(failed_job("Rust", "Mystery"))])["cause"],
+            "unknown",
+        )
+        c = self._classify(["empty stdout"])
+        self.assertEqual(c["cause"], "unknown")
+        self.assertEqual(c["evidence"][0]["error"], "empty stdout")
+
+
+class EnqueueTests(unittest.TestCase):
+    """``--enqueue``: refuse a moved diff, enqueue the way the rules want,
+    and probe that the queue took it."""
+
+    HEAD = "c" * 40
+
+    def _enqueue(
+        self,
+        probes,
+        queue_rule=True,
+        merge_exits=(0, 0),
+        local=HEAD,
+        fingerprint="fp1",
+        reviewed="fp1",
+        pull=None,
+    ):
+        seen = {"commands": [], "sleeps": 0}
+        pull = pull or {"head": {"sha": self.HEAD}, "base": {"ref": "main"}}
+        exits = iter(merge_exits)
+
+        def fingerprint_of(base):
+            if isinstance(fingerprint, Exception):
+                raise fingerprint
+            return fingerprint
+
+        replies = iter(probes)
+
+        def gh(args):
+            seen["commands"].append(args)
+            return next(exits), "", ""
+
+        def probe(pr, repo):
+            item = next(replies, probes[-1] if probes else {})
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        def sleep(_):
+            seen["sleeps"] += 1
+
+        with mock.patch.object(wfc, "_gh_json", lambda args, what: pull), \
+                mock.patch.object(wfc, "_git", lambda args: (0, local.encode(), "")), \
+                mock.patch.object(wfc.review_diff, "diff_fingerprint",
+                                  fingerprint_of), \
+                mock.patch.object(wfc, "merge_queue_active",
+                                  lambda repo, base: queue_rule), \
+                mock.patch.object(wfc, "_gh", gh):  # fmt: skip
+            verdict = wfc.enqueue(285, REPO, reviewed, probe=probe, sleep=sleep)
+        return verdict, seen
+
+    def test_a_queue_rule_enqueues_with_the_plain_merge_first(self):
+        v, seen = self._enqueue([{}, {"entry": dict(QUEUED, position=3)}])
+        self.assertEqual(v["conclusion"], "queued")
+        self.assertEqual(seen["commands"], [["pr", "merge", "285", "--repo", REPO]])
+        self.assertEqual(v["entry"]["position"], 3)
+        self.assertEqual(v["enqueued_at"], ENQUEUED)
+
+    def test_a_failed_plain_merge_falls_back_to_auto(self):
+        v, seen = self._enqueue([{"entry": QUEUED}], merge_exits=(1, 0))
+        self.assertEqual(v["conclusion"], "queued")
+        self.assertEqual(seen["commands"][-1][-1], "--auto")
+        self.assertEqual([a["exit"] for a in v["attempts"]], [1, 0])
+
+    def test_auto_merge_with_no_entry_under_a_queue_rule_is_not_proof(self):
+        """The exit-0-never-queued shape: auto-merge on, nothing in the queue.
+        The plain merge took nothing either, so `--auto` is tried, and the
+        verdict says the queue has not taken it — never `queued`."""
+        auto = {"auto": {"enabledAt": ENQUEUED}, "entry": None}
+        v, seen = self._enqueue([auto])
+        self.assertEqual(len(seen["commands"]), 2)
+        self.assertEqual(v["conclusion"], "auto_merge_pending")
+        self.assertEqual(seen["sleeps"], 2 * (wfc.ENQUEUE_PROBES - 1))
+
+    def test_no_queue_rule_enables_auto_merge_alone(self):
+        v, seen = self._enqueue(
+            [{"auto": {"enabledAt": ENQUEUED}}], queue_rule=False, merge_exits=(0,)
+        )
+        self.assertEqual(
+            seen["commands"], [["pr", "merge", "285", "--repo", REPO, "--auto"]]
+        )
+        self.assertEqual(v["conclusion"], "auto_merge_pending")
+        self.assertEqual(v["enqueued_at"], ENQUEUED)
+
+    def test_an_unreadable_rule_never_risks_the_plain_merge(self):
+        _, seen = self._enqueue([{"entry": QUEUED}], queue_rule=None, merge_exits=(0,))
+        self.assertEqual(seen["commands"][0][-1], "--auto")
+
+    def test_nothing_taking_is_not_queued_and_every_failure_is_enqueue_failed(self):
+        v, _ = self._enqueue([{}])
+        self.assertEqual(v["conclusion"], "not_queued")
+        v, _ = self._enqueue([{}], merge_exits=(1, 1))
+        self.assertEqual(v["conclusion"], "enqueue_failed")
+
+    def test_an_attempt_no_probe_answered_is_a_probe_failure_not_absence(self):
+        down = wfc.WaitForChecksError("graphql down")
+        v, _ = self._enqueue([down])
+        self.assertEqual(v["conclusion"], "probe_failed")
+        # One good read anywhere is an answer.
+        v, _ = self._enqueue([down, down, down, {}, {}])
+        self.assertEqual(v["conclusion"], "not_queued")
+
+    def test_an_unreadable_pull_or_fingerprint_raises_before_any_write(self):
+        for kwargs in (
+            {"pull": {"head": {}, "base": {"ref": "main"}}},
+            {"fingerprint": wfc.review_diff.ReviewDiffError("git diff failed")},
+        ):
+            with self.subTest(kwargs=list(kwargs)):
+                with self.assertRaises(wfc.WaitForChecksError):
+                    self._enqueue([{"entry": QUEUED}], **kwargs)
+
+    def test_the_queue_rule_read(self):
+        for reply, expected in (
+            ([{"type": "pull_request"}, {"type": "merge_queue"}], True),
+            ([{"type": "pull_request"}, "junk"], False),
+            ({"message": "Not Found"}, None),
+            (wfc.WaitForChecksError("403"), None),
+        ):  # fmt: skip
+            with self.subTest(reply=reply):
+
+                def read(args, what, reply=reply):
+                    if isinstance(reply, Exception):
+                        raise reply
+                    return reply
+
+                with mock.patch.object(wfc, "_gh_json", read):
+                    self.assertIs(wfc.merge_queue_active(REPO, "main"), expected)
+
+    def test_a_merge_the_probe_sees_is_merged(self):
+        v, _ = self._enqueue([{"gql_merged": True}])
+        self.assertEqual(v["conclusion"], "merged")
+
+    def test_a_moved_diff_is_refused_before_any_write(self):
+        v, seen = self._enqueue([{"entry": QUEUED}], fingerprint="fp2")
+        self.assertEqual(v["conclusion"], "refused")
+        self.assertIn("scoped re-review", v["error"])
+        self.assertEqual(seen["commands"], [])
+
+    def test_an_unpushed_head_is_refused_before_any_write(self):
+        v, seen = self._enqueue([{"entry": QUEUED}], local="d" * 40)
+        self.assertEqual(v["conclusion"], "refused")
+        self.assertIn("push", v["error"])
+        self.assertEqual(seen["commands"], [])
+
+    def test_the_cli_pairs_its_flags_and_exits_on_the_verdict(self):
+        for argv in (
+            ["--enqueue", "285"],
+            ["--reviewed-fingerprint", "fp1", "--pr", "285"],
+            ["--enqueue", "285", "--reviewed-fingerprint", "fp1", "--timeout", "9"],
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaises(wfc.WaitForChecksError):
+                    with redirect_stdout(io.StringIO()):
+                        wfc.run(["wait_for_checks.py", *argv])
+        argv = [
+            "wait_for_checks.py",
+            "--enqueue",
+            "285",
+            "--reviewed-fingerprint",
+            "fp1",
+        ]
+        for conclusion, code in (("queued", 0), ("auto_merge_pending", 0),
+                                 ("refused", 1), ("not_queued", 1)):  # fmt: skip
+            with self.subTest(conclusion=conclusion):
+                with (
+                    mock.patch.object(
+                        wfc, "enqueue", lambda pr, repo, fp: {"conclusion": conclusion}
+                    ),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    self.assertEqual(wfc.run(argv), code)
 
 
 class DismissNotificationsTests(unittest.TestCase):

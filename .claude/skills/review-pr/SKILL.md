@@ -1435,6 +1435,11 @@ migrations or generation inputs, and whether it spans crates.
    )
    ```
 
+   **Record the reviewed fingerprint here**, once every disposition of
+   the catalogue is committed: `fingerprint` and `head` from
+   `review_diff.py --base <base> --gate-only` (a hash of the change that
+   a rebase or re-sign keeps). Step 20's enqueue refuses any other.
+
    Ready lets the human enable "Merge when ready" while CI finishes,
    but it does **not** end the run: success is reported only once real
    CI is green and the summary is printed. **The Linear state** for
@@ -1613,32 +1618,13 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/migration_collisions.py --others-from-gh
    ```
 
-   It compares **numbers, not filenames**. **Gate on all three exit
-   statuses:** `1` is a collision; `0` is any other status, including
-   `nothing_claimed`; `2` means the tool **could not answer** (bad
-   input, a `gh` failure, a truncated listing, a pathspec matching
-   nothing) — a **hold, not a pass**. Gating on non-zero reports an
-   operational failure as a collision; gating on `== 1` enqueues
-   through an unanswered question. Never adapt to the guard by ignoring
-   its exit status.
-
-   Read the summary line: it says how this branch's own PR was
-   excluded from the comparison. Three cases block, for two reasons. A
-   **detached HEAD** (no branch to resolve) and an exclusion that
-   **matched nothing** (this PR open under a different head ref) fail
-   **closed** — the self-match survives, so a collision naming one PR
-   whose file matches this branch's is *probably* that self-match, a
-   hint to confirm, not an identity. A **fork** PR sharing this
-   branch's name is never treated as ours; its collision is **real** —
-   don't wave it through. `--self-branch` overrides the resolution and
-   the summary records it. `--others <file>.json` serves a caller
-   already holding the inventory and keeps tests network-free.
-
-   **On a collision, stop and coordinate the renumber: the branch whose
-   number is already applied to the shared dev DB keeps it; the other
-   renumbers.** No migration → `nothing_claimed`, exit 0 — an empty
-   verdict, not a clear one, which is why `init-pr` reads
-   `next_free_number` from the same call.
+   Its stderr line leads with the verdict: **`clear` proceeds;
+   `collision` and `hold` (it could not answer) stop**, the rest of the
+   line saying why — including how this branch's own PR was excluded,
+   so a collision it flags as a probable self-match is confirmed before
+   anything renumbers. **On a collision, coordinate the renumber: the
+   branch whose number is already applied to the shared dev DB keeps
+   it; the other renumbers.**
 
    **A rebase-forced re-run may enqueue BEFORE re-verifying.** `main`
    lands about as often as a full local re-verify takes, so re-running
@@ -1680,8 +1666,8 @@ migrations or generation inputs, and whether it spans crates.
    Exit 2 is a refusal (a dirty tree, a merge commit on the branch, a
    remote commit this branch never held) — report it and hold. **A
    re-sign changes every SHA, so the required checks re-run** on the
-   new head; `gh pr merge --auto` below waits for them, and step 22's
-   watch covers the enqueue.
+   new head; the enqueue below waits on them, and step 22's watch
+   covers it. A re-sign keeps the reviewed fingerprint.
 
    Then move the issue (the step-3 tag) to **In Review**, with or just
    before the prompt — skip only if no tag resolved. A state-only write
@@ -1709,26 +1695,26 @@ migrations or generation inputs, and whether it spans crates.
    second. With the signer locked, the first option reads "unlocked —
    sign and enqueue", and the unsigned count is in the question.
 
-   - **On approve**, enqueue — the skill's one `gh` **write**; the MCP
-     has no merge-queue tool and `merge_pull_request` merges
-     immediately, bypassing the queue:
+   - **On approve**, enqueue with one call — the skill's one `gh`
+     **write**, made inside the tool (the MCP's `merge_pull_request`
+     merges immediately, bypassing the queue):
 
      ```sh
-     gh pr merge <number> --auto
+     python3 .claude/tools/wait_for_checks.py --enqueue <number> \
+       --reviewed-fingerprint <step-17 fingerprint>
      ```
 
-     **Pass no strategy flag** — the merge queue sets it, and a
-     `--squash` only warns. **Expect no output at all**: stdout is not
-     a TTY, so a silent exit 0 is the success shape. **But exit 0 is
-     NOT proof of enqueue** — it shows auto-merge was *enabled*, and a
-     PR has gone 9/9 green, exited 0 and never been queued
-     (`history.md` → "Exit 0, never queued"). Step 22's watch is the
-     verification: its `not_queued` verdict is exactly that case.
-     **The already-clean remedy, which is not a bypass:** where
-     `merge_queue` is an active branch rule (checkable once with
-     `gh api repos/{owner}/{repo}/rules/branches/main --jq '[.[] | .type]'`),
-     a plain `gh pr merge <n>` **enqueues** rather than merging, so it
-     is the correct fallback when `--auto` did not take.
+     It refuses before any write when the local HEAD is not the PR's
+     head, or the diff moved since review (`refused`, `error` naming
+     which): run a **scoped re-review of the delta**
+     (`git range-diff <base> <step-17 head> HEAD`), then pass its
+     fingerprint. Otherwise it enqueues the way the base's rules want
+     and probes the queue entry, since `--auto` can exit 0 and never
+     queue (`history.md` → "Exit 0, never queued"). **`queued`,
+     `merged`, `auto_merge_pending` and `probe_failed` (it may have
+     queued) proceed to step 22's watch; `not_queued` re-runs it once;
+     `enqueue_failed` reports `attempts` and holds, as does exit 2
+     (`error:` on stderr, no verdict).**
 
    - **On decline**, leave the PR ready and the issue In Review, and
      note they can merge it (or enable "Merge when ready") themselves.
@@ -1754,139 +1740,48 @@ migrations or generation inputs, and whether it spans crates.
    the human (`history.md` → "Queue wait handed to the operator").
 
    Immediately after the enqueue, start **one backgrounded** command
-   (`run_in_background`) — the harness re-invokes the session when it
-   exits, and that is the wake-up:
+   (`run_in_background`); its exit is the wake-up:
 
    ```sh
    python3 .claude/tools/wait_for_checks.py --queue <number>
    ```
 
-   ```json
-   {
-     // merged dequeued conflicting closed not_queued timeout probe_failed
-     // stopped
-     "conclusion": "merged",
-     "seen_queue_entry": true,
-     "last": {"rest_state": "MERGED", "gql_state": "MERGED", …},
-     "queue_runs": [{"run_id": "…", "name": "…", "conclusion": "…"}],
-     "failing_runs": [],
-     "enqueued_at": "…",
-     // on every exit but probe_failed (unsubscribed: 0 unless merged):
-     "notifications": {"dismissed": 1, "unsubscribed": 1, "failed": 0, …},
-     // on merged only:
-     "todays_merge_count": 4,
-     // on dequeued / conflicting only:
-     "dequeue": {"dequeue_reason": "merge_conflict", "base_gained": […], …},
-     "log_path": "…/wait-for-queue-<number>.log"
-   }
-   ```
+   It owns the merged-versus-dequeued reasoning (a terminal `MERGED`
+   from any source wins — `docs/conventions/github-mcp.md` → "The
+   merge-queue handoff"), anchors itself on the PR's own enqueue time,
+   dismisses the PR's notifications on every exit but `probe_failed`,
+   and writes the full verdict beside its log. Say once that the PR is
+   queued, then stay silent until the exit. Where a background command
+   is unavailable, a session-scoped cron runs the same command about
+   every 12 minutes with `--timeout 660`; it needs no `--since`,
+   deletes itself on a terminal verdict, and stays silent on a
+   `timeout`. If the classifier denies the cron, ask the operator to
+   approve it here; never hand over the wait. **If your own read says
+   `MERGED`, never act on an older non-merged verdict**, and never
+   re-read a file at the merge ref to confirm the landing.
 
-   Every `DS_PR_POLL_S` seconds (default 20) it reads the PR (merged,
-   closed) and its timeline (the `added_to_merge_queue` /
-   `removed_from_merge_queue` events), both conditional, so a merge or
-   a dequeue is reported within one poll of happening; the GraphQL
-   `mergeQueueEntry` probe and this PR's
-   `gh-readonly-queue/…/pr-<number>-…` runs are re-read once a minute
-   as corroboration. It stays silent while queued and exits 0 only on
-   `merged`. **On every exit but `probe_failed` it marks the PR's
-   notification threads done first** (`notifications` in the verdict),
-   stopping included: a SIGTERM or SIGINT, when you stop the watch
-   early having learned the outcome another way, still dismisses and
-   prints a `stopped` verdict. **It unsubscribes only on a merge**: a
-   PR still open keeps its subscription, which re-creates its thread on
-   new activity. On `merged` it also counts the PRs merged since local
-   midnight (`todays_merge_count`). It owns the reasoning
-   this step used to spell out
-   (`docs/conventions/github-mcp.md` → "The merge-queue handoff"):
-   **a terminal `MERGED` from any source is authoritative**, and a
-   merge writes a removal event too, so a removal is a dequeue only
-   where nothing says merged (`history.md` → "The two sources disagree
-   both ways"); `autoMergeRequest` only keeps a classic auto-merge repo
-   waiting, never outranking a failed queue run; and with the timeline
-   silent, a failed run on the newest queue SHA or 120 seconds of
-   all-null is the fallback. Say once that the PR is queued, then stay
-   silent until the exit.
+   Branch on the verdict — the re-enqueue decision is yours:
 
-   Where a background command is unavailable, fall back to a
-   session-scoped cron running the same command about every 12 minutes
-   with `--timeout 660`, under the cadence so firings never overlap, and
-   `--since <the enqueue time, UTC ISO-8601>`: each firing is a fresh
-   call, and where the timeline lacks the enqueue event the anchor is
-   what keeps an old dequeue from reading as `not_queued`. It
-   deletes itself on a terminal verdict; a `timeout` from a cron firing
-   is silent and the cron stays. If the classifier denies the cron, ask
-   the operator to approve it in this tab; never silently hand over the
-   wait. A resumed session re-runs the command, and a fresh poll
-   returns the current snapshot.
-
-   **The terminal-MERGED invariant also binds you**: if your own read
-   says `MERGED`, never act on an older non-merged verdict, and never
-   re-read a file at the merge ref to confirm the change landed — the
-   verdict is the confirmation.
-
-   Branch on `conclusion`:
-
-   - **`merged`** → report it; the Linear issue **stays In Review** and
-     nothing here writes a state. Then run the post-merge tail below.
-
-   - **`closed`** → closed **without** merging: abandoned, not landed.
-     Report it and skip the tail; the worktree may still be wanted.
-     The close is `/wrap`'s, which owns closed-not-merged endings.
-
-   - **`not_queued`** → no entry and no queue run ever appeared: the
-     enqueue did not take. Apply step 20's already-clean remedy and
-     restart the watch. The timeline's enqueue event normally rules out
-     an old dequeue reading the same; where it is missing on a fresh
-     call without `--since`, check `gh run list` before re-enqueueing.
-
-   - **`conflicting`** (or `dequeue_reason: merge_conflict`) → a PR
-     that landed first conflicts with this one; `dequeue.base_gained`
-     lists the base commits the rebase must absorb. Go straight to
-     step 2's rebase and re-run — no timeline, mergeability or
-     `git log` read. On `dequeue.error`, read by hand only what is
-     `null`.
-
-   - **`dequeued`**, any other reason → diagnose from the **queue
-     branch's** runs, never the PR's own checks: the queue builds
-     `main` plus this PR on
-     `gh-readonly-queue/<base>/pr-<number>-<sha>`, so a failure there
-     dequeues the PR while every PR check stays green. The tool reads
-     those runs on every poll because concluding without them once
-     cost a blind re-enqueue: on PR #311 the first probe *was* a
-     terminal dequeue — the queue's full run set had completed and
-     `SDK` failed transiently while all 8 PR checks stayed green — and
-     the re-enqueue was right only by luck. Key on **job**
-     conclusions (a run can read `in_progress` with a job already
-     failed), then read the failed run's log through the quiet runner:
-
-     ```sh
-     python3 .claude/tools/run_quiet.py -- \
-       gh run view <run_id> --repo DASMAC-com/dropset --log-failed
-     ```
-
-     Split by what failed:
-
-     - **Transient infrastructure** — a toolchain, network or cache
-       failure **before any test ran**, e.g.
-       `Cache not found for input keys: toolchain-solana-…` then
-       `Failed to install platform-tools` → re-enqueue, saying why,
-       and restart the watch.
-     - **A real `main`-integration conflict** — an assertion, compile
-       error or lint violation on the queue branch → do **not**
-       re-enqueue. Catalogue it as blocking, re-draft, and tell the
-       user to rebase on `main` and re-run `/review-pr`.
-
-     Report the removal either way, naming the job (or the reason). An
-     empty `failing_runs` with a non-conflict reason means the removal
-     came with no failed queue run behind it — `dequeue_reason` is the
-     timeline's answer; weigh it before re-enqueueing.
-
-   - **`timeout`** / **`probe_failed`** from the backgrounded watch →
-     report the `last` snapshot (and `error`), then restart the watch;
-     never report it as queued-and-fine.
-
-   - **`stopped`** → you stopped the watch; act on what you learned
-     instead, its threads already dismissed.
+   - **`merged`** (one line, carrying `Today's merge count is now N.`)
+     → the issue **stays In Review**; run the post-merge tail below.
+   - **`closed`** → abandoned, not landed; skip the tail. The close is
+     `/wrap`'s.
+   - **`not_queued`**, acted on once (a second holds) → when
+     `not_queued.classification` is present an earlier cycle failed and
+     this watch began too late to see it: branch on its `cause` as the
+     `dequeued` bullet does, unless you already fixed that failure.
+     Otherwise re-run step 20's `--enqueue`, then the watch.
+   - **`conflicting`** (or `dequeue_reason: merge_conflict`) → step 2's
+     rebase straight from `dequeue.base_gained`, then re-run; on
+     `dequeue.error`, read by hand only what is `null`.
+   - **`dequeued`** → `dequeue.classification.cause`: **`transient`**
+     re-enqueue, saying why; **`integration`** do **not** — catalogue
+     it as blocking, re-draft, and tell the user to rebase and re-run
+     `/review-pr`; **`unknown`** read `next_command` (or weigh the
+     `reason`) before deciding. Report the removal naming the job.
+   - **`timeout`** / **`probe_failed`** → report `last` and `error`,
+     restart the watch; never report it as queued-and-fine.
+   - **`stopped`** → act on what you learned instead.
 
    **The post-merge tail, on `merged` only — one batched sequence with
    a single operator touch at the very end.** Work it as a checklist;
@@ -1897,18 +1792,12 @@ migrations or generation inputs, and whether it spans crates.
    `AskUserQuestion` is a deferral the user chose; an unasked one is a
    dropped step.
 
-   - [ ] **Say today's merge count** — print exactly
-     `Today's merge count is now N.`, N the verdict's
-     `todays_merge_count` (this PR included). On `null` the read failed:
-     say so in one line instead; never count by hand.
-
-   - [ ] **The PR's notification is already dismissed** — the watch
-     unsubscribed from and marked done its threads on `merged`, before
-     it exited, so no turn is spent on it. Read the verdict's
-     `notifications`: `error: null` needs nothing (`dismissed: 0` just
-     means already cleared). On an error, say so in the report and
-     leave it; the upkeep pass's settled-PR notification sweep is the
-     fallback. Never dismiss by hand or `mark_all_notifications_read`.
+   - [ ] **Relay the merged line's two facts** — print its
+     `Today's merge count is now N.` sentence exactly (or its
+     "unavailable" one; never count by hand), and say so only if the
+     notification dismissal failed: the upkeep pass's settled-PR sweep
+     is the fallback, so never dismiss by hand or
+     `mark_all_notifications_read`.
 
    - [ ] **Reclaim the worktree's disk** — the multi-GB `target/` and
      `node_modules` are dead weight until the worktree is pruned:

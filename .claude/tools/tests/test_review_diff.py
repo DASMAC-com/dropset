@@ -534,6 +534,87 @@ class GateTests(unittest.TestCase):
         )
         self.assertTrue(self.out.exists())
 
+    def test_the_fingerprint_survives_a_rebase_and_moves_with_the_change(self):
+        """What the enqueue's stale-review check compares: a base that moves
+        under an unchanged branch keeps it, any edit to the branch moves it,
+        and an `--only` slice never narrows it."""
+        self.commit("a.txt", "one\ntwo\nthree\n", "Add a")
+        self.commit("b.txt", "bee\n", "Add b")
+        verdict = rd.gate("main", self.out, fetch=False)
+        reviewed = verdict["fingerprint"]
+        self.assertRegex(reviewed, r"^[0-9a-f]{64}$")
+        self.assertRegex(verdict["head"], r"^[0-9a-f]{40}$")
+        self.assertEqual(verdict["head"], rd._git(["rev-parse", "HEAD"]).strip())
+        self.assertIn("head", rd.gate_only(verdict))
+        self.assertEqual(
+            rd.gate("main", self.out, fetch=False, only=["a.txt"])["fingerprint"],
+            reviewed,
+        )
+        # The base gains an unrelated commit and the branch is rebased onto it.
+        git(self.repo, "checkout", "-q", "-b", "base", "origin/main")
+        self.commit("seed.txt", "seed\nmore\n", "Base moves")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "checkout", "-q", "main")
+        git(self.repo, "rebase", "-q", "origin/main")
+        self.assertEqual(rd.diff_fingerprint("origin/main"), reviewed)
+        # The LAST file in the diff, so a per-file id would miss it.
+        self.commit("b.txt", "bee\nsting\n", "Amend b")
+        self.assertNotEqual(rd.diff_fingerprint("origin/main"), reviewed)
+
+    def test_a_base_edit_beside_a_hunk_keeps_the_fingerprint(self):
+        """No context lines, no hunk-header numbers, no blob ids: a base
+        change one line from this branch's hunk leaves the id alone."""
+        self.commit("seed.txt", "seed\nkeep\nbase-line\n", "Grow seed")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.commit("seed.txt", "seed\nkeep\nbase-line\nours\n", "Ours")
+        reviewed = rd.diff_fingerprint("origin/main")
+        git(self.repo, "checkout", "-q", "-b", "base", "origin/main")
+        self.commit("seed.txt", "seed\nkeep-edited\nbase-line\n", "Base edits beside")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        git(self.repo, "checkout", "-q", "main")
+        git(self.repo, "rebase", "-q", "origin/main")
+        self.assertEqual(rd.diff_fingerprint("origin/main"), reviewed)
+
+    def test_every_post_review_edit_shape_moves_the_fingerprint(self):
+        """The stale-review guard's blind spots under a patch id: whitespace,
+        a rename, a mode change and a binary edit each move this one."""
+        self.commit("a.py", "if x:\n    y()\n    z()\n", "Add a")
+        (self.repo / "blob.bin").write_bytes(b"\x00\x01\x02")
+        git(self.repo, "add", "blob.bin")
+        git(self.repo, "commit", "-q", "-m", "Add blob")
+        seen = {rd.diff_fingerprint("origin/main")}
+
+        def moved(label):
+            fp = rd.diff_fingerprint("origin/main")
+            self.assertNotIn(fp, seen, label)
+            seen.add(fp)
+
+        self.commit("a.py", "if x:\n    y()\nz()\n", "Dedent")
+        moved("indentation only")
+        git(self.repo, "mv", "a.py", "b.py")
+        git(self.repo, "commit", "-q", "-m", "Rename")
+        moved("pure rename")
+        git(self.repo, "update-index", "--chmod=+x", "b.py")
+        git(self.repo, "commit", "-q", "-m", "Mode")
+        moved("mode change")
+        (self.repo / "blob.bin").write_bytes(b"\x00\x01\x03")
+        git(self.repo, "add", "blob.bin")
+        git(self.repo, "commit", "-q", "-m", "Binary edit")
+        moved("binary edit")
+
+    def test_an_identical_line_moved_within_a_base_file_moves_the_fingerprint(self):
+        """A guard added before an early return, then moved after it: the
+        added line is the same, only its anchor differs."""
+        self.commit("f.py", "def f():\n    a()\n    return\n    b()\n", "Base f")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.commit("f.py", "def f():\n    a()\n    guard()\n    return\n    b()\n")
+        before = rd.diff_fingerprint("origin/main")
+        self.commit("f.py", "def f():\n    a()\n    return\n    guard()\n    b()\n")
+        self.assertNotEqual(rd.diff_fingerprint("origin/main"), before)
+
+    def test_an_empty_diff_has_no_fingerprint(self):
+        self.assertIsNone(rd.gate("main", self.out, fetch=False)["fingerprint"])
+
     def test_nothing_changed_is_not_ready(self):
         v = rd.gate("main", self.out, fetch=False)
         self.assertFalse(v["ready"])

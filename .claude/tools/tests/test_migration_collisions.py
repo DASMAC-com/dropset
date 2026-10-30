@@ -184,6 +184,29 @@ class Summary(unittest.TestCase):
         # the wrong branch wedges the shared dev database.
         self.assertIn("already applied", line)
 
+    def test_every_status_leads_with_its_one_verdict_token(self):
+        """The gate reads one token, never the exit codes."""
+        found = [{"number": 3, "pr": 351, "ours": "a", "theirs": "m/0003_b.sql"}]
+        for result, token in (
+            (self._result(["m/0003_a.sql"], [3], found), "collision"),
+            (self._result(["m/0004_a.sql"], [4], []), "clear"),
+            # Nothing of this branch's can collide, so the gate proceeds — the
+            # line still says nothing was compared.
+            (self._result([], [], []), "clear"),
+        ):
+            with self.subTest(status=result["status"]):
+                self.assertTrue(
+                    mc.summarize(result).startswith(
+                        f"migration-collisions | verdict: {token} | "
+                    )
+                )
+
+    def test_an_unanswered_run_is_a_hold_with_its_reason(self):
+        line = mc.hold_line("listing truncated")
+        self.assertIn("verdict: hold", line)
+        self.assertIn("listing truncated", line)
+        self.assertIn("do not enqueue", line)
+
 
 class LoadOthers(unittest.TestCase):
     def setUp(self):
@@ -713,6 +736,27 @@ class AddedMigrations(unittest.TestCase):
                 code = mc.main()
         self.assertEqual(code, 2)
         self.assertIn("truncated", err.getvalue())
+        self.assertIn("verdict: hold", err.getvalue())
+
+    def test_a_usage_error_or_a_crash_is_a_hold_never_exit_one(self):
+        """Exit 1 is the collision code: an unanswered run must never reach it."""
+        for argv, patch in (
+            (["migration_collisions.py"], None),
+            (
+                ["migration_collisions.py", "--others", "x.json"],
+                mock.patch.object(mc, "run", side_effect=KeyError("boom")),
+            ),
+        ):
+            with self.subTest(argv=argv):
+                err = io.StringIO()
+                with mock.patch.object(mc.sys, "argv", argv), redirect_stderr(err):
+                    if patch is None:
+                        code = mc.main()
+                    else:
+                        with patch:
+                            code = mc.main()
+                self.assertEqual(code, 2)
+                self.assertIn("verdict: hold", err.getvalue().splitlines()[-1])
 
     def test_the_cli_exits_zero_when_clear(self):
         self._commit("0002_new.sql", "create table b();")
@@ -728,6 +772,7 @@ class AddedMigrations(unittest.TestCase):
         parsed = json.loads(out.getvalue())
         self.assertTrue(parsed["clear"])
         self.assertEqual(parsed["status"], "clear")
+        self.assertEqual(parsed["verdict"], "clear")
         self.assertIn("safe to enqueue", err.getvalue())
 
     def _run(self, others_payload, *extra):
