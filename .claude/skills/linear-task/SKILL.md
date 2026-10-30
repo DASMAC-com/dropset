@@ -96,7 +96,7 @@ what to file.
      verb's own default substrate, and **before**
      `Claude:` (e.g. `[Chore/Anthropic] Claude: …`).
      Offer the verb's default substrate unless the to-do
-     states a reason to differ (web research, seat
+     states a reason to differ (web research, Claude subscription
      budget). Per `docs/conventions/linear-automation.md`
      → "The verb/substrate title token".
 

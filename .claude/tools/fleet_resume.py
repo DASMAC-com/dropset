@@ -14,7 +14,7 @@ resumed, not merely queued for a keystroke. Nothing is left for the operator to
 type.
 
 ``task resume`` reads that session's own substrate marker, so a mixed fleet of
-Bedrock and seat sessions comes back on the right provider per session and this
+Bedrock and Claude subscription sessions comes back on the right provider per session and this
 tool needs no substrate knowledge of its own.
 
 **What counts as in-flight: state TYPE** ``started``, not the state *names*.

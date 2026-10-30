@@ -126,18 +126,18 @@ class CycleLoop(unittest.TestCase):
         self.assertEqual(len(self._launches()), 3)
         self.assertFalse((self.state / "upkeep-calls").exists())
 
-    def test_launch_is_a_daily_seat_of_its_own(self):
-        result = self._plan(cycles=0, verb="launch")
+    def test_analyze_is_a_daily_role_of_its_own(self):
+        result = self._plan(cycles=0, verb="analyze")
         self.assertEqual(result.returncode, 0, result.stderr)
-        seed = f"dropset-launch-{self.day}".encode()
+        seed = f"dropset-analyze-{self.day}".encode()
         raw = hashlib.md5(seed).hexdigest()  # noqa: S324 - an id, not a secret
         sid = f"{raw[:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:]}"
         self.assertEqual(
             self._launches(),
-            [[sid, f"launch-{datetime.now().day}", "/launch", self.day, ""]],
+            [[sid, f"analyze-{datetime.now().day}", "/analyze", self.day, ""]],
         )
         roles = (self.state / "role-calls").read_text().splitlines()
-        self.assertEqual(roles, ["role:launch", "role:"])
+        self.assertEqual(roles, ["role:analyze", "role:"])
         self.assertFalse((self.state / "upkeep-calls").exists())
 
     def test_a_cycle_relaunches_under_a_fresh_id_and_the_same_name(self):
@@ -191,10 +191,10 @@ class CycleLoop(unittest.TestCase):
 
     def test_a_reopen_refuses_while_the_session_has_a_live_client(self):
         # Measured: a second `plan` resumed the live scheduler by id and forked
-        # it into a second client. The seat and the launcher both refuse.
+        # it into a second client. The scheduler and the analyst both refuse.
         for verb, kind, name in (
             ("plan", "plan", self.name),
-            ("launch", "launch", f"launch-{datetime.now().day}"),
+            ("analyze", "analyze", f"analyze-{datetime.now().day}"),
         ):
             with self.subTest(verb=verb):
                 seed = f"dropset-{kind}-{self.day}".encode()
@@ -247,7 +247,7 @@ class CycleLoop(unittest.TestCase):
 
 
 #: The real `plan` up to its two exits — the pre-launch's dispatch and the warm
-#: day's seat — with every outward call recorded. `python3` answers the
+#: day's daily role — with every outward call recorded. `python3` answers the
 #: stamp read from `$RAN` and the dispatch with `$DISPATCH_OUT` / `$DISPATCH_RC`.
 _PRELAUNCH_SCRIPT = """
 source "$INIT" 2>/dev/null
@@ -256,8 +256,8 @@ rec() { print -r -- "$*" >> "$STATE/calls" }
 _ds_substrate_unset() { : }
 _ds_aws_login() { rec aws; return ${AWS_RC:-0} }
 _ds_upkeep() { rec upkeep }
-_ds_daily_seat() { rec "seat $*" }
-launch() { rec "launch $* [${DS_LAUNCH_SCHEDULER}]" }
+_ds_daily_role() { rec "role $*" }
+analyze() { rec "analyze $* [${DS_ANALYZE_SCHEDULER}]" }
 python3() {
   if [[ "$*" == *session_dispatch.py* ]]; then
     rec "dispatch ${@[2,-1]}"
@@ -290,7 +290,7 @@ class PreLaunch(unittest.TestCase):
             "REPO": str(REPO),
             "STATE": str(self.state),
             "WORD": word,
-            "DISPATCH_OUT": "plan (free) -> /dev/a\nlaunch (free) -> /dev/b",
+            "DISPATCH_OUT": "plan (free) -> /dev/a\nanalyze (free) -> /dev/b",
             **extra,
         }
         proc = subprocess.run(
@@ -308,12 +308,12 @@ class PreLaunch(unittest.TestCase):
         proc, calls = self._plan()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("plan: pre-launch", proc.stderr)
-        self.assertEqual(calls, ["aws", "upkeep", "dispatch plan + launch"])
+        self.assertEqual(calls, ["aws", "upkeep", "dispatch plan + analyze"])
         self.assertTrue(self.marker.exists())
 
     def test_the_substrate_word_rides_to_the_scheduler_tab(self):
         _, calls = self._plan("anthropic")
-        self.assertIn("dispatch plan anthropic + launch", calls)
+        self.assertIn("dispatch plan anthropic + analyze", calls)
 
     def test_a_refused_login_stops_before_the_pass_and_leaves_the_day_fresh(self):
         proc, calls = self._plan(AWS_RC="1")
@@ -321,54 +321,54 @@ class PreLaunch(unittest.TestCase):
         self.assertEqual(calls, ["aws"])
         self.assertFalse(self.marker.exists())
 
-    def test_a_launcher_tab_that_did_not_open_runs_here(self):
+    def test_an_analyst_tab_that_did_not_open_runs_here(self):
         proc, calls = self._plan(DISPATCH_OUT="plan (free) -> /dev/a")
-        self.assertEqual(calls[-1], "launch  []")
+        self.assertEqual(calls[-1], "analyze  []")
         self.assertIn("running it in this tab", proc.stderr)
 
-    def test_with_neither_tab_the_launcher_runs_here_and_dispatches_plan(self):
+    def test_with_neither_tab_the_analyst_runs_here_and_dispatches_plan(self):
         # A driver failure lists the tabs it DID open on stderr, indented.
         proc, calls = self._plan(
             "anthropic",
-            DISPATCH_OUT="session-dispatch: iTerm went away\n  launch",
+            DISPATCH_OUT="session-dispatch: iTerm went away\n  analyze",
             DISPATCH_RC="1",
         )
-        self.assertEqual(calls[-1], "launch  [plan anthropic]")
+        self.assertEqual(calls[-1], "analyze  [plan anthropic]")
         self.assertIn("neither tab opened (dispatch exit 1)", proc.stderr)
 
     def test_a_partial_batch_counts_the_tabs_the_driver_did_open(self):
         _, calls = self._plan(
             DISPATCH_OUT="session-dispatch: 2 tab(s) were already opened\n"
-            "  plan -> /dev/a\n  launch -> tty unknown",
+            "  plan -> /dev/a\n  analyze -> tty unknown",
             DISPATCH_RC="1",
         )
-        self.assertEqual(calls[-1], "dispatch plan + launch")
+        self.assertEqual(calls[-1], "dispatch plan + analyze")
 
-    def test_a_held_launcher_is_said_never_run_here(self):
+    def test_a_held_analyst_is_said_never_run_here(self):
         # A hold is the machine gate's refusal; a fallback must not undo it.
         proc, calls = self._plan(
-            DISPATCH_OUT="plan (free) -> /dev/a\nheld  launch (free): load 9.1"
+            DISPATCH_OUT="plan (free) -> /dev/a\nheld  analyze (free): load 9.1"
         )
-        self.assertEqual(calls[-1], "dispatch plan + launch")
-        self.assertIn("held the launcher", proc.stderr)
+        self.assertEqual(calls[-1], "dispatch plan + analyze")
+        self.assertIn("held the analyst", proc.stderr)
 
     def test_with_both_held_nothing_runs_here(self):
         proc, calls = self._plan(
-            DISPATCH_OUT="held  plan (free): cap 20\nheld  launch (free): same"
+            DISPATCH_OUT="held  plan (free): cap 20\nheld  analyze (free): same"
         )
-        self.assertEqual(calls[-1], "dispatch plan + launch")
+        self.assertEqual(calls[-1], "dispatch plan + analyze")
         self.assertIn("held the scheduler", proc.stderr)
         self.assertNotIn("neither tab opened", proc.stderr)
 
-    def test_a_launcher_without_its_scheduler_names_the_verb_to_type(self):
-        proc, calls = self._plan("anthropic", DISPATCH_OUT="launch (free) -> /dev/b")
-        self.assertEqual(calls[-1], "dispatch plan anthropic + launch")
+    def test_an_analyst_without_its_scheduler_names_the_verb_to_type(self):
+        proc, calls = self._plan("anthropic", DISPATCH_OUT="analyze (free) -> /dev/b")
+        self.assertEqual(calls[-1], "dispatch plan anthropic + analyze")
         self.assertIn("type `plan anthropic` in a new tab", proc.stderr)
 
     def test_a_stamped_day_is_warm_and_runs_the_scheduler_here(self):
         proc, calls = self._plan(RAN='{"ran_today": true}')
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(calls, ["seat plan schedule "])
+        self.assertEqual(calls, ["role plan schedule "])
         self.assertNotIn("pre-launch", proc.stderr)
 
     def test_after_the_pre_launch_the_scheduler_tabs_plan_is_warm(self):
@@ -376,14 +376,14 @@ class PreLaunch(unittest.TestCase):
         # pre-launch — the scheduler tab's own `plan` would otherwise loop.
         self.marker.write_text("")
         _, calls = self._plan()
-        self.assertEqual(calls, ["seat plan schedule "])
+        self.assertEqual(calls, ["role plan schedule "])
 
     def test_a_scheduler_session_of_todays_makes_the_day_warm(self):
         sid = rs.daily_session_id("plan", self.day, 0)
         (self.home / "projects" / "x").mkdir(parents=True)
         (self.home / "projects" / "x" / f"{sid}.jsonl").write_text("")
         _, calls = self._plan()
-        self.assertEqual(calls, ["seat plan schedule "])
+        self.assertEqual(calls, ["role plan schedule "])
 
 
 #: The real `_ds_upkeep`, with `python3` and the secrets fetch stubbed: the

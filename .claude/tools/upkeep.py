@@ -2,7 +2,7 @@
 # cspell:word defang
 """The model-free morning upkeep pass — what the retired ``housekeeping`` skill
 did, composed from the committed helpers it drove one call at a time. The
-``plan`` pre-launch runs it; its approvals ride the launcher's one prune ask.
+``plan`` pre-launch runs it; its approvals ride the analyst's one prune ask.
 
 Usage (from the base repo root; a worktree is refused):
 
@@ -13,11 +13,11 @@ Usage (from the base repo root; a worktree is refused):
     python3 .claude/tools/upkeep.py fold-today
 
 ``prune`` runs steps 4–7 alone, disarmed unless ``--apply`` — the operator's
-by-hand cleanup on a machine whose pass is not armed, and the launcher's apply
+by-hand cleanup on a machine whose pass is not armed, and the analyst's apply
 on the operator's yes, applying the one rule below rather than a second one
 that drifts.
 
-``fold-stamp`` is the launcher's record that the day's lever fold ran, written
+``fold-stamp`` is the analyst's record that the day's lever fold ran, written
 beside this pass's stamp; ``fold-today`` prints the scheduler's line for it
 (``fold ran at HH:MM, N batches[, M folded into open issues]`` or
 ``no fold today``). Neither reads the network.
@@ -70,7 +70,7 @@ refuses the whole pass, since every later step assumes it.
     reconcile figure and the settled day's ``fleet_cost rates`` read, and its
     CI section (``--ci``) read from the merge queue over the same window;
 14. the memory scan gate, then the memory audit when due — the mechanical
-    pre-filter the launcher's staleness sub-agent reads — and ``MEMORY.md``'s
+    pre-filter the analyst's staleness sub-agent reads — and ``MEMORY.md``'s
     line count every run;
 15. the transcript-purge dry-run manifest;
 16. the dependency advisories (``deps_audit --json``): one line, by severity,
@@ -92,7 +92,7 @@ once.
 always armed in ``run``: with the board gate gone, a settled PR's threads are
 dismissible on sight, and a dismissal destroys nothing. The open-PR guard holds
 even when armed, and the purge never arms — its apply stays an operator
-approval at the launcher's prune ask. ``prune`` arms both steps only under
+approval at the analyst's prune ask. ``prune`` arms both steps only under
 ``--apply``.
 
 **Report.** One section of the Planning document — from ``REPORT_HEADING``
@@ -101,7 +101,7 @@ through its ``REPORT_END`` line — is replaced wholesale each run, bounded to
 prints to stdout (the standalone interface, and the fallback when Linear is
 unreachable); ``--json`` prints the structured twin instead. Progress — a line
 as each step starts and ends, then a total — goes to stderr, so neither stdout
-form changes and the launcher's terminal shows which wait it is on. Each start
+form changes and the pre-launch's terminal shows which wait it is on. Each start
 line names the step's duration last time, and on a tty a step past
 ``BAR_AFTER`` seconds draws one in-place bar of elapsed against that figure. A
 local stamp beside the allowlist refresh marker answers ``ran-today`` with no
@@ -204,7 +204,7 @@ OPEN_PR_LIMIT = 100
 
 RESOLVED_TYPES = ("completed", "canceled")
 # The parking milestones, in report order. Session pending is short-lived by
-# design: a count there is a seat session that died mid-review. Curator pending
+# design: a count there is a Claude subscription session that died mid-review. Curator pending
 # is the curator's in-flight batch, stamped before each ask and cleared on the
 # move, so a count with no live curator is a curator that stopped mid-day.
 # Follow-ups is retired as a parking set: filers now land un-parked in the
@@ -779,9 +779,9 @@ def step_checks(ctx: Ctx) -> None:
 
 
 def cost_day_line(day: str, summary: dict) -> str:
-    """One reconciled day: Bedrock against its bill, the seat as metered alone."""
+    """One reconciled day: Bedrock against its bill, the subscription as metered alone."""
     rec = summary.get("reconcile") or {}
-    seat = summary["substrates"].get(fleet_cost.SEAT) or {}
+    subscription = summary["substrates"].get(fleet_cost.SUBSCRIPTION) or {}
     mark = (
         " (provisional)"
         if summary.get("provisional")
@@ -793,9 +793,9 @@ def cost_day_line(day: str, summary: dict) -> str:
         f"{day}: Bedrock {fleet_cost.money(rec.get('metered', 0.0))} metered "
         f"({fleet_cost.money(rec.get('expected', 0.0))} with the classifier) vs "
         f"{fleet_cost.money(rec.get('billed_matched', 0.0))} billed, drift "
-        f"{fleet_cost.pct(rec.get('drift'))}{mark}; seat "
-        f"{fleet_cost.money(seat.get('dollars', 0.0))} at Bedrock rates over "
-        f"{seat.get('sessions', 0)} session(s), no bill line"
+        f"{fleet_cost.pct(rec.get('drift'))}{mark}; subscription "
+        f"{fleet_cost.money(subscription.get('dollars', 0.0))} at Bedrock rates over "
+        f"{subscription.get('sessions', 0)} session(s), no bill line"
     )
     friction = summary.get("friction")
     if friction:
@@ -936,8 +936,8 @@ def step_digest(ctx: Ctx) -> None:
     ctx.record(
         "digest",
         f"{summary.get('sessions', 0)} session(s), "
-        f"Bedrock {fleet_cost.money(summary.get('bedrock', 0.0))}, seat "
-        f"{fleet_cost.money(summary.get('seat', 0.0))} {fleet_cost.sm.NOT_BILLED}, "
+        f"Bedrock {fleet_cost.money(summary.get('bedrock', 0.0))}, subscription "
+        f"{fleet_cost.money(summary.get('subscription', 0.0))} {fleet_cost.sm.NOT_BILLED}, "
         f"{summary.get('flagged', 0)} flagged line(s); {path}"
         + ("; CI section skipped (gh auth)" if gh_down else ""),
         ok=bool(summary.get("path")),
@@ -1017,7 +1017,7 @@ def step_purge(ctx: Ctx) -> None:
         ),
         "nothing",
     )
-    ctx.record("purge", f"purge dry-run: {total} to free (apply is the launcher's ask)")
+    ctx.record("purge", f"purge dry-run: {total} to free (apply is the analyst's ask)")
 
 
 def step_deps(ctx: Ctx) -> None:
@@ -1562,7 +1562,7 @@ def fold_stamp_path(base: Path) -> Path:
 
 
 def write_fold_stamp(base: Path, now: datetime, batches: int, folds: int) -> None:
-    """The launcher's record that the day's lever fold ran — beside the pass's
+    """The analyst's record that the day's lever fold ran — beside the pass's
     own stamp, read by the scheduler's bootstrap instead of a fold report."""
     stamp = {"ran_at": now.isoformat(), "batches": batches, "folds": folds}
     fold_stamp_path(base).write_text(json.dumps(stamp) + "\n", encoding="utf-8")
@@ -1640,7 +1640,7 @@ def run(argv: list[str]) -> int:
     )
     sub.add_parser("ran-today", help="did a pass run today? (no network read)")
     p_fold = sub.add_parser(
-        "fold-stamp", help="record that the launcher's lever fold ran (no network)"
+        "fold-stamp", help="record that the analyst's lever fold ran (no network)"
     )
     p_fold.add_argument("--batches", type=int, required=True, help="batches filed")
     p_fold.add_argument(

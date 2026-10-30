@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ratify_staged.py — stage-two ratification of a seat session's filed tasks.
+"""ratify_staged.py — stage-two ratification of a Claude subscription session's filed tasks.
 
 The machinery behind the ``ratify-staged`` skill. A session on the advisor
 tier (``architect``, ``explore``; audit findings once their own ratification
@@ -13,7 +13,7 @@ as ids (``--ids``, ``ENG-###``, space- or comma-separated) or as the
 sub-issues of its governing issue (``--parent``, see "The parent switch"):
 
 * ``list`` — every open issue under ``Session pending``, one compact line
-  each. The milestone is shared by every seat session, so this is the
+  each. The milestone is shared by every subscription session, so this is the
   backstop view; a session reviews only its own ids.
 * ``ask --ids …`` — the ``AskUserQuestion`` payload for the review ask: one
   checkbox per staged task, never grouped, at most four per question and four
@@ -47,7 +47,7 @@ drives through the same machinery:
 * ``ask`` takes ``--notes`` (a JSON object, inline or a file path, mapping
   id to the one-line commentary that becomes that checkbox's description; the
   title otherwise) and ``--proposals`` (a JSON list of edges
-  ``{"edge": {"blocker": …, "blocked": …}, "reason": …}``, and the launcher's
+  ``{"edge": {"blocker": …, "blocked": …}, "reason": …}``, and the analyst's
   hand-off kills ``{"kill": …, "reason": …}``, merges
   ``{"merge": [… two or more], "reason": …}`` and priority changes
   ``{"priority": {"id": …, "to": …}, "reason": …}``, rendered as a further
@@ -101,7 +101,7 @@ milestone resolved by name:
 An out-of-pool id (Todo, parked under any other milestone, closed) is skipped and
 named, never silently dropped.
 
-**The parent switch.** A seat session files its tasks as sub-issues of its
+**The parent switch.** A subscription session files its tasks as sub-issues of its
 governing issue (``linear_issue.py create --parent``), so ``--parent ENG-###``
 names the set wherever ``--ids`` does — ``ask``, ``review``, ``approve`` and
 ``gate`` — and narrows ``list`` to it: a session that died mid-review resumes
@@ -442,7 +442,7 @@ def priority_name(value: object) -> str:
 
 def proposal_option(proposal: object) -> dict:
     """One proposal as a checkbox: an edge, a priority change, or a kill or
-    merge from the launcher's hand-off, its reason (the evidence) as the
+    merge from the analyst's hand-off, its reason (the evidence) as the
     description."""
     if not isinstance(proposal, dict) or not str(proposal.get("reason", "")).strip():
         raise RatifyError(f"proposal {proposal!r} needs a one-line reason")
@@ -623,7 +623,7 @@ PARENT_ID = re.compile(r"[A-Z]+-\d+")
 
 def fetch_children(api_key: str, project: str, parent: str) -> list[dict]:
     """The sub-issues of ``parent`` within the project, by number — the set a
-    seat session filed with ``linear_issue.py create --parent``.
+    subscription session filed with ``linear_issue.py create --parent``.
 
     This is what makes a session that died mid-review resumable from its
     governing issue's number alone. A parent that does not resolve, or has no
@@ -892,7 +892,7 @@ def run(argv: list[str]) -> int:
         # sweep of a parent's children would move an operator item to Done
         # unnamed.
         raise RatifyError(
-            f"--parent names a seat session's staged set — the {pool} pool is "
+            f"--parent names a subscription session's staged set — the {pool} pool is "
             "reviewed by id, one task at a time"
         )
     key = board_batch.env_var("LINEAR_API_KEY")

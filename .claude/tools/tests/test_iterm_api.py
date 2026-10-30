@@ -213,7 +213,7 @@ class CallContract(DriverStub, unittest.TestCase):
             },
         )
 
-    def test_open_tabs_sends_the_seat_roles_positionally(self):
+    def test_open_tabs_sends_the_daily_roles_positionally(self):
         self._stub(stdout=json.dumps({"ok": True, "ttys": ["/dev/a", "/dev/b"]}))
         iterm_api.open_tabs(["plan", "task 1"], roles=["plan", None])
         self.assertEqual(self.sent_request()["roles"], ["plan", None])
@@ -861,22 +861,22 @@ class DispatchPlacement(unittest.TestCase):
         self.assertIsNone(iterm_api.insert_index([None, "curate", "plan"], "plan"))
 
     def test_a_curate_tab_opens_left_of_the_rightmost_plan_tab(self):
-        # Past a launcher already resting there, and past a worker at the edge.
-        self.assertEqual(iterm_api.insert_index([None, "launch", "plan"], "curate"), 2)
+        # Past an analyst already resting there, and past a worker at the edge.
+        self.assertEqual(iterm_api.insert_index([None, "analyze", "plan"], "curate"), 2)
         self.assertEqual(
             iterm_api.insert_index(["plan", None, "plan", None], "curate"), 2
         )
 
-    def test_a_seat_with_no_scheduler_tab_takes_a_workers_place(self):
-        self.assertEqual(iterm_api.insert_index([None, "curate"], "launch"), 1)
-        self.assertIsNone(iterm_api.insert_index([None], "launch"))
+    def test_a_daily_role_with_no_scheduler_tab_takes_a_workers_place(self):
+        self.assertEqual(iterm_api.insert_index([None, "curate"], "analyze"), 1)
+        self.assertIsNone(iterm_api.insert_index([None], "analyze"))
 
-    def test_a_worker_opens_left_of_every_seat_at_the_edge(self):
+    def test_a_worker_opens_left_of_every_daily_role_at_the_edge(self):
         self.assertEqual(
-            iterm_api.insert_index([None, "launch", "curate", "plan"], None), 1
+            iterm_api.insert_index([None, "analyze", "curate", "plan"], None), 1
         )
 
-    def test_a_plan_launch_batch_puts_the_launcher_left_of_the_scheduler(self):
+    def test_a_plan_analyze_batch_puts_the_analyst_left_of_the_scheduler(self):
         # The new scheduler tab's shell has not set its role yet, so the batch
         # books it — the morning pre-launch's own dispatch.
         typed = self._tab("typed")
@@ -887,16 +887,16 @@ class DispatchPlacement(unittest.TestCase):
             iterm_api._open_and_type(
                 window,
                 typed,
-                ["plan", "launch"],
+                ["plan", "analyze"],
                 ttys,
                 untyped,
                 tab_roles,
-                ["plan", "launch"],
+                ["plan", "analyze"],
             )
         )
         creates = [entry for entry in self.log if entry[0] == "create"]
         self.assertEqual(creates, [("create", "new0", None), ("create", "new1", 1)])
-        self.assertEqual(tab_roles, [None, "launch", "plan"])
+        self.assertEqual(tab_roles, [None, "analyze", "plan"])
 
     def test_a_batch_fills_left_of_the_planning_tab_in_order(self):
         reading, plan = self._tab("reading"), self._tab("plan", "plan")

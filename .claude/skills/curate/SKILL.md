@@ -1,6 +1,6 @@
 ---
 name: curate
-description: Run the curator — the daily advisor-tier session that owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Dispatched by the launcher each morning, or by hand with the `curate` verb (Bedrock; `curate anthropic` is the escape). Bootstraps from the Planning document, the rulings file and one compact pool listing; ranks the un-parked Backlog against the day's direction; walks the operator through it four tasks at a time, one checkbox each with a line of commentary, plus a second checklist of proposed edges and, in the first ask, the launcher's kill and merge candidates. Moves each ticked, uncommented task to Todo one at a time, folds comments into the task's body, places only the edges, kills and merges the operator ticks, writes priorities under the agreement rule, and spins off an architect task when a spec needs a design conversation first. Messages the scheduler every move it makes. Event-driven, never polls; stops on the scheduler's closing message.
+description: Run the curator — the daily advisor-tier session that owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Dispatched by the analyst each morning, or by hand with the `curate` verb (Bedrock; `curate anthropic` is the escape). Bootstraps from the Planning document, the rulings file and one compact pool listing; ranks the un-parked Backlog against the day's direction; walks the operator through it four tasks at a time, one checkbox each with a line of commentary, plus a second checklist of proposed edges and, in the first ask, the analyst's kill and merge candidates. Moves each ticked, uncommented task to Todo one at a time, folds comments into the task's body, places only the edges, kills and merges the operator ticks, writes priorities under the agreement rule, and spins off an architect task when a spec needs a design conversation first. Messages the scheduler every move it makes. Event-driven, never polls; stops on the scheduler's closing message.
 user-invocable: true
 ---
 
@@ -10,12 +10,12 @@ The **curator** judges: everything between Backlog and Todo —
 what to promote, kill or merge. The **scheduler** (the `plan`
 session) schedules — dispatch, holds, the direction — and owns the
 Planning document. **Both hold priorities**, under the agreement
-rule (below). The **launcher** starts the day:
+rule (below). The **analyst** starts the day:
 it runs the lever fold and hands its kill and merge candidates to
 this session. Todo means "should this be done", and the operator
 answers that question in this tab, four tasks at a time.
 
-The sibling shapes: `architect` for the seat-session discipline,
+The sibling shapes: `architect` for the Claude subscription session discipline,
 `ratify-staged` for the review round this reuses — the same ask
 text, the same fold protocol, the same tool — over a different
 pool, with each approval written as it lands rather than in one
@@ -25,7 +25,7 @@ batch at the end.
 
 The **base repo**, never a worktree; no branch, no commits, no PR.
 It is advisor tier, **Bedrock** by default; `curate anthropic` is
-the escape. The launcher session dispatches it each morning, or
+the escape. The analyst session dispatches it each morning, or
 the operator types `curate`. The `curate` shell verb pins the
 model and refuses an unresolved tier, so there is no in-session
 model check
@@ -64,9 +64,9 @@ its own and has no close tool.
 
 **Nothing else.** No issue bodies — a body is read when its batch
 comes up. No PR checks, no parked counts, no audit heartbeat:
-those are the scheduler's. The **launcher's hand-off** arrives as
+those are the scheduler's. The **analyst's hand-off** arrives as
 one message, not a read: its first line names the sender,
-`Hand-off from launch-<day>: …`, then five labelled lists (`none`
+`Hand-off from analyze-<day>: …`, then five labelled lists (`none`
 when empty).
 Two feed the first ask — `Kill candidates:` and
 `Merge candidates:`, each with its evidence — and
@@ -75,7 +75,7 @@ Two feed the first ask — `Kill candidates:` and
 **after** the first ask (a held dispatch, the operator typing
 `curate` by hand) is never dropped: its candidates and batches
 ride the next batch's ask instead. The fold is finished before
-the launcher sends it; the only folding here is a review comment
+the analyst sends it; the only folding here is a review comment
 into a task body.
 
 Then state, in a few lines:
@@ -182,7 +182,7 @@ don't retitle around it.
 **Question 2**, only when there is something to propose, passed as
 `--proposals`: **edges**, one checkbox per proposal with its
 one-line reason (what it consumes, what it unblocks). In the
-**first ask** it also carries the launcher's hand-off, one
+**first ask** it also carries the analyst's hand-off, one
 checkbox per candidate with its evidence as the reason —
 `{"kill": <id>}` and `{"merge": [<ids> …]}`. A re-rank the curator
 wants the operator's word on rides here too, as

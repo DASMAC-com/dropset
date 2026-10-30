@@ -177,7 +177,7 @@ class EndToEndTests(DigestFixture):
             mtime=WINDOW_MTIME,
         )
         self.mark("11111111-aaaa", "bedrock")
-        # A seat chore in the base checkout, attributed by its prompt.
+        # A subscription chore in the base checkout, attributed by its prompt.
         base = str(self.base)
         self.write(
             base,
@@ -205,7 +205,7 @@ class EndToEndTests(DigestFixture):
         # Calibration leads the header, before any figure.
         self.assertLess(text.index("**Rate calibration**"), text.index("**Window**"))
         self.assertIn("### ENG-2170 · task · bedrock · `11111111`", text)
-        self.assertIn("### ENG-2001 · chore · seat · `22222222`", text)
+        self.assertIn("### ENG-2001 · chore · subscription · `22222222`", text)
         self.assertIn(
             f"- 2026-10-24: {sm.money(window_bedrock)}, 2 turn(s); cache re-warm "
             f"{sm.money(rates.cache_write_1h)}",

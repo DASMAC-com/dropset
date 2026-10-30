@@ -1099,18 +1099,18 @@ attention groups so you can park at position 1 and sweep right:
 **The planning tab is always locatable, by position alone** (no color of
 its own). While it is resting it sorts last, so `Cmd-9` — which selects
 the last tab even with fewer than nine — always lands on it; a resting
-curator tab sits just left of it and a resting launcher tab left of
-that, so the seat tabs sit together at the far right. While one needs
+curator tab sits just left of it and a resting analyst tab left of
+that, so the daily-role tabs sit together at the far right. While one needs
 attention it queues in its yellow or green group like any other tab,
-so a seat ask still surfaces at position 1 in FIFO order, and it
+so a daily-role ask still surfaces at position 1 in FIFO order, and it
 returns to its resting slot once cleared. The reorderer finds them by
-the iTerm user variable `user.ds_role` — `plan`, `curate` or `launch`,
+the iTerm user variable `user.ds_role` — `plan`, `curate` or `analyze`,
 which those launchers set around their sessions and clear on exit —
 never by title. `session_dispatch.py` places a new tab by the same
-roles: a scheduler tab rightmost, another seat just left of the
-rightmost scheduler tab, a worker left of the seat run. Set
+roles: a scheduler tab rightmost, another daily role just left of the
+rightmost scheduler tab, a worker left of the daily-role run. Set
 `DS_PLAN_TAB_RIGHTMOST=0` in the runtime config to skip the marker for
-all three; the seat tabs then sort like any other.
+all three; the daily-role tabs then sort like any other.
 
 Within each attention group the order is **FIFO**: the tab that has
 waited longest stays leftmost, and a tab that newly needs attention goes
@@ -1320,8 +1320,9 @@ memory, pressure and load, and answers how many more sessions of a
 class fit: `building` or `free`, classed per verb as the dispatcher
 does ("Session helpers" → `session_dispatch.py`). Every class spends
 one ceiling on live top-level `claude` clients (a sub-agent runs inside
-its parent's process), the scheduler, curator, launcher and seats
-included; a builder is further refused on the pool-lock wait. Swap is
+its parent's process), the scheduler, curator, analyst and Claude
+subscription sessions included; a builder is further refused on the
+pool-lock wait. Swap is
 reported, never a refusal — macOS leaves a stale residue paged out long
 after the pressure behind it has gone. Every launch, and every
 resume that knows its session id (all but the bare tag picker), appends
@@ -1799,9 +1800,9 @@ names alive was the outcome to avoid.
 | `task resume [n]`       | resume by number (bare = the picker)       | as recorded            | re-pinned | as recorded         | —                         |
 | `explore [s] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[s]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
 | `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
-| `plan [a]`              | fresh day: pass + seat tabs; else schedule | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
+| `plan [a]`              | fresh day: pass + role tabs; else schedule | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
 | `curate [a]`            | the curator: Backlog→Todo review, no PR    | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
-| `launch [a]`            | the morning launcher, base checkout, no PR | Bedrock, or `[a]`      | executor  | the session's       | — (no issue)              |
+| `analyze [a]`           | the morning analyst, base checkout, no PR  | Bedrock, or `[a]`      | executor  | the session's       | — (no issue)              |
 | `architect [b] <n>`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   | executor if Bedrock | `[Architect/<Substrate>]` |
 | `fleet [go]`            | batch resume                               | per-window             | re-pinned | per-window          | —                         |
 | `models [check]`        | print the tier table; `check` it for free  | —                      | —         | —                   | —                         |
@@ -1841,7 +1842,7 @@ worktree cannot be named without a name. `plan` remains a
 
 **`housekeeping` is retired — deleted, not aliased.** Its upkeep is
 `upkeep.py`, which the `plan` pre-launch runs before the session starts,
-and its approvals ride the launcher's one ask. An alias would keep a
+and its approvals ride the analyst's one ask. An alias would keep a
 name whose meaning changed from a session with a closing gate to a
 script. The 30-minute `/loop` cadence went with it and has no
 replacement; the daily pass and `upkeep.py prune --apply` by hand
@@ -1892,9 +1893,9 @@ sections point here.
 | `chore 1843`           | none (base)        | none             | helper   | nothing to prune                                       |
 
 The session name is the worktree column (`1843` for a chore).
-The named exceptions: the daily seats `schedule-<day>` (`plan`) and
-`curate-<day>` keep their day-keyed names (they have no issue), and a
-free-form explore
+The named exceptions: the daily roles `schedule-<day>` (`plan`),
+`curate-<day>` and `analyze-<day>` keep their day-keyed names (they
+have no issue), and a free-form explore
 keeps `exp-<name>`. **Git branches keep the `eng-` prefix**, because
 Linear's GitHub integration links branches and PRs on that form;
 `claude -w` cannot choose a branch name (it would say
@@ -1990,7 +1991,7 @@ knowing before relying on the inheritance:**
   alone**, which `task <n>` also writes — so an unconditional write
   would let `explore anthropic 1196` flip a `bedrock` marker and
   make the next `task resume 1196` resume the *implementation*
-  session on the seat, silently; an architect thread's marker is
+  session on the subscription, silently; an architect thread's marker is
   left alone likewise. Writing one at all (its
   substrate, advisor `.tier`) is what lets a reopen keep its
   provider, the pruner lift the executor gate, and the fleet cost
@@ -2242,7 +2243,7 @@ wrong for a verb typed into a tab by automation, so note that
 are deliberately **not** gated. Keep it that way: gating a dispatched
 verb would hang a tab nobody is watching, waiting on a device code.
 
-It runs **after** `_ds_seat_guard`, which matters: the guard clears an
+It runs **after** `_ds_subscription_guard`, which matters: the guard clears an
 `AWS_REGION` inherited from a previous `task` in the same tab, and the
 AWS CLI reads that variable, so probing first would probe under the
 Bedrock launcher's environment rather than the operator's own.
@@ -2281,14 +2282,14 @@ than being turned into a constant.
 
 **The rule is capability, not attendance.** A session runs on Bedrock
 unless it needs something Bedrock lacks — web search or deep research
-(web fetch works there; see below) — or it is a **seat session by
+(web fetch works there; see below) — or it is a **subscription session by
 role** (`architect`).
 Sub-agents are *not* a differentiator:
 Opus-spawning-Opus sub-agents are verified working on Bedrock.
-`explore` left the seat once an audit's sub-agent fan-out (ten at
+`explore` left the subscription once an audit's sub-agent fan-out (ten at
 1.0M–2.3M input each) spent the session window and most of the
 weekly one; `explore anthropic` is its web-research escape. `plan`
-left it so a scheduler session is priced: on the seat it has no dollar
+left it so a scheduler session is priced: on the subscription it has no dollar
 figure. `plan anthropic` is its way back.
 
 **What Bedrock actually lacks**, measured 2026-10-23 from a Bedrock
@@ -2305,7 +2306,7 @@ broke on capability.
 
 **The 5-hour subscription window has no verb opening it by default.**
 It was the retired `housekeeping` verb's one non-capability reason to
-stay on the seat, then `plan`'s; with `plan` on Bedrock, the day's
+stay on the subscription, then `plan`'s; with `plan` on Bedrock, the day's
 first anthropic-substrate session opens it — an `architect`, or any
 verb's `anthropic` escape.
 
@@ -2316,7 +2317,7 @@ Bedrock launch also binds the sub-agent slots to tiers — the `haiku`
 one only when the background tier is set — scoped to the one `claude`
 command (see "Model tiers").
 An anthropic launch exports none of them —
-**the absence of `CLAUDE_CODE_USE_BEDROCK` IS the seat pin**, which is
+**the absence of `CLAUDE_CODE_USE_BEDROCK` IS the subscription pin**, which is
 why an anthropic launch *clears* those variables rather than merely
 warning about them (see below). **Neither exports the model**: every
 verb hands its tier's model to `claude` as an `ANTHROPIC_MODEL`
@@ -2333,11 +2334,11 @@ supported). Clearing those outright destroys values the launcher never
 owned, and destroying the token in particular makes the *next* `task` in
 that tab fail against config the operator chose not to set.
 
-So a seat verb **undoes a launch** rather than clearing: the launcher
+So a subscription verb **undoes a launch** rather than clearing: the launcher
 records what each shared variable held beforehand and what it installed,
 and restores the former only where the current value is still the
 latter. That is what makes three otherwise-broken cases come out right —
-a seat verb in a tab that never launched (leave them alone), a second
+a subscription verb in a tab that never launched (leave them alone), a second
 `task` in one tab (the first launch's record wins), and a value the
 operator swapped by hand afterwards (recognized as theirs, kept).
 
@@ -2462,7 +2463,7 @@ running.
 **The substrate override** is the two substrate names and nothing else,
 as an optional literal word: `task anthropic <n>`, `plan anthropic`,
 `architect bedrock <n>`. `plan` reads no substrate
-variable: Bedrock is its default, `plan anthropic` the seat override,
+variable: Bedrock is its default, `plan anthropic` the subscription override,
 and `plan bedrock` a no-op spelling. A bare `plan` reopen lands on the
 substrate the day's current session recorded; a word that disagrees
 warns and is ignored, and a session with no record reads as anthropic.
@@ -2491,8 +2492,8 @@ a stack-replacing migration for no functional gain.
 marker under `.claude/session-substrate/`, keyed by worktree tag; the
 resume verbs read it and re-export accordingly, **and re-pin the tier's
 model**. This exists because the slip is **silent in both directions**
-— a Bedrock session resumed onto the seat quietly eats the 5-hour
-window, and a seat session resumed onto Bedrock quietly spends credits
+— a Bedrock session resumed onto the subscription quietly eats its 5-hour
+window, and a subscription session resumed onto Bedrock quietly spends credits
 on attended work. Neither errors. **An absent marker reads as
 `anthropic`**, the conservative default, which is also correct for
 every session predating markers (the retired `seat` value reads the
@@ -2523,7 +2524,7 @@ does not read it.
 **Two guards, pointing opposite ways.** A Bedrock launch **hard-gates**
 on the environment being present — no bearer token means no launch,
 because the alternative is an opaque provider error several turns in,
-long after work has started. A seat verb **warns and clears**: these
+long after work has started. A subscription verb **warns and clears**: these
 helpers export into the *calling* shell (they must — a child process could
 not set what `claude` inherits), so a tab that ran `task` is still a
 Bedrock tab afterwards, and the next `plan` in it would silently run on
@@ -2550,7 +2551,7 @@ returns**, whether by `/exit`, Ctrl+C or Ctrl+D. That covers
 launch and every `task resume <n>` form. The epilogue, `_ds_exit_estimate`,
 runs `session_metrics.py --brief --session-id <sid>` and prints the
 one-paragraph figure, priced at Bedrock rates on either substrate (a
-seat session's says not billed). A resumed session prints its
+subscription session's says not billed). A resumed session prints its
 cumulative figure, since the transcript is the whole session.
 
 The verbs that compute their id pass it, and so does a `task resume`
@@ -2735,8 +2736,8 @@ a terminal closed outright, is covered by the next morning's digest.
   (see "Model tiers"). `explore anthropic <n|name>` launches on the
   subscription, in `task`'s position. **A launch into an existing
   session or worktree takes the substrate the marker records** —
-  anthropic where there is none, so an unmarked or seat-marked tree
-  stays on the seat, and a tree `task` marked `bedrock` stays there;
+  anthropic where there is none, so an unmarked or `seat`-marked tree
+  stays on the subscription, and a tree `task` marked `bedrock` stays there;
   only a launch that creates its worktree chooses, and writes the
   marker with an advisor `.tier`. So a session's reopen always reads
   back the substrate it started on. A word that disagrees with the
@@ -2772,7 +2773,7 @@ a terminal closed outright, is covered by the next morning's digest.
   `plan`, so no resume broke), `cd`s to the base repo,
   and launches Claude Code on the advisor tier with `/plan` as the
   initial prompt, on Bedrock. The optional word is the substrate
-  override — `plan anthropic` for the seat; a reopen keeps the
+  override — `plan anthropic` for the subscription; a reopen keeps the
   substrate its session recorded. See "Model tiers" for the
   retention line.
 
@@ -2796,12 +2797,12 @@ a terminal closed outright, is covered by the next morning's digest.
   duplicate name would break that addressing. The relaunch carries
   `DS_PLAN_DATE` (the launch day) and `DS_DAILY_KIND` (`plan`) into
   the client, so the session's own tools still compute its id after
-  midnight and `plan_cycle.py` knows which seat it serves. A later
+  midnight and `plan_cycle.py` knows which daily role it serves. A later
   bare `plan` resumes the day's latest cycle — and **refuses while a
   live client already holds it** (`plan_cycle.py live-name`), naming
   the tab to switch to: a resume by id never checked, and a second
   `plan` once forked the running scheduler into a second client. The
-  same guard covers `curate` and `launch`; a check that cannot answer
+  same guard covers `curate` and `analyze`; a check that cannot answer
   warns and resumes.
 
   **On a fresh day it is the pre-launch, not the scheduler.** A day
@@ -2821,23 +2822,23 @@ a terminal closed outright, is covered by the next morning's digest.
   elapsed seconds, or `crashed`), then a total, so a hung step names
   itself; Ctrl-C there skips the pass rather than the launch. It then
   writes the day's marker and opens **two tabs in one
-  `session_dispatch.py plan + launch` batch**: the scheduler's
-  rightmost and the launcher's just left of it. The typed tab's
+  `session_dispatch.py plan + analyze` batch**: the scheduler's
+  rightmost and the analyst's just left of it. The typed tab's
   prompt returns with the log in its scrollback. A tab the machine
   gate **holds** is said out loud and never overridden here. For a
-  tab that neither opened nor was held: a launcher runs in the typed
-  tab instead; with neither open, the launcher runs there with
-  `DS_LAUNCH_SCHEDULER` naming the scheduler verb its skill dispatches
-  as its first act; a scheduler missing beside an open launcher is
+  tab that neither opened nor was held: an analyst runs in the typed
+  tab instead; with neither open, the analyst runs there with
+  `DS_ANALYZE_SCHEDULER` naming the scheduler verb its skill dispatches
+  as its first act; a scheduler missing beside an open analyst is
   named for the operator to type. The report
   lands under the Planning document's upkeep heading, which the
-  bootstrap reads; the launcher prunes finished worktrees unasked,
+  bootstrap reads; the analyst prunes finished worktrees unasked,
   and the other destructive items (allowlist cruft,
   permission-refresh additions, judged memories, the purge apply)
   wait for its tab's one `AskUserQuestion`. **Every later
   `plan` that day is warm** — the one typed into the scheduler's tab
   first — and runs the scheduler in the tab it was typed in, with no
-  pass and no launcher. The marker is what stops a pass that failed
+  pass and no analyst. The marker is what stops a pass that failed
   to stamp from re-running the pre-launch on each `plan`.
   `DS_SKIP_UPKEEP=1` skips the pass and still opens the tabs; a
   failed pass warns and the pre-launch proceeds.
@@ -2899,7 +2900,7 @@ a terminal closed outright, is covered by the next morning's digest.
     program.
 
   This **supersedes** hand-naming a base-repo session `planning-<day>`
-  and resuming it by that name. `plan`, `curate` and `launch` are the
+  and resuming it by that name. `plan`, `curate` and `analyze` are the
   daily **base-repo** session verbs — `explore` moved to its own worktree,
   so it is no longer the general-purpose base-repo entry point it once
   was.
@@ -2909,15 +2910,15 @@ a terminal closed outright, is covered by the next morning's digest.
 
 - **`curate [anthropic|bedrock]`** — start **or resume** the
   **curator**'s daily session: review between Backlog and Todo, the
-  scheduler's seat-mate. Built from the same parts as `plan` (one
-  shared `_ds_daily_seat` body): the advisor tier, Bedrock by default
+  scheduler's companion. Built from the same parts as `plan` (one
+  shared `_ds_daily_role` body): the advisor tier, Bedrock by default
   whatever `DS_MODEL_ADVISOR_SUBSTRATE` says, `anthropic` by word, a
   reopen keeping the substrate its session recorded; the base repo, no
   worktree, no PR, no issue; display name `curate-<day>`, initial
   prompt `/curate`; the same idempotent create-or-resume and the same
   in-place cycle loop on its own `curate-cycle-<YYYYMMDD>` counter and
   `curate-cycle-pending` marker, carrying `DS_DAILY_KIND=curate`. It
-  is a **free** seat verb (class stamped `free` through the shared
+  is a **free** daily-role verb (class stamped `free` through the shared
   resolver; lane 0, as the base checkout always is). It runs **no AWS
   gate** (it reads no cost data) and **no upkeep pass** (that is the
   `plan` pre-launch's). Its tab carries `ds_role=curate` around the
@@ -2927,21 +2928,21 @@ a terminal closed outright, is covered by the next morning's digest.
   warns once if a `curate` command on `PATH` is shadowed. `fleet` and
   `task resume` leave it alone — it names no issue.
 
-- **`launch [anthropic|bedrock]`** — start **or resume** the day's
-  **launcher**, the session the `plan` pre-launch opens just left of
+- **`analyze [anthropic|bedrock]`** — start **or resume** the day's
+  **analyst**, the session the `plan` pre-launch opens just left of
   the scheduler's tab to dispatch the morning: the **executor** tier,
   Bedrock by default, `anthropic` by word, a reopen keeping the
   substrate its session recorded; the base repo, no worktree, no PR,
-  no issue; display name `launch-<day>`, initial prompt `/launch`, a
-  daily id seeded `launch` with no cycle loop. Its per-session
+  no issue; display name `analyze-<day>`, initial prompt `/analyze`, a
+  daily id seeded `analyze` with no cycle loop. Its per-session
   substrate record is written on create, so the pricing tools meter it
-  as any other session, and `fleet_cost.py` groups it under `launch`.
-  A **free** seat verb, whose reopen refuses while a live client holds
+  as any other session, and `fleet_cost.py` groups it under `analyze`.
+  A **free** daily-role verb, whose reopen refuses while a live client holds
   it, as `plan`'s does. It runs no AWS gate and no upkeep pass (the
-  pre-launch ran both). Its tab carries `ds_role=launch`:
-  `iterm-reorder.py` rests it left of the curator's, and
+  pre-launch ran both). Its tab carries `ds_role=analyze`:
+  `iterm-reorder.py` rests it left of the scheduler's, and
   `session_dispatch.py` opens worker tabs left of it. What the session
-  does is the `launch` skill's: the day's lever fold in this visible
+  does is the `analyze` skill's: the day's lever fold in this visible
   tab (its stamp, `.claude/.fold-last-run.json`, written by
   `upkeep.py fold-stamp` and said by the scheduler through
   `upkeep.py fold-today`), the curator's dispatch on the scheduler's
@@ -2954,7 +2955,7 @@ a terminal closed outright, is covered by the next morning's digest.
   judge, below.
 
   **Done means prune.** An issue marked Done or Canceled releases
-  everything attached to it, and the launcher prunes it without
+  everything attached to it, and the analyst prunes it without
   asking (operator ruling, 2026-10-29): `upkeep.py prune --apply`,
   its first act once the fold is done or skipped, removes the
   checkout under
@@ -2968,7 +2969,7 @@ a terminal closed outright, is covered by the next morning's digest.
   written at or after the latest digest window's close (the digest
   directory's `history.jsonl`) is held `not yet digested` and goes
   the next morning — and Linear unreachable prunes nothing. The
-  launcher reports each removed name with its tip
+  analyst reports each removed name with its tip
   (`git branch <name> <tip>` restores a branch). Uncommitted edits
   in a tree still present on a Done issue are lost; Done is the
   operator's own word.
@@ -2978,7 +2979,7 @@ a terminal closed outright, is covered by the next morning's digest.
   report's `memory` line says the `MEMORY.md` line count on every
   run whose gate answers — it should fall. Weekly, on its own gate
   (`memory_scan_gate.py judge-check`, a time-only marker beside the
-  scan's), the launcher spawns one read-only sub-agent that reads
+  scan's), the analyst spawns one read-only sub-agent that reads
   every memory against HEAD and the board and returns a verdict and
   a fact per file: **stale** (disproved), **superseded** (a named
   sibling), **repo-bound** (a durable project or convention fact
@@ -3052,7 +3053,7 @@ a terminal closed outright, is covered by the next morning's digest.
   becomes a to-attend list with nothing left to type.
 
   Because each tab types `task resume`, which reads that session's own
-  substrate marker, a **mixed fleet** of Bedrock and seat sessions comes
+  substrate marker, a **mixed fleet** of Bedrock and subscription sessions comes
   back on the right provider per session — and `fleet` itself needs no
   substrate knowledge at all.
 
@@ -3156,12 +3157,12 @@ a terminal closed outright, is covered by the next morning's digest.
   set and double them. Since both callers go through `open_tabs`, so
   would any future one.
 
-  **New tabs land just left of the seat tabs resting at the right
+  **New tabs land just left of the daily-role tabs resting at the right
   edge** (the scheduler's outermost, the curator's beside it), by
   creation index (`async_create_tab(index=…)`) rather than a later
   reorder, so the planning tab stays where `Cmd-9` reaches it. iTerm
   has no tab pin or fixed-index facility to use instead. While the
-  reorderer runs, a seat tab that is not at the edge is in an attention
+  reorderer runs, a daily-role tab that is not at the edge is in an attention
   group, and the default append is then already the resting order.
 
   **Every tab either launcher opens gets the green Attend mark**

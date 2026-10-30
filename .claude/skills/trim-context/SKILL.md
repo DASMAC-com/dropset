@@ -1,6 +1,6 @@
 ---
 name: trim-context
-description: The fold analyst — the method the `launch` session runs in its own tab each morning, or run by hand. Reads the day's session digest (every session's numbers beside its own Session account, plus flagged CI lines), judges across all of them at once which trim levers clear the bar, dedups each candidate by fingerprint and by Backlog title, folds a near-match into the existing issue as a new part, and files the rest as small themed `Claude:` batches of about 4–5 parts, one `**Fingerprint**:` per part, straight into Backlog with no milestone. Never edits a skill or convention doc — filing a batch is the proposal.
+description: The fold analyst — the method the `analyze` session runs in its own tab each morning, or run by hand. Reads the day's session digest (every session's numbers beside its own Session account, plus flagged CI lines), judges across all of them at once which trim levers clear the bar, dedups each candidate by fingerprint and by Backlog title, folds a near-match into the existing issue as a new part, and files the rest as small themed `Claude:` batches of about 4–5 parts, one `**Fingerprint**:` per part, straight into Backlog with no milestone. Never edits a skill or convention doc — filing a batch is the proposal.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -17,7 +17,7 @@ A session files nothing that is only a trim, so no session spends
 context checking what other sessions filed — the analyst sees the
 whole day at once, which is where a shared sink is visible.
 
-It runs identically by hand or as the launcher's fold (`launch`
+It runs identically by hand or as the analyst's fold (`analyze`
 step 1), and **asks nothing**. Filing a batch *is* the proposal: it
 never edits a skill, a convention doc or `CLAUDE.md`.
 
@@ -200,7 +200,7 @@ Below-bar noise gets no record; it is simply not filed.
 **8. Report**, at most thirty lines: the batches filed with their
 ENG-###s and part counts, the parts folded into existing issues, the
 rejections recorded and why, and the sessions and dollars the digest
-covered. The launcher carries the same lists to the curator in its
+covered. The analyst carries the same lists to the curator in its
 hand-off, and the batches are reviewed from the curator's pool like
 any other un-parked Backlog task.
 

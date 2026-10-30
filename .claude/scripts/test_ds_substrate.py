@@ -11,12 +11,12 @@ than reviewed:
     the 200k window and reports nothing, so losing it looks exactly like a
     session that filled up.
   * An absent marker reads as `anthropic`. Every session predating markers is
-    a seat session, and the conservative error is spending the subscription
+    a subscription session, and the conservative error is spending the subscription
     window rather than spending credits on something unintended.
-  * A seat verb CLEARS inherited Bedrock exports. The helpers export into the
+  * A subscription verb CLEARS inherited Bedrock exports. The helpers export into the
     calling shell (they must — a child process could not set what `claude`
     inherits), so a tab that ran `task` stays a Bedrock tab afterwards, and the
-    seat pin is expressed as the ABSENCE of `CLAUDE_CODE_USE_BEDROCK`.
+    subscription pin is expressed as the ABSENCE of `CLAUDE_CODE_USE_BEDROCK`.
 
 Landing as Python driving real `zsh`, for the same reason `test_ds_pull.py`
 does: `make tools-tests` already discovers `test_*.py` under `.claude/scripts`
@@ -253,7 +253,7 @@ class VerbLaunch(SubstrateHarness):
         result, out = self._launch("plan bedrock", env=self._TOKEN)
         self.assertIn("MODEL=judge-model[1m] USE=1", out, result.stderr)
 
-    def test_plan_anthropic_is_the_seat_override(self):
+    def test_plan_anthropic_is_the_subscription_override(self):
         result, out = self._launch("plan anthropic", env=self._TOKEN)
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
 
@@ -271,7 +271,7 @@ class VerbLaunch(SubstrateHarness):
         )
 
     def test_a_plan_reopen_lands_on_the_mornings_substrate(self):
-        # The morning's `plan anthropic` recorded the seat; a bare reopen must
+        # The morning's `plan anthropic` recorded the subscription; a bare reopen must
         # not drift onto the Bedrock default mid-day.
         self._launch("plan anthropic")
         result, out = self._launch(self._plan_transcript() + "plan", env=self._TOKEN)
@@ -287,7 +287,7 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("recorded on bedrock", result.stderr)
 
     def test_an_unrecorded_plan_reopen_reads_as_anthropic(self):
-        # A session opened before the record existed was a seat session.
+        # A session opened before the record existed was a subscription session.
         result, out = self._launch(self._plan_transcript() + "plan", env=self._TOKEN)
         self.assertIn("MODEL=judge-model[1m] USE=unset", out, result.stderr)
         self.assertIn("no substrate record", result.stderr)
@@ -354,7 +354,7 @@ class VerbLaunch(SubstrateHarness):
 
     def test_a_create_that_never_started_does_not_pin_its_substrate(self):
         # A Bedrock `plan` that died before writing a transcript, then a
-        # `plan anthropic`: the session that ran is the seat one, so the
+        # `plan anthropic`: the session that ran is the subscription one, so the
         # record must say so, or every reopen moves it onto Bedrock.
         self._launch("plan", env=self._TOKEN)
         result, out = self._launch(f"plan anthropic; {self._SESSIONS}")
@@ -430,7 +430,7 @@ class VerbLaunch(SubstrateHarness):
     )
 
     def test_explore_is_bedrock_whatever_the_advisor_config(self):
-        # An audit's sub-agent fan-out is what moved it off the seat, so the
+        # An audit's sub-agent fan-out is what moved it off the subscription, so the
         # advisor substrate `plan` and `architect` read must not move it back.
         result, out = self._launch(
             "explore 12; " + self._MARK.format(12),
@@ -454,7 +454,7 @@ class VerbLaunch(SubstrateHarness):
         result, out = self._launch("explore eng-12", env=self._TOKEN)
         self.assertIn("-n 12 --permission-mode auto -w 12", out, result.stderr)
 
-    def test_explore_anthropic_is_the_seat_with_no_tier_exports(self):
+    def test_explore_anthropic_is_the_subscription_with_no_tier_exports(self):
         result, out = self._launch(
             "explore anthropic 12; " + self._MARK.format(12), env=self._TOKEN
         )
@@ -483,7 +483,7 @@ class VerbLaunch(SubstrateHarness):
         )
 
     def test_an_explore_reopen_keeps_its_recorded_substrate(self):
-        # Unmarked: a session from before the Bedrock default, so the seat.
+        # Unmarked: a session from before the Bedrock default, so the subscription.
         result, out = self._launch(
             self._explore_transcript(12) + "explore 12", env=self._TOKEN
         )
@@ -533,7 +533,7 @@ class VerbLaunch(SubstrateHarness):
     _TREE = 'mkdir -p "$_DS_REPO/.claude/worktrees/{0}"; '
 
     def test_a_fresh_explore_inherits_another_verbs_marker(self):
-        # `architect 12` on the seat marked the shared tree: a fresh `explore
+        # `architect 12` on the subscription marked the shared tree: a fresh `explore
         # 12` must launch there too, or its reopen would switch provider.
         result, out = self._launch(
             self._TREE.format(12)
@@ -616,7 +616,7 @@ class VerbLaunch(SubstrateHarness):
             result.stderr,
         )
 
-    def test_an_unmarked_tree_says_why_it_lands_on_the_seat(self):
+    def test_an_unmarked_tree_says_why_it_lands_on_the_subscription(self):
         result, out = self._launch(self._TREE.format(12) + "explore 12")
         self.assertIn("no marker", result.stderr)
         self.assertNotIn("recorded on anthropic", result.stderr)
@@ -870,7 +870,7 @@ class VerbLaunch(SubstrateHarness):
 
     def test_resume_reads_a_pre_rename_marker(self):
         # A Bedrock session launched before the rename recorded under `eng-8`;
-        # losing it would silently resume that session on the seat.
+        # losing it would silently resume that session on the subscription.
         result, out = self._launch(
             "_ds_substrate_write eng-8 bedrock; task resume eng-8", env=self._TOKEN
         )
@@ -1179,7 +1179,7 @@ class MarkerRoundTrip(SubstrateHarness):
         self.assertEqual(result.stdout.strip(), "anthropic")
 
     def test_write_survives_an_unwritable_state_directory(self):
-        # Best-effort by design: a marker is an optimization over the seat
+        # Best-effort by design: a marker is an optimization over the subscription
         # default, so failing to write one must never fail a launch.
         blocked = self.repo / ".claude" / "session-substrate"
         blocked.write_text("not a directory\n", encoding="utf-8")
@@ -1187,13 +1187,13 @@ class MarkerRoundTrip(SubstrateHarness):
         self.assertIn("rc=0", result.stdout)
 
 
-class SeatGuard(SubstrateHarness):
-    """`_ds_seat_guard` — the seat pin is an absence, so it must be made true."""
+class SubscriptionGuard(SubstrateHarness):
+    """`_ds_subscription_guard` — the subscription pin is an absence, so it must be made true."""
 
     #: Probes EVERY variable `_ds_substrate_unset` touches. Reviewing an
     #: earlier version found it asserted four of five — `FAST` was missing, so
     #: deleting that name from the unset list kept this suite green while a
-    #: seat session's background sub-turns went on billing to Bedrock credits.
+    #: subscription session's background sub-turns went on billing to Bedrock credits.
     #: That is exactly the silent-in-production class the module docstring
     #: names as its selection criterion, so the probe is kept exhaustive.
     _PROBE = (
@@ -1216,7 +1216,7 @@ class SeatGuard(SubstrateHarness):
         # exports like these — there is no recorded launch to undo. Their real
         # behavior is covered end-to-end by `SharedVariableRoundTrip` below.
         result = self._zsh(
-            f"_ds_seat_guard plan; {self._PROBE}",
+            f"_ds_subscription_guard plan; {self._PROBE}",
             env={
                 "CLAUDE_CODE_USE_BEDROCK": "1",
                 "ANTHROPIC_MODEL": "us.anthropic.claude-opus-5[1m]",
@@ -1229,13 +1229,13 @@ class SeatGuard(SubstrateHarness):
         self.assertIn("FAST=unset", result.stdout)
         self.assertIn("CACHE=unset", result.stdout)
 
-    def test_a_seat_verb_in_a_FRESH_tab_leaves_shared_variables_alone(self):
+    def test_a_subscription_verb_in_a_FRESH_tab_leaves_shared_variables_alone(self):
         # `AWS_REGION` and the token are shared with the operator's own
         # environment. With no launch recorded in this shell they were never
         # ours, so a plain `plan` in a fresh tab must not destroy an
         # `AWS_REGION` the shell profile exported.
         result = self._zsh(
-            f"_ds_seat_guard plan; {self._PROBE}",
+            f"_ds_subscription_guard plan; {self._PROBE}",
             env={
                 "AWS_REGION": "eu-central-1",
                 "AWS_BEARER_TOKEN_BEDROCK": "operator-supplied",
@@ -1247,23 +1247,23 @@ class SeatGuard(SubstrateHarness):
 
 @unittest.skipUnless(shutil.which("zsh"), _NEEDS_ZSH)
 class SharedVariableRoundTrip(SubstrateHarness):
-    """End-to-end: drive `_ds_bedrock_env` for real, then run the seat guard.
+    """End-to-end: drive `_ds_bedrock_env` for real, then run the subscription guard.
 
     These exist because the first attempt at provenance tracking was tested by
     hand-setting its marker, which is exactly where its two bugs lived: the
     marker went stale on a SECOND launch in one tab (so a launcher-resolved
-    token then survived a seat verb), and a hand-swapped token was destroyed
+    token then survived a subscription verb), and a hand-swapped token was destroyed
     anyway. Neither is reachable from a test that sets the marker itself.
     """
 
-    _PROBE = SeatGuard._PROBE
+    _PROBE = SubscriptionGuard._PROBE
 
     #: Enough for `_ds_bedrock_env` to succeed without touching 1Password.
     _TOKEN_ENV = {"AWS_BEARER_TOKEN_BEDROCK": "operator-supplied"}
 
     def test_an_operator_token_and_region_survive_a_real_launch_and_guard(self):
         result = self._zsh(
-            f"_ds_bedrock_env; _ds_seat_guard plan; {self._PROBE}",
+            f"_ds_bedrock_env; _ds_subscription_guard plan; {self._PROBE}",
             env={**self._TOKEN_ENV, "AWS_REGION": "eu-central-1"},
         )
         self.assertIn("USE=unset", result.stdout)
@@ -1273,7 +1273,7 @@ class SharedVariableRoundTrip(SubstrateHarness):
     def test_a_region_the_launcher_installed_is_undone(self):
         # No operator region beforehand, so the restore is to "absent".
         result = self._zsh(
-            f"_ds_bedrock_env; _ds_seat_guard plan; {self._PROBE}",
+            f"_ds_bedrock_env; _ds_subscription_guard plan; {self._PROBE}",
             env=dict(self._TOKEN_ENV),
         )
         self.assertIn("REGION=unset", result.stdout)
@@ -1281,7 +1281,7 @@ class SharedVariableRoundTrip(SubstrateHarness):
     def test_a_FAILED_launch_does_not_destroy_the_operators_region(self):
         # `_ds_bedrock_env` exports AWS_REGION before it can discover it has no
         # token, and its failure path rolls back through the same function the
-        # seat guard uses. The rollback must undo the launch, not clear.
+        # subscription guard uses. The rollback must undo the launch, not clear.
         result = self._zsh(
             f"_ds_bedrock_env; {self._PROBE}",
             env={"AWS_REGION": "eu-central-1"},
@@ -1294,7 +1294,7 @@ class SharedVariableRoundTrip(SubstrateHarness):
         # the FIRST launch's values as "prior", so the restore would put
         # Bedrock's region back instead of the operator's.
         result = self._zsh(
-            f"_ds_bedrock_env; _ds_bedrock_env; _ds_seat_guard plan; {self._PROBE}",
+            f"_ds_bedrock_env; _ds_bedrock_env; _ds_subscription_guard plan; {self._PROBE}",
             env={**self._TOKEN_ENV, "AWS_REGION": "eu-central-1"},
         )
         self.assertIn("REGION=eu-central-1", result.stdout)
@@ -1305,7 +1305,7 @@ class SharedVariableRoundTrip(SubstrateHarness):
         # operator's and stays — the vice-versa of the case above.
         result = self._zsh(
             "_ds_bedrock_env; export AWS_BEARER_TOKEN_BEDROCK=swapped-by-hand; "
-            f"_ds_seat_guard plan; {self._PROBE}",
+            f"_ds_subscription_guard plan; {self._PROBE}",
             env=dict(self._TOKEN_ENV),
         )
         self.assertIn("TOKEN=swapped-by-hand", result.stdout)
@@ -1319,10 +1319,10 @@ class LauncherResolvedToken(SubstrateHarness):
     exercises the `${VAR:-…}` escape hatch and skips the resolution entirely.
     A stub `op` on PATH reaches the real branch at no extra cost, and it is the
     only way to test the direction that matters most: a token the LAUNCHER
-    produced must not outlive a seat verb.
+    produced must not outlive a subscription verb.
     """
 
-    _PROBE = SeatGuard._PROBE
+    _PROBE = SubscriptionGuard._PROBE
     _RESOLVED = "stub-resolved-token"
 
     def _op_env(self):
@@ -1345,9 +1345,9 @@ class LauncherResolvedToken(SubstrateHarness):
         self.assertIn("rc=0", result.stdout)
         self.assertIn(f"TOKEN={self._RESOLVED}", result.stdout)
 
-    def test_a_launcher_resolved_token_does_NOT_outlive_a_seat_verb(self):
+    def test_a_launcher_resolved_token_does_NOT_outlive_a_subscription_verb(self):
         result = self._zsh(
-            f"_ds_bedrock_env; _ds_seat_guard plan; {self._PROBE}",
+            f"_ds_bedrock_env; _ds_subscription_guard plan; {self._PROBE}",
             env=self._op_env(),
         )
         self.assertIn("USE=unset", result.stdout)
@@ -1356,10 +1356,10 @@ class LauncherResolvedToken(SubstrateHarness):
     def test_it_still_does_not_outlive_a_SECOND_launch_in_the_same_tab(self):
         # The staleness bug in the first provenance attempt: the second launch
         # saw a token already present, concluded it was the operator's, and the
-        # seat guard then preserved a launcher-resolved credential in a seat
+        # subscription guard then preserved a launcher-resolved credential in a seat
         # tab. Two launches, one guard, token must still be gone.
         result = self._zsh(
-            f"_ds_bedrock_env; _ds_bedrock_env; _ds_seat_guard plan; {self._PROBE}",
+            f"_ds_bedrock_env; _ds_bedrock_env; _ds_subscription_guard plan; {self._PROBE}",
             env=self._op_env(),
         )
         self.assertIn("TOKEN=unset", result.stdout)
@@ -1367,12 +1367,14 @@ class LauncherResolvedToken(SubstrateHarness):
     def test_clearing_is_announced(self):
         # The warning is kept alongside the correction: a silent fix hides that
         # the tab was in an unexpected state to begin with.
-        result = self._zsh("_ds_seat_guard plan", env={"CLAUDE_CODE_USE_BEDROCK": "1"})
+        result = self._zsh(
+            "_ds_subscription_guard plan", env={"CLAUDE_CODE_USE_BEDROCK": "1"}
+        )
         self.assertIn("plan:", result.stderr)
-        self.assertIn("seat verb", result.stderr)
+        self.assertIn("subscription verb", result.stderr)
 
     def test_a_clean_shell_is_silent(self):
-        result = self._zsh(f"_ds_seat_guard plan; {self._PROBE}")
+        result = self._zsh(f"_ds_subscription_guard plan; {self._PROBE}")
         self.assertEqual(result.stderr.strip(), "")
         self.assertIn("USE=unset", result.stdout)
 
@@ -1389,7 +1391,7 @@ class BedrockEnvGate(SubstrateHarness):
 
     def test_a_failed_gate_leaves_no_half_set_environment(self):
         # A launch that is refused must not leave the tab pinned to Bedrock —
-        # that would make the NEXT seat verb in the same tab wrong too.
+        # that would make the NEXT subscription verb in the same tab wrong too.
         result = self._zsh(
             '_ds_bedrock_env; print -r -- "USE=${CLAUDE_CODE_USE_BEDROCK-unset}"'
         )
@@ -1431,7 +1433,7 @@ class BedrockEnvGate(SubstrateHarness):
         self.assertIn("FAST=unset", result.stdout)
         self.assertIn("DS_MODEL_BACKGROUND is unset", result.stderr)
 
-    def test_the_opus_alias_is_the_executor_and_a_seat_verb_clears_it(self):
+    def test_the_opus_alias_is_the_executor_and_a_subscription_verb_clears_it(self):
         # The `plan` skill's lever fold names `model: opus`; on Bedrock that
         # must be the executor, not the advisor the session itself runs.
         # The slot is bound for the one `claude` command, not the tab.
@@ -1440,7 +1442,7 @@ class BedrockEnvGate(SubstrateHarness):
             'claude() { print -r -- "IN=$(printenv ANTHROPIC_DEFAULT_OPUS_MODEL)"; }; '
         )
         result = self._zsh(
-            f"{stub}_ds_bedrock_env; _ds_claude m; {probe}; _ds_seat_guard plan; "
+            f"{stub}_ds_bedrock_env; _ds_claude m; {probe}; _ds_subscription_guard plan; "
             f"{probe}",
             env={**_CONFIG, "AWS_BEARER_TOKEN_BEDROCK": "placeholder-key"},
         )

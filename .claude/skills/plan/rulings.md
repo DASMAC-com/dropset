@@ -28,29 +28,29 @@ the document's state sections.
 ## The numbered rulings
 
 1. **Tier names are advisor / executor / helper / background.**
-   Advisor: `architect` and `explore anthropic` on the Anthropic
+   Advisor: `architect` and `explore anthropic` on the Claude
    subscription, `plan` on Bedrock, `explore` on Bedrock with
    executor-tier sub-agents. Executor: task workers on Bedrock, and
-   the launcher (`launch`), which runs the lever fold in its own
-   tab (`housekeeping`, once the seat exception here, is retired).
-   Helper: `chore`
+   the analyst (`analyze`), which runs the lever fold in its own
+   tab (`housekeeping`, once the subscription exception here, is
+   retired). Helper: `chore`
    sessions, Sonnet-class, Bedrock by default, pinned with the 1M
    suffix in the runtime config.
    Model ids live only in the operator's runtime config; unset
-   refuses the launch. Role nouns (2026-10-26): the **scheduler**
-   (`plan`), the **curator** (`curate`) and the **launcher**
-   (`launch`).
+   refuses the launch. Role nouns (2026-10-26; the analyst
+   2026-10-30): the **scheduler** (`plan`), the **curator**
+   (`curate`) and the **analyst** (`analyze`).
 
 1. **Next means dispatchable right now.** A planning hold is a
    blocking edge the operator can see, never prose-only state.
    Automated filers never place an edge; the human sources are a
-   planning session, a seat session's filing yes in the operator's
+   planning session, a subscription session's filing yes in the operator's
    tab (`ratify-staged`), and an edge the operator ticks in the
    curator's tab (ruling 12). (`SKILL.md` step 2.)
    **The coordination rule** (2026-10-26, amended 2026-10-28 and
    2026-10-29): the curator judges — promote, kill, merge; the
    scheduler schedules, owns the direction and the Planning
-   document; the launcher starts the day and hands the curator its
+   document; the analyst starts the day and hands the curator its
    kill and merge candidates. **Both advisors hold priority
    authority** (2026-10-29), in Backlog and in Todo alike, under
    the **agreement rule**: a priority write is messaged to the
@@ -122,7 +122,7 @@ the document's state sections.
 
 1. **Fan-out gate.** Invoking a verb pre-approves its
    regular sub-agent fan-out — `review-pr`'s reviewers,
-   `audit-scope`'s cross-check. Invoking `launch` likewise
+   `audit-scope`'s cross-check. Invoking `analyze` likewise
    authorizes its lever fold's Linear writes.
 
 1. **Architect read-back: two stages, two questions.** Stage 1 is
@@ -162,12 +162,12 @@ the document's state sections.
 1. **Session metrics is a digest, not a session step.** A session
    prints a tool estimate at its end, writes its account, and files
    nothing; upkeep digests every transcript each morning and the
-   launcher's lever fold files from the digest. The cost line on
+   analyst's lever fold files from the digest. The cost line on
    the issue is the close tool's write.
 
 1. **Housekeeping never costs an extra tab visit.** Upkeep runs
    as the pre-launch in the typed tab, its report in the
-   scheduler's bootstrap; the lever fold runs in the launcher's
+   scheduler's bootstrap; the lever fold runs in the analyst's
    tab, and destructive items are asked once there, in one ask,
    applied only on a yes (2026-10-28).
 
@@ -200,7 +200,7 @@ the document's state sections.
 1. **The tGBP basis is observed, not pinned.**
 
 1. **Trim tasks must not accumulate.** Sessions report levers in
-   their account and file none; the launcher's lever fold
+   their account and file none; the analyst's lever fold
    files from the digest every morning, folding a near-duplicate
    into the open Backlog issue rather than filing a sibling, and
    the curator recommends cancel on doubt (ruling 3). A Backlog of similar trim
@@ -243,7 +243,7 @@ the document's state sections.
    Session-reported costs are projections;
    `.claude/tools/fleet_cost.py` reconciles them per complete
    UTC day against Cost Explorer with a drift flag, attributed
-   per issue, seat sessions listed separately.
+   per issue, subscription sessions listed separately.
 
 1. **A chore is specified in Linear.** Every chore gets a spec
    issue; a skill kicks the session off and it reads the Linear
@@ -325,7 +325,7 @@ the document's state sections.
 
 1. **Dispatch through the dispatcher tool**, by the scheduler, by
    the curator for the architect tasks it files (2026-10-26), or by
-   the launcher, which dispatches the curator once the scheduler's
+   the analyst, which dispatches the curator once the scheduler's
    `state of play written` arrives (2026-10-28), as new tabs in
    the dispatcher's window, with one consolidated ask; the fleet
    bound lives in the tool. Ratification and gate approvals are
@@ -335,7 +335,7 @@ the document's state sections.
    priorities as they stand (per wave, each one ask, when the
    trigger answered "this wave only") — **save the start of the day**
    (2026-10-29), when `fleet resume` and the first wave wait for
-   the operator's start trigger in the bootstrap ask, the launcher
+   the operator's start trigger in the bootstrap ask, the analyst
    messaged before that ask. The answer is recorded as the
    document's `Fleet start:` line; a warm bootstrap finding it, with
    the fleet live, asks no trigger, and a machine restart asks it
@@ -375,8 +375,8 @@ the document's state sections.
    tool-usage lens.
 1. **Verbs**: `task`, `task anthropic`, `task resume`, `chore`,
    `chore anthropic`, `explore`, `explore anthropic`, `plan` (the
-   scheduler), `plan cycle`, `curate` (the curator), `launch` (the
-   launcher), `architect`
+   scheduler), `plan cycle`, `curate` (the curator), `analyze` (the
+   analyst), `architect`
    (bare number, idempotent), and `fleet`; a substrate word always
    precedes the number (`architect bedrock <n>`); `housekeeping` is
    retired, its upkeep run by the `plan` pre-launch. Audit issues
