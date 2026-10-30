@@ -194,10 +194,10 @@ python3 .claude/tools/memory_scan_gate.py judge-check <memory-dir>
 On `judge: false`, skip to step 4. Otherwise take the pre-filter
 (`memory_audit.py <memory-dir> --repo-root . --json`, written to a
 scratch file) and spawn **one** read-only `Explore` sub-agent: the
-canonical brief by pointer (`lens_preamble.py --out <path>
---no-facts`), the memory directory and the base checkout as its
-named-path allowlist,
-the pre-filter's path, a budget (≤ 30 turns), and this deliverable
+canonical brief by pointer (`lens_preamble.py` with `--out` and
+`--no-facts`), the memory directory and the base checkout as its
+named-path allowlist, the pre-filter's path, a budget (≤ 30 turns),
+and this deliverable
 — one row per memory file, `<file> — <verdict> — <fact>`, after
 reading every file and checking each claim against HEAD and the
 board:
