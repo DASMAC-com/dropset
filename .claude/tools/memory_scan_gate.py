@@ -41,6 +41,10 @@ from pathlib import Path
 
 DEFAULT_MIN_INTERVAL_HOURS = 20.0
 MARKER_NAME = ".memory-staleness-scan.json"
+# The launcher's staleness judge — a sub-agent reading every memory against
+# HEAD and the board — runs weekly, on its own marker beside the scan's.
+JUDGE_INTERVAL_HOURS = 168.0
+JUDGE_MARKER_NAME = ".memory-staleness-judge.json"
 
 
 class MemoryScanGateError(Exception):
@@ -149,6 +153,52 @@ def cmd_check(memory_dir: Path, min_interval_hours: float) -> int:
     return 0
 
 
+def judge_marker_path(memory_dir: Path) -> Path:
+    return memory_dir.parent / JUDGE_MARKER_NAME
+
+
+def decide_judge(
+    marker: dict | None,
+    now: datetime,
+    min_interval_hours: float = JUDGE_INTERVAL_HOURS,
+) -> tuple[bool, bool, str]:
+    """Pure decision for the launcher's staleness judge: ``(judge, first,
+    reason)``. Time alone gates it — a memory saved yesterday must not buy a
+    full read of the store every morning — and ``first`` (no usable prior run)
+    makes it the uncapped full cull."""
+    last = _parse_iso(marker.get("last_judged")) if isinstance(marker, dict) else None
+    if last is None:
+        return True, True, "no prior judge run recorded"
+    elapsed_hours = (now - last).total_seconds() / 3600.0
+    if elapsed_hours >= min_interval_hours:
+        return True, False, f"{elapsed_hours:.1f}h since last judge run"
+    return False, False, f"only {elapsed_hours:.1f}h since last judge run"
+
+
+def cmd_judge_check(memory_dir: Path, min_interval_hours: float) -> int:
+    marker = _read_marker(judge_marker_path(memory_dir))
+    judge, first, reason = decide_judge(
+        marker, datetime.now(timezone.utc), min_interval_hours
+    )
+    last = marker.get("last_judged") if isinstance(marker, dict) else None
+    print(
+        json.dumps(
+            {"judge": judge, "first": first, "reason": reason, "last_judged": last},
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_judge_record(memory_dir: Path) -> int:
+    payload = {"last_judged": datetime.now(timezone.utc).isoformat()}
+    judge_marker_path(memory_dir).write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+    )
+    print(f"memory-scan-gate: recorded judge run of {memory_dir}")
+    return 0
+
+
 def cmd_record(memory_dir: Path) -> int:
     signature = store_signature(memory_dir)
     path = marker_path(memory_dir)
@@ -168,14 +218,22 @@ Usage:
       is warranted. Exit 0.
   memory_scan_gate.py record MEMORY_DIR
       Record that a scan just ran (marker = current signature + now).
-  --min-interval-hours H  Daily floor for `check` (default 20)."""
+  memory_scan_gate.py judge-check MEMORY_DIR [--min-interval-hours H]
+      Print {judge, first, reason, last_judged} — whether the launcher's
+      weekly staleness judge is due, and whether it is the first (full) cull.
+  memory_scan_gate.py judge-record MEMORY_DIR
+      Record that a judge run just finished.
+  --min-interval-hours H  Floor for `check` (default 20) or `judge-check`
+                          (default 168)."""
+
+MODES = ("check", "record", "judge-check", "judge-record")
 
 
 def _parse_args(args: list[str]) -> tuple[str, Path, float]:
     """Return ``(mode, memory_dir, min_interval_hours)`` or raise."""
     mode: str | None = None
     memory_dir: Path | None = None
-    min_interval_hours = DEFAULT_MIN_INTERVAL_HOURS
+    min_interval_hours: float | None = None
     i = 0
     while i < len(args):
         arg = args[i]
@@ -198,10 +256,18 @@ def _parse_args(args: list[str]) -> tuple[str, Path, float]:
         else:
             raise MemoryScanGateError(f"unexpected extra argument: {arg}")
         i += 1
-    if mode not in ("check", "record"):
-        raise MemoryScanGateError("first argument must be 'check' or 'record'")
+    if mode not in MODES:
+        raise MemoryScanGateError(
+            "first argument must be one of " + ", ".join(f"'{m}'" for m in MODES)
+        )
     if memory_dir is None:
         raise MemoryScanGateError(f"'{mode}' requires a MEMORY_DIR argument")
+    if min_interval_hours is None:
+        min_interval_hours = (
+            JUDGE_INTERVAL_HOURS
+            if mode.startswith("judge")
+            else DEFAULT_MIN_INTERVAL_HOURS
+        )
     return mode, memory_dir, min_interval_hours
 
 
@@ -213,6 +279,10 @@ def run(argv: list[str]) -> int:
     mode, memory_dir, min_interval_hours = _parse_args(args)
     if mode == "check":
         return cmd_check(memory_dir, min_interval_hours)
+    if mode == "judge-check":
+        return cmd_judge_check(memory_dir, min_interval_hours)
+    if mode == "judge-record":
+        return cmd_judge_record(memory_dir)
     return cmd_record(memory_dir)
 
 

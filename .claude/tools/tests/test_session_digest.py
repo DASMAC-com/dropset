@@ -116,6 +116,25 @@ class DiscoveryTests(DigestFixture):
         self.assertNotIn(old, found)
 
 
+class LastCloseTests(unittest.TestCase):
+    def test_the_newest_parseable_until_is_the_close(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            self.assertIsNone(sd.last_close(directory))
+            lines = [
+                {"date": "2026-10-23", "until": "2026-10-23T11:55:00"},
+                {"date": "2026-10-24", "until": "2026-10-24T11:55:00"},
+                {"date": "2026-10-22", "until": "garbage"},
+                {"date": "2026-10-21"},
+            ]
+            (directory / sd.HISTORY_NAME).write_text(
+                "".join(json.dumps(e) + "\n" for e in lines) + "not json\n"
+            )
+            self.assertEqual(
+                sd.last_close(directory).isoformat(), "2026-10-24T11:55:00+00:00"
+            )
+
+
 class SessionAccountTests(unittest.TestCase):
     def test_the_block_runs_to_the_next_heading_verbatim(self):
         text = "done\n\n## Session account\n\n- cost $3\n- 40 turns\n\n## Next\nx"

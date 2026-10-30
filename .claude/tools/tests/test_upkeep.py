@@ -368,6 +368,8 @@ def make_ctx(run, armed=False, lookup=None, parked=None, dismiss=False):
     from prune_worktrees import parse_worktrees
 
     ctx.data["trees"] = parse_worktrees(PORCELAIN)
+    # No transcripts and no memory store: the real Claude home is never read.
+    ctx.projects = Path("/nonexistent-claude-projects")
     return ctx
 
 
@@ -483,6 +485,84 @@ class PassTests(unittest.TestCase):
             [s["step"] for s in ctx.steps], ["prs", "board", "prune", "notifications"]
         )
         self.assertEqual(ctx.data["eligible"], {"eng-10", "eng-12"})
+
+    def _held_pass(self, close: str | None, written: datetime | None):
+        """One prune over eng-10 (a tree) and eng-12 (a stray branch), with
+        eng-10's transcript written at ``written`` and the digest history's
+        last close at ``close``; returns the closed names the pruner got and
+        the prune step."""
+        base_run = FakeRun()
+        sent: list[list[str]] = []
+
+        def run(cmd, timeout, cwd=None):
+            if len(cmd) > 1 and Path(cmd[1]).name == "prune_worktrees.py":
+                path = cmd[cmd.index("--closed-file") + 1]
+                sent.append(Path(path).read_text().split())
+            return base_run(cmd, timeout, cwd)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(run)
+            ctx.base = Path(tmp) / "base"
+            ctx.projects = Path(tmp) / "projects"
+            digests = ctx.base / upkeep.session_digest.DIGEST_DIR
+            digests.mkdir(parents=True)
+            if close is not None:
+                entry = {"date": "2026-10-08", "since": "2026-10-07T00:00:00"}
+                (digests / "history.jsonl").write_text(
+                    json.dumps({**entry, "until": close}) + "\n"
+                )
+            tree = f"{BASE}/.claude/worktrees/eng-10"
+            project = ctx.projects / prune_conversations.slugify(Path(tree))
+            project.mkdir(parents=True)
+            if written is not None:
+                transcript = project / "s.jsonl"
+                transcript.write_text("{}\n")
+                os.utime(transcript, (written.timestamp(), written.timestamp()))
+            run_pass(ctx, ("prs", "board", "prune"))
+        return sent, next(s for s in ctx.steps if s["step"] == "prune")
+
+    def test_a_tree_written_after_the_last_digest_close_is_held(self):
+        written = datetime(2026, 10, 8, 9, tzinfo=timezone.utc)
+        sent, step = self._held_pass("2026-10-08T08:00:00", written)
+        self.assertEqual(sent, [["eng-12"]])
+        self.assertEqual(step["held"], ["eng-10: held: not yet digested"])
+        self.assertIn("1 held: not yet digested", step["line"])
+
+    def test_a_tree_digested_before_the_close_goes(self):
+        written = datetime(2026, 10, 8, 7, tzinfo=timezone.utc)
+        sent, step = self._held_pass("2026-10-08T08:00:00", written)
+        self.assertEqual(sent, [["eng-10", "eng-12"]])
+        self.assertEqual(step["held"], [])
+
+    def test_no_digest_yet_holds_every_tree_with_a_transcript(self):
+        written = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        sent, step = self._held_pass(None, written)
+        self.assertEqual(sent, [["eng-12"]])
+        # A tree with no transcript at all has no session to wait on.
+        sent, _ = self._held_pass(None, None)
+        self.assertEqual(sent, [["eng-10", "eng-12"]])
+
+    def test_a_held_only_set_calls_no_pruner(self):
+        def lookup(nums):
+            return {10: "completed", 11: "started", 12: "started"}
+
+        written = datetime(2026, 10, 8, 9, tzinfo=timezone.utc)
+        base_run = FakeRun()
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(base_run, lookup=lookup)
+            ctx.projects = Path(tmp)
+            tree = f"{BASE}/.claude/worktrees/eng-10"
+            project = Path(tmp) / prune_conversations.slugify(Path(tree))
+            project.mkdir(parents=True)
+            transcript = project / "s.jsonl"
+            transcript.write_text("{}\n")
+            os.utime(transcript, (written.timestamp(), written.timestamp()))
+            run_pass(ctx, ("prs", "board", "prune"))
+        self.assertEqual(tool_calls(base_run, "prune_worktrees.py"), [])
+        step = next(s for s in ctx.steps if s["step"] == "prune")
+        self.assertEqual(
+            step["line"], "no worktree or branch to clean; 1 held: not yet digested"
+        )
 
     def test_every_prune_step_names_a_real_step(self):
         # `run_pass(only=...)` skips unknown names silently, so a rename in
@@ -872,7 +952,22 @@ class PassTests(unittest.TestCase):
         run_pass(ctx)
         lines = {s["step"]: s["line"] for s in ctx.steps}
         self.assertEqual(lines["allowlist"], "1 cruft entry(ies) of 376 rule(s)")
-        self.assertEqual(lines["memory"], "memory audit ran: 1 finding(s)")
+        self.assertEqual(
+            lines["memory"], "memory audit ran: 1 finding(s); MEMORY.md unreadable"
+        )
+
+    def test_the_memory_line_says_the_index_line_count_due_or_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            memory = Path(tmp) / prune_conversations.slugify(Path(BASE)) / "memory"
+            memory.mkdir(parents=True)
+            (memory / "MEMORY.md").write_text("- [a](a.md) — x\n\n- [b](b.md) — y\n")
+            ctx = make_ctx(FakeRun())
+            ctx.projects = Path(tmp)
+            run_pass(ctx, ("memory",))
+        self.assertEqual(
+            ctx.steps[0]["line"],
+            "memory audit not due (unchanged); MEMORY.md 2 line(s)",
+        )
 
     def test_missing_deny_rules_get_their_own_line(self):
         base_run = FakeRun()

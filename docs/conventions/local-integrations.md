@@ -2767,9 +2767,10 @@ a terminal closed outright, is covered by the next morning's digest.
   as its first act; a scheduler missing beside an open launcher is
   named for the operator to type. The report
   lands under the Planning document's upkeep heading, which the
-  bootstrap reads; the destructive items (the prune, allowlist
-  cruft, permission-refresh additions, stale memories, the purge
-  apply) wait for the launcher tab's one `AskUserQuestion`. **Every later
+  bootstrap reads; the launcher prunes finished worktrees unasked,
+  and the other destructive items (allowlist cruft,
+  permission-refresh additions, judged memories, the purge apply)
+  wait for its tab's one `AskUserQuestion`. **Every later
   `plan` that day is warm** — the one typed into the scheduler's tab
   first — and runs the scheduler in the tab it was typed in, with no
   pass and no launcher. The marker is what stops a pass that failed
@@ -2881,12 +2882,46 @@ a terminal closed outright, is covered by the next morning's digest.
   `upkeep.py fold-stamp` and said by the scheduler through
   `upkeep.py fold-today`), the curator's dispatch on the scheduler's
   `state of play written` message with the fold's hand-off as the
-  curator's first message, and the morning's one destructive ask —
-  `upkeep.py prune` naming each finished worktree and stray branch
-  with its commits ahead of main, the transcript purge, and the
-  upkeep report's other destructive items (allowlist cruft,
-  permission-refresh candidates, stale memories) — each applied only
-  where the operator ticks it.
+  curator's first message, the unasked prune and the weekly memory
+  judge below, and the morning's one destructive ask — the
+  transcript purge, the upkeep report's other destructive items
+  (allowlist cruft, permission-refresh candidates) and the judged
+  memories — each applied only where the operator ticks it.
+
+  **Done means prune.** An issue marked Done or Canceled releases
+  everything attached to it, and the launcher prunes it without
+  asking (operator ruling, 2026-10-29): `upkeep.py prune --apply`,
+  its first act after the fold, removes the checkout under
+  `.claude/worktrees/<n>`, its `.git/worktrees` registration
+  (`git worktree prune` after the removal) and the local branch.
+  Eligibility is the board rule — status type completed or
+  canceled, no open PR for the branch — and only a live session's
+  lock holds a tree (a stale one is lifted). Two more holds, each
+  reported by name and never retried: **a tree is pruned only after
+  the digest has read its session** — one whose transcript was
+  written at or after the latest digest window's close (the digest
+  directory's `history.jsonl`) is held `not yet digested` and goes
+  the next morning — and Linear unreachable prunes nothing. The
+  launcher reports each removed name with its tip
+  (`git branch <name> <tip>` restores a branch). Uncommitted edits
+  in a tree still present on a Done issue are lost; Done is the
+  operator's own word.
+
+  **The memory posture is minimal.** The mechanical
+  `memory_audit.py` stays in the upkeep pass as a pre-filter, and the
+  report's `memory` line says the `MEMORY.md` line count every run —
+  it should fall. Weekly, on its own gate
+  (`memory_scan_gate.py judge-check`, a time-only marker beside the
+  scan's), the launcher spawns one read-only sub-agent that reads
+  every memory against HEAD and the board and returns a verdict and
+  a fact per file: **stale** (disproved), **superseded** (a named
+  sibling), **repo-bound** (a durable project or convention fact
+  that belongs in a committed doc) or **keep** (about the operator
+  or how to work, not derivable from the repo; `feedback` memories
+  stay). The first run is a full cull, uncapped; later runs are
+  capped at ten. Repo-bound items are filed as one `Claude:` docs
+  task per run, and a ticked memory is deleted with its index line
+  once its fact has a home.
 
 - **`architect <n>`** — start **or resume** an **architect** session on
   the design thread governed by issue `<n>`, its only argument: the CEO
