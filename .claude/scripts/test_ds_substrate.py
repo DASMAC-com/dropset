@@ -119,9 +119,14 @@ _CONFIG = {
     "DS_MODEL_BACKGROUND": "bg-profile-id",
 }
 
-#: The fleet knobs every launch requires; set by the harness, so a case
-#: passing "" for one exercises the refusal.
-_FLEET = {"DS_FLEET_TOTAL": "16", "DS_FLEET_CPU_LOAD_MAX": "16"}
+#: The fleet knobs every launch requires (the cargo pair while the pool is
+#: on); set by the harness, so a case passing "" for one exercises the refusal.
+_FLEET = {
+    "DS_FLEET_TOTAL": "16",
+    "DS_FLEET_CPU_LOAD_MAX": "16",
+    "DS_CARGO_LANES": "2",
+    "CARGO_BUILD_JOBS": "8",
+}
 
 
 class TierResolution(SubstrateHarness):

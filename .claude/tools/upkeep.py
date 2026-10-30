@@ -22,7 +22,7 @@ beside this pass's stamp; ``fold-today`` prints the scheduler's line for it
 (``fold ran at HH:MM, N batches[, M folded into open issues]`` or
 ``no fold today``). Neither reads the network.
 
-``run`` executes fourteen steps in order, each under its own timeout and each
+``run`` executes sixteen steps in order, each under its own timeout and each
 **best-effort**: a failure is a report line, never an abort of later steps.
 The one exception is step 1 — running from anywhere but the base checkout
 refuses the whole pass, since every later step assumes it.
@@ -48,22 +48,25 @@ refuses the whole pass, since every later step assumes it.
     and every non-lane entry there, sized, with whether a build is running on
     it; armed, every idle one is wiped — the bound on the lanes' growth.
     Beside the other cleanup, so the report's length cap cannot cut it;
- 9. the open count of each parked milestone, with its direction since the
+ 9. the runtime config (``runtime_config_check --live``) against its committed
+    manifest: one line leading with any missing required row, then the pinned
+    and unknown counts — never a model id or a secret reference;
+10. the open count of each parked milestone, with its direction since the
     previous stamp — the line the ``plan`` bootstrap says;
-10. convention-reference check, hook-wiring check, the skill-size watch line
+11. convention-reference check, hook-wiring check, the skill-size watch line
     (``skill_size --utilization``), allowlist cruft, and the
     monthly refresh gate — mining the recent session digests when due and
     stamping the marker whatever the yield, writing no allow-rule;
-11. the fleet cost: ``fleet_cost reconcile`` per settled UTC day (Bedrock
+12. the fleet cost: ``fleet_cost reconcile`` per settled UTC day (Bedrock
     metered beside the bill, with its drift flag), then ``fleet_cost local``,
     the last seven local days and today so far, billed beside metered;
-12. the session digest (``session_metrics digest``) over every transcript since
-    the last digest's window closed, its rate-calibration line fed by step 11's
+13. the session digest (``session_metrics digest``) over every transcript since
+    the last digest's window closed, its rate-calibration line fed by step 12's
     reconcile figure and the settled day's ``fleet_cost rates`` read, and its
     CI section (``--ci``) read from the merge queue over the same window;
-13. the memory scan gate, then the memory audit when due;
-14. the transcript-purge dry-run manifest;
-15. the dependency advisories (``deps_audit --json``): one line, by severity,
+14. the memory scan gate, then the memory audit when due;
+15. the transcript-purge dry-run manifest;
+16. the dependency advisories (``deps_audit --json``): one line, by severity,
     with the delta against the previous run's ids kept beside the stamp.
     Report-only — never a CI gate.
 
@@ -901,6 +904,17 @@ def step_deps(ctx: Ctx) -> None:
     ctx.record("deps", f"deps-audit: {data['line']}", ok=not data.get("errors"))
 
 
+def step_config(ctx: Ctx) -> None:
+    # The runtime config against its manifest. Exit 1 is a missing required
+    # row, which still prints the JSON; the line leads with it. The values come
+    # from the environment `_ds_upkeep` hands this pass, never a model id or a
+    # secret reference in the report — the tool prints those only as `set`.
+    data = _json_tool(ctx, "config", "runtime_config_check.py", "--live", "--json")
+    if data is None:
+        return
+    ctx.record("config", data["line"], ok=not data["missing"])
+
+
 def step_lanes(ctx: Ctx) -> None:
     # Armed like the prune: a wipe costs the day's first build on each lane a
     # cold dependency build and destroys nothing else, and a lane with a
@@ -930,6 +944,8 @@ STEPS = (
     # Beside the cleanup it is, and early: the report is cut from the end at
     # its length cap, and a held lane is a line the operator must see.
     ("lanes", step_lanes),
+    # Early for the same reason: a missing required knob refuses launches.
+    ("config", step_config),
     ("parked", step_parked),
     ("checks", step_checks),
     ("cost", step_cost),
@@ -968,6 +984,7 @@ STEP_LABELS = {
     "purge": ("transcript-purge dry run", f"per-call timeout {TIMEOUT_TOOL}s"),
     "deps": ("dependency advisories", f"timeout {TIMEOUT_DEPS}s"),
     "lanes": ("report and wipe the cargo lanes", f"timeout {TIMEOUT_LANES}s"),
+    "config": ("runtime config vs its manifest", f"timeout {TIMEOUT_TOOL}s"),
 }
 
 

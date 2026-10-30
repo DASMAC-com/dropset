@@ -66,7 +66,8 @@ fi
 
 # THE CARGO POOL: every cargo in a dropset checkout — the base repo or any
 # worktree under it — shares one of a few build directories (the lanes, below)
-# and asks for at most the cores minus two. A `chpwd` hook, not a lazy call
+# and runs at most `CARGO_BUILD_JOBS` compilers, a bound the runtime config
+# sets (the hook derives none). A `chpwd` hook, not a lazy call
 # like `_ds_secrets`, because the point is that every shell in a checkout has
 # it — a plain tab, a session, and every Bash command a session's agent runs
 # (the launcher evaluates it for the session's worktree, so the client inherits
@@ -120,7 +121,7 @@ _ds_cargo_pool_keyed() {
 # launcher passes the worktree it is about to start in, since it launches from
 # the base checkout and the session's shells inherit what it exported.
 _ds_cargo_pool() {
-  local cores var here="${1:-${PWD:A}}"
+  local var here="${1:-${PWD:A}}"
   if [[ "${DS_CARGO_POOL:-1}" == 0 || "$here/" != "$_DS_REPO/"* ]]; then
     for var in "${(k)_DS_CARGO_POOL_OWNED[@]}"; do
       [[ "${(P)var-}" == "${_DS_CARGO_POOL_OWNED[$var]}" ]] && unset "$var"
@@ -140,13 +141,16 @@ _ds_cargo_pool() {
   # LANES. Cargo locks a target directory for a build's length, so one pool
   # runs one build at a time — and one build cannot fill the machine (a serial
   # tail: the last large crate, the link, rustdoc's one thread per crate). The
-  # pool is therefore `DS_CARGO_LANES` directories (default 2), a worktree on
-  # lane <its issue number> modulo the count (the name `<n>`, or a pre-rename
-  # `eng-<n>` / `ceo-<n>`), the base repo and any other name on lane 0. Lane 0
-  # is the original `dropset` directory, so `1` is the single pool exactly. The
-  # job bound below stays per process: the lane locks already bound concurrency
-  # to the lane count.
-  lanes="${DS_CARGO_LANES:-2}"
+  # pool is therefore `DS_CARGO_LANES` directories, a worktree on lane <its
+  # issue number> modulo the count (the name `<n>`, or a pre-rename `eng-<n>` /
+  # `ceo-<n>`), the base repo and any other name on lane 0. Lane 0 is the
+  # original `dropset` directory, so `1` is the single pool exactly. The count
+  # is REQUIRED from the runtime config, like `CARGO_BUILD_JOBS` (the per-build
+  # bound, which this hook no longer derives): the fleet's compiler ceiling is
+  # their product, so both name one machine's budget and the repo pins neither.
+  # A launch refuses while either is unset (`_ds_fleet_knobs`); a bare shell
+  # here falls back to the single pool, the same as a malformed count.
+  lanes="${DS_CARGO_LANES-}"
   [[ "$lanes" == <-> ]] && (( lanes >= 1 )) || lanes=1
   rest="${checkout:t}"
   [[ "$checkout" != "$_DS_REPO" && "$rest" == (|*-)<-> ]] &&
@@ -191,13 +195,14 @@ _ds_cargo_pool() {
       unset "_DS_CARGO_POOL_OWNED[$var]"
     fi
   done
-  # Probed only when the bound is unset, so a `cd` within a pooled checkout
-  # forks nothing.
-  [[ -n "${CARGO_BUILD_JOBS-}" ]] && return 0
-  cores="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null)"
-  if [[ "$cores" == <-> ]] && (( cores > 2 )); then
-    export CARGO_BUILD_JOBS="$(( cores - 2 ))"
-    _DS_CARGO_POOL_OWNED[CARGO_BUILD_JOBS]="$CARGO_BUILD_JOBS"
+  # A shell that ran the hook from before the job bound became required, then
+  # re-sourced this file after a pull, still holds the bound the hook derived
+  # (the cores minus two). Drop it while it is unchanged, so the launch asks
+  # the runtime config rather than passing on a guess.
+  if [[ -n "${_DS_CARGO_POOL_OWNED[CARGO_BUILD_JOBS]-}" ]]; then
+    [[ "${CARGO_BUILD_JOBS-}" == "${_DS_CARGO_POOL_OWNED[CARGO_BUILD_JOBS]}" ]] &&
+      unset CARGO_BUILD_JOBS
+    unset "_DS_CARGO_POOL_OWNED[CARGO_BUILD_JOBS]"
   fi
 }
 autoload -Uz add-zsh-hook
@@ -758,15 +763,28 @@ _ds_claude() {
 # default. A shell opened before the runtime config gained them refuses here
 # until it is reopened.
 #
+# The cargo pool's two knobs join them while the pool is on: `DS_CARGO_LANES`
+# (how many builds run at once across the fleet) and `CARGO_BUILD_JOBS` (how
+# many compiler processes one build runs), each a whole number of at least 1.
+# Their product is the fleet's compiler ceiling, so neither has a repo default.
+#
 # EXPORTED ON SUCCESS. The probe is Python and reads its environment, so a
 # plain assignment in the profile would pass this check and still read as
-# unset to every dispatch the session makes.
+# unset to every dispatch the session makes — and cargo reads its job bound
+# from its environment the same way.
 _ds_fleet_knobs() {
   local var rc=0
-  for var in DS_FLEET_TOTAL DS_FLEET_CPU_LOAD_MAX; do
+  local -a knobs=(DS_FLEET_TOTAL DS_FLEET_CPU_LOAD_MAX)
+  [[ "${DS_CARGO_POOL:-1}" == 0 ]] || knobs+=(DS_CARGO_LANES CARGO_BUILD_JOBS)
+  for var in "${knobs[@]}"; do
     if [[ -z "${(P)var}" ]]; then
       print -u2 "dropset: $var is unset — set it in the runtime config (the" \
-        'repo pins no fleet ceiling). Refusing to launch.'
+        'repo pins no fleet budget). Refusing to launch.'
+      rc=1
+    elif [[ $var == (DS_CARGO_LANES|CARGO_BUILD_JOBS) ]]; then
+      [[ "${(P)var}" == <-> ]] && (( ${(P)var} >= 1 )) && continue
+      print -ru2 -- "dropset: $var ('${(P)var}') is not a whole number of at" \
+        'least 1. Refusing to launch.'
       rc=1
     elif [[ "${(P)var}" != <->(|.<->) || \
       ( $var == DS_FLEET_TOTAL && "${(P)var}" != <-> ) ]]; then
@@ -778,7 +796,7 @@ _ds_fleet_knobs() {
   [[ -n "$DS_FLEET_CAP" || -n "$DS_FLEET_LOAD_PER_CORE" ]] &&
     print -u2 'dropset: DS_FLEET_CAP and DS_FLEET_LOAD_PER_CORE are retired —' \
       'DS_FLEET_TOTAL and DS_FLEET_CPU_LOAD_MAX replace them.'
-  (( rc )) || export DS_FLEET_TOTAL DS_FLEET_CPU_LOAD_MAX
+  (( rc )) || export "${knobs[@]}"
   return $rc
 }
 
@@ -2127,9 +2145,17 @@ explore() {
 # function when a foreground child dies by SIGINT, and since an interrupted
 # pass writes no stamp, every retry would hang on the same step. The child
 # still receives the signal — a trap, unlike an ignore, is reset across exec.
+#
+# The pass's `config` step checks the runtime config against its committed
+# manifest, and a Python child sees only EXPORTED variables, while a profile
+# may assign its model ids plainly. So every manifest variable this shell
+# holds is exported to the pass, exported or not — as function-local copies
+# (`local -x`), so the export ends with this function and never reaches the
+# shell itself.
 _ds_upkeep() {
   setopt localoptions localtraps
-  local rc interrupted=''
+  local rc name interrupted=''
+  local -a config
   if [[ "$DS_SKIP_UPKEEP" == 1 ]]; then
     print -u2 'dropset: DS_SKIP_UPKEEP=1 — skipping the upkeep pass.'
     return 0
@@ -2141,6 +2167,11 @@ _ds_upkeep() {
   # Before the secrets fetch, so a hung `op read` is covered too.
   trap 'interrupted=1' INT
   _ds_secrets
+  for name in ${(f)"$(python3 "$_DS_REPO/.claude/tools/runtime_config_check.py" \
+    --names 2>/dev/null)"}; do
+    (( ${+parameters[$name]} )) && config+=("$name=${(P)name}")
+  done
+  (( $#config )) && local -x "${config[@]}"
   python3 "$_DS_REPO/.claude/tools/upkeep.py" run --if-stale
   rc=$?
   if [[ -n "$interrupted" ]]; then

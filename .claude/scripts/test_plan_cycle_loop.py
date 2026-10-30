@@ -390,17 +390,22 @@ class PreLaunch(unittest.TestCase):
 
 #: The real `_ds_upkeep`, with `python3` and the secrets fetch stubbed: the
 #: helper must return 0 whatever the pass does, and skip it on the off switch.
+#: The manifest names one variable, which the profile assigns but never exports.
 _UPKEEP_SCRIPT = """
 source "$INIT" 2>/dev/null
 _DS_REPO="$REPO"
 _ds_secrets() { : }
 python3() {
   print -r -- "$*" >> "$CALLS"
+  [[ "$*" == *--names* ]] && { print -r -- DS_PROBE_KNOB; return 0 }
+  print -r -- "SEEN=$(printenv DS_PROBE_KNOB)" >> "$CALLS"
   # A Ctrl-C reaches the whole foreground group; signal the shell as a tty would.
   [[ -n "$INTERRUPT" ]] && { kill -INT $$; return 130 }
   return ${PASS_RC:-0}
 }
+DS_PROBE_KNOB=plain
 _ds_upkeep
+print -r -- "AFTER=$(printenv DS_PROBE_KNOB)" >> "$CALLS"
 """
 
 
@@ -427,6 +432,13 @@ class UpkeepHelper(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIn("upkeep.py run --if-stale", calls)
 
+    def test_a_plain_profile_assignment_reaches_the_pass_and_only_the_pass(self):
+        # The config step reads its environment; a profile's unexported model
+        # id must reach it, and the export must not outlive the helper.
+        _, calls = self._upkeep()
+        self.assertIn("SEEN=plain", calls.splitlines())
+        self.assertIn("AFTER=", calls.splitlines())
+
     def test_a_failed_pass_warns_and_still_returns_zero(self):
         proc, _ = self._upkeep(PASS_RC="3")
         self.assertEqual(proc.returncode, 0)
@@ -441,7 +453,8 @@ class UpkeepHelper(unittest.TestCase):
     def test_the_off_switch_runs_nothing(self):
         proc, calls = self._upkeep(DS_SKIP_UPKEEP="1")
         self.assertEqual(proc.returncode, 0)
-        self.assertEqual(calls, "")
+        # Only the script's own trailing probe line; no python3 call at all.
+        self.assertEqual(calls, "AFTER=\n")
         self.assertIn("DS_SKIP_UPKEEP=1", proc.stderr)
 
 

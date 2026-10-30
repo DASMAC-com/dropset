@@ -43,8 +43,14 @@ TIERS = {
 }
 
 
-#: The fleet knobs every launch requires; a test unsets one by passing "".
-FLEET = {"DS_FLEET_TOTAL": "16", "DS_FLEET_CPU_LOAD_MAX": "16"}
+#: The fleet knobs every launch requires (the cargo pair while the pool is
+#: on); a test unsets one by passing "".
+FLEET = {
+    "DS_FLEET_TOTAL": "16",
+    "DS_FLEET_CPU_LOAD_MAX": "16",
+    "DS_CARGO_LANES": "2",
+    "CARGO_BUILD_JOBS": "8",
+}
 
 
 def run(command: str, **env: str) -> subprocess.CompletedProcess:
@@ -116,6 +122,8 @@ class SharedLauncherTest(unittest.TestCase):
             ("DS_FLEET_TOTAL", " "),
             ("DS_FLEET_TOTAL", "2.5"),
             ("DS_FLEET_CPU_LOAD_MAX", "lots"),
+            ("DS_CARGO_LANES", "0"),
+            ("CARGO_BUILD_JOBS", "8.5"),
         ):
             with self.subTest(var=var, raw=raw):
                 got = run('_ds_claude "claude-adv-1[1m]"', **TIERS, **{var: raw})
@@ -127,12 +135,23 @@ class SharedLauncherTest(unittest.TestCase):
         # Plain shell assignments, as a profile might make them: the probe the
         # session runs reads its environment, so the launch must export them.
         got = run(
-            "DS_FLEET_TOTAL=12; DS_FLEET_CPU_LOAD_MAX=9.5; "
-            '_ds_claude m; print -r -- "EXPORTED=$(printenv DS_FLEET_TOTAL)"',
+            "DS_FLEET_TOTAL=12; DS_FLEET_CPU_LOAD_MAX=9.5; DS_CARGO_LANES=3; "
+            "CARGO_BUILD_JOBS=6; _ds_claude m; "
+            'print -r -- "EXPORTED=$(printenv DS_FLEET_TOTAL)"; '
+            'print -r -- "JOBS=$(printenv CARGO_BUILD_JOBS)"',
             **{k: "" for k in FLEET},
         )
         self.assertEqual(got.returncode, 0, got.stderr)
         self.assertIn("EXPORTED=12", got.stdout.splitlines())
+        self.assertIn("JOBS=6", got.stdout.splitlines())
+
+    def test_the_cargo_knobs_bind_only_while_the_pool_is_on(self) -> None:
+        unset = {"DS_CARGO_LANES": "", "CARGO_BUILD_JOBS": ""}
+        refused = run('_ds_claude "claude-adv-1[1m]"', **TIERS, **unset)
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("CARGO_BUILD_JOBS is unset", refused.stderr)
+        off = run('_ds_claude "claude-adv-1[1m]"', **TIERS, **unset, DS_CARGO_POOL="0")
+        self.assertEqual(off.returncode, 0, off.stderr)
 
 
 #: A stub `op` and `claude` that append each call to `$OP_LOG`, in order; the

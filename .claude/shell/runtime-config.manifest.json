@@ -1,0 +1,431 @@
+{
+  "external": {
+    "CARGO_HOME": "cargo's own; the pool hook reads it to place the lanes",
+    "CARGO_MANIFEST_DIR": "cargo-set at build time; review_diff.py searches Rust source for it",
+    "CARGO_TARGET_DIR": "exported by the pool hook itself, never set in the config"
+  },
+  "variables": [
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 The cargo pool",
+      "default": null,
+      "kind": "knob",
+      "name": "CARGO_BUILD_JOBS",
+      "required": true,
+      "required_unless": {
+        "DS_CARGO_POOL": "0"
+      },
+      "verbs": [
+        "every launch while the pool is on"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 The AWS login gate",
+      "default": null,
+      "kind": "knob",
+      "name": "DS_AWS_PROFILE",
+      "required": false,
+      "verbs": [
+        "plan"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Model tiers: the role \u2192 model table",
+      "default": null,
+      "kind": "retired",
+      "name": "DS_BEDROCK_FAST_MODEL",
+      "required": false,
+      "verbs": []
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Model tiers: the role \u2192 model table",
+      "default": null,
+      "kind": "retired",
+      "name": "DS_BEDROCK_MODEL",
+      "required": false,
+      "verbs": []
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Substrate: which provider a session runs against",
+      "default": null,
+      "kind": "toggle",
+      "name": "DS_BEDROCK_PROBE",
+      "required": false,
+      "verbs": [
+        "every Bedrock launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Substrate: which provider a session runs against",
+      "default": "us-west-2",
+      "kind": "knob",
+      "name": "DS_BEDROCK_REGION",
+      "required": false,
+      "verbs": [
+        "every Bedrock launch",
+        "models check"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Lanes",
+      "default": null,
+      "kind": "knob",
+      "name": "DS_CARGO_LANES",
+      "required": true,
+      "required_unless": {
+        "DS_CARGO_POOL": "0"
+      },
+      "verbs": [
+        "every launch while the pool is on",
+        "upkeep"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 The cargo pool",
+      "default": "1",
+      "kind": "toggle",
+      "name": "DS_CARGO_POOL",
+      "required": false,
+      "verbs": [
+        "every shell"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 The family, one line each",
+      "default": null,
+      "kind": "launcher-set",
+      "name": "DS_DAILY_KIND",
+      "required": false,
+      "verbs": [
+        "plan",
+        "curate",
+        "launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": "120",
+      "kind": "knob",
+      "name": "DS_FLEET_BUILD_WAIT_S",
+      "required": false,
+      "verbs": [
+        "every launch",
+        "session dispatch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": null,
+      "kind": "retired",
+      "name": "DS_FLEET_CAP",
+      "required": false,
+      "verbs": []
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": null,
+      "kind": "knob",
+      "name": "DS_FLEET_CPU_LOAD_MAX",
+      "required": true,
+      "verbs": [
+        "every launch",
+        "session dispatch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": null,
+      "kind": "retired",
+      "name": "DS_FLEET_LOAD_PER_CORE",
+      "required": false,
+      "verbs": []
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": "physical memory \u00f7 8",
+      "kind": "knob",
+      "name": "DS_FLEET_RESERVE_GB",
+      "required": false,
+      "verbs": [
+        "every launch",
+        "session dispatch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": null,
+      "kind": "knob",
+      "name": "DS_FLEET_TOTAL",
+      "required": true,
+      "verbs": [
+        "every launch",
+        "session dispatch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 iTerm2 tab-color integration",
+      "default": null,
+      "kind": "toggle",
+      "name": "DS_ITERM_DISABLED",
+      "required": false,
+      "verbs": [
+        "session dispatch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 The family, one line each",
+      "default": null,
+      "kind": "launcher-set",
+      "name": "DS_LAUNCH_SCHEDULER",
+      "required": false,
+      "verbs": [
+        "launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Model tiers: the role \u2192 model table",
+      "default": null,
+      "kind": "model-id",
+      "name": "DS_MODEL_ADVISOR",
+      "required": true,
+      "verbs": [
+        "plan",
+        "curate",
+        "architect",
+        "explore"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Substrate: which provider a session runs against",
+      "default": "anthropic",
+      "kind": "knob",
+      "name": "DS_MODEL_ADVISOR_SUBSTRATE",
+      "required": false,
+      "verbs": [
+        "plan",
+        "curate",
+        "architect",
+        "explore"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Model tiers: the role \u2192 model table",
+      "default": null,
+      "kind": "model-id",
+      "name": "DS_MODEL_BACKGROUND",
+      "required": false,
+      "verbs": [
+        "every Bedrock launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Model tiers: the role \u2192 model table",
+      "default": null,
+      "kind": "model-id",
+      "name": "DS_MODEL_EXECUTOR",
+      "required": true,
+      "verbs": [
+        "task",
+        "launch",
+        "every Bedrock launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Substrate: which provider a session runs against",
+      "default": "bedrock",
+      "kind": "knob",
+      "name": "DS_MODEL_EXECUTOR_SUBSTRATE",
+      "required": false,
+      "verbs": [
+        "task",
+        "launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Model tiers: the role \u2192 model table",
+      "default": null,
+      "kind": "model-id",
+      "name": "DS_MODEL_HELPER",
+      "required": true,
+      "verbs": [
+        "chore",
+        "every Bedrock launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Substrate: which provider a session runs against",
+      "default": "bedrock",
+      "kind": "knob",
+      "name": "DS_MODEL_HELPER_SUBSTRATE",
+      "required": false,
+      "verbs": [
+        "chore"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": null,
+      "kind": "secret-ref",
+      "name": "DS_OP_ACCOUNT",
+      "required": true,
+      "verbs": [
+        "every launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": null,
+      "kind": "secret-ref",
+      "name": "DS_OP_BEDROCK_REF",
+      "required": true,
+      "verbs": [
+        "every Bedrock launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": null,
+      "kind": "secret-ref",
+      "name": "DS_OP_GITHUB_REF",
+      "required": true,
+      "verbs": [
+        "every launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": null,
+      "kind": "secret-ref",
+      "name": "DS_OP_LINEAR_REF",
+      "required": true,
+      "verbs": [
+        "every launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 The family, one line each",
+      "default": null,
+      "kind": "launcher-set",
+      "name": "DS_PLAN_DATE",
+      "required": false,
+      "verbs": [
+        "plan",
+        "curate",
+        "launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 The family, one line each",
+      "default": "1",
+      "kind": "toggle",
+      "name": "DS_PLAN_TAB_RIGHTMOST",
+      "required": false,
+      "verbs": [
+        "plan",
+        "launch"
+      ]
+    },
+    {
+      "anchor": ".claude/skills/review-pr/SKILL.md",
+      "default": "20",
+      "kind": "knob",
+      "name": "DS_PR_POLL_S",
+      "required": false,
+      "verbs": [
+        "review-pr"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session helpers (`.claude/shell/init.zsh`)",
+      "default": null,
+      "kind": "toggle",
+      "name": "DS_PULL_DEBUG",
+      "required": false,
+      "verbs": [
+        "cdds"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 The family, one line each",
+      "default": null,
+      "kind": "toggle",
+      "name": "DS_SKIP_UPKEEP",
+      "required": false,
+      "verbs": [
+        "plan"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 The family, one line each",
+      "default": null,
+      "kind": "toggle",
+      "name": "DS_UPKEEP_ARMED",
+      "required": false,
+      "verbs": [
+        "upkeep"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": null,
+      "kind": "launcher-set",
+      "name": "LINEAR_API_KEY",
+      "required": false,
+      "verbs": [
+        "every launch"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/linear-automation.md",
+      "default": null,
+      "kind": "linear-id",
+      "name": "LINEAR_ASSIGNEE_ID",
+      "required": true,
+      "verbs": [
+        "linear-task",
+        "audit-scope",
+        "trim-context",
+        "plan"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/linear-automation.md",
+      "default": null,
+      "kind": "linear-id",
+      "name": "LINEAR_PLANNING_DOC_ID",
+      "required": true,
+      "verbs": [
+        "plan",
+        "curate",
+        "launch",
+        "upkeep"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/linear-automation.md",
+      "default": null,
+      "kind": "linear-id",
+      "name": "LINEAR_PROJECT_ID",
+      "required": true,
+      "verbs": [
+        "linear-task",
+        "audit-scope",
+        "trim-context",
+        "plan",
+        "upkeep"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/linear-automation.md",
+      "default": null,
+      "kind": "linear-id",
+      "name": "LINEAR_TEAM_ID",
+      "required": true,
+      "verbs": [
+        "linear-task",
+        "audit-scope",
+        "trim-context",
+        "plan"
+      ]
+    }
+  ]
+}

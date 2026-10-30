@@ -277,10 +277,13 @@ the document's state sections.
    (`plan`, `architect`, `explore`, a chore with no build in its
    body) is refused only on the total, memory, pressure or load —
    never swap. Builds share the pool's
-   `DS_CARGO_LANES` lanes. On no reading (exit 3) fall back to the
-   total and say so — unless the total itself is unset, which holds
-   the batch. The digest's `## Wait` section measures whether
-   the budget is right.
+   `DS_CARGO_LANES` lanes, each at most `CARGO_BUILD_JOBS`
+   compilers — both the operator's too, required while the pool
+   is on, and their product the fleet's compiler ceiling. On no
+   reading (exit 3) fall back to the total and say so — unless
+   the total itself is unset, which holds the batch. The
+   digest's `## Wait` section measures whether the budget is
+   right.
 1. **Cost**: the spend cap is the standing fleet guard, and
    `fleet_cost.py` reconciles telemetry against the bill.
 1. **Weekly skills audit**: considered weekly through the audit

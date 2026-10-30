@@ -227,6 +227,20 @@ repos:
     name: 'Skill entry files, descriptions and CLAUDE.md stay under byte caps'
     pass_filenames: false
   repo: 'local'
+# Runtime-config drift: every DS_* / LINEAR_* / CARGO_* variable the shell init
+# or a tool reads is a row of .claude/shell/runtime-config.manifest.json, every
+# row is read somewhere, a knob's default matches the code's, and the example
+# names every row. `always_run` because the drift is cross-file — a new read in
+# any tool, or a deleted one, changes the verdict without touching the
+# manifest. It reads only committed files, so CI's lint workflow enforces it.
+- hooks:
+  - always_run: true
+    entry: 'python3 .claude/tools/runtime_config_check.py --static'
+    id: 'runtime-config-check'
+    language: 'system'
+    name: 'The runtime-config manifest matches what the code reads'
+    pass_filenames: false
+  repo: 'local'
 # hadolint-py wraps the hadolint binary so the hook needs neither Docker nor
 # a manual install. `files` matches `Dockerfile` and `*.Dockerfile` (identify
 # doesn't tag the latter as the `dockerfile` type), so `types: file`.
