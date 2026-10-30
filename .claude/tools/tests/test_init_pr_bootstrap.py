@@ -126,6 +126,34 @@ class HappyPathTests(unittest.TestCase):
         self.assertTrue(runner.ran("pnpm"))
         self.assertEqual(statuses(result)["install"], "ok")
 
+    def test_install_falls_back_to_the_helper_s_npx_command(self):
+        runner = FakeRunner(
+            {("npx",): (0, "installed", "")},
+            helper={
+                "frontend_node_modules": "absent",
+                "pnpm": "absent",
+                "pnpm_command": "npx --yes pnpm@10.30.3",
+            },
+        )
+        result = bootstrap(runner).execute()
+        self.assertTrue(
+            runner.ran("npx", "--yes", "pnpm@10.30.3", "--dir", "frontend", "install")
+        )
+        self.assertFalse(runner.ran("pnpm"))
+        self.assertIn(
+            "via `npx --yes pnpm@10.30.3`", statuses_detail(result, "install")
+        )
+        self.assertEqual(result["facts"]["pnpm"], "absent")
+
+    def test_no_pnpm_and_no_npx_fails_the_install_without_running_it(self):
+        runner = FakeRunner(
+            helper={"frontend_node_modules": "absent", "pnpm_command": None}
+        )
+        result = bootstrap(runner).execute()
+        self.assertFalse(runner.ran("pnpm"))
+        self.assertEqual(statuses(result)["install"], "failed")
+        self.assertIsNone(result["stopped_at"])
+
     def test_rename_runs_only_when_needed(self):
         runner = FakeRunner(
             helper={"rename_needed": True, "current_branch": "worktree-42"}

@@ -458,5 +458,16 @@ repos:
     types_or:
     - 'ts'
     - 'tsx'
+  # The `tsc` hook above type-checks the frontend project only, so an SDK
+  # edit passed it unchecked. This is the SDK workflow's own check command.
+  - entry: 'pnpm --filter @dropset/sdk run check'
+    files: '^sdk/ts/'
+    id: 'tsc-sdk'
+    language: 'system'
+    name: 'tsc-sdk'
+    pass_filenames: false
+    types_or:
+    - 'ts'
+    - 'tsx'
   repo: 'local'
 ...

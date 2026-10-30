@@ -324,13 +324,19 @@ class Bootstrap:
     def step_install(self) -> tuple[str, str]:
         if self.helper.get("frontend_node_modules") != "absent":
             return "skipped", f"node_modules {self.helper.get('frontend_node_modules')}"
-        code, out, err = self.run(["pnpm", "--dir", "frontend", "install"], 900)
+        # The helper resolves the `npx --yes pnpm@<pin>` fallback when `pnpm`
+        # is off PATH; an older helper without the field means plain `pnpm`.
+        pnpm = self.helper.get("pnpm_command", "pnpm")
+        if not pnpm:
+            return "failed", "neither pnpm nor npx is on PATH"
+        code, out, err = self.run([*pnpm.split(), "--dir", "frontend", "install"], 900)
         self.log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         log = self.log_dir / f"pnpm-install-{self.tag}.log"
         log.write_text(out + err, encoding="utf-8")
+        via = "" if pnpm == "pnpm" else f" via `{pnpm}`"
         if code != 0:
-            return "failed", f"pnpm install exit {code}; log: {log}"
-        return "ok", f"log: {log}"
+            return "failed", f"pnpm install{via} exit {code}; log: {log}"
+        return "ok", f"installed{via}; log: {log}"
 
     def step_commit(self) -> tuple[str, str]:
         out = self._ok(["git", "log", "--format=%s", "origin/main..HEAD"])
@@ -480,6 +486,7 @@ class Bootstrap:
                 "env_link",
                 "secrets_env_link",
                 "frontend_node_modules",
+                "pnpm",
                 "program_so",
                 "signing",
             )

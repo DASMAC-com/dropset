@@ -215,7 +215,9 @@ migrations or generation inputs, and whether it spans crates.
    `python3 .claude/tools/run_quiet.py -- make program` before any
    suite; `frontend_install` →
    `python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install`
-   before any typecheck or lint. `runs_artifact_gates` stays for step
+   before any typecheck or lint, with `pnpm` replaced by
+   `npx --yes pnpm@<frontend/package.json packageManager pin>` when the
+   binary is off PATH. `runs_artifact_gates` stays for step
    9's rebase re-run question (step 11 reads `review_diff.py`'s
    `targets` instead); `--full` adds the file
    lists. A **hot surface** (overlap with several open PRs, per
@@ -312,12 +314,15 @@ migrations or generation inputs, and whether it spans crates.
    local full sweep in between is a mistake unless a hook is
    repo-global (`history.md` → "Full-sweep loops").
 
-   **The tool absorbs the two by-design failures**: when a hook
-   rewrites files (`mdformat`, `ruff format`, `biome`, the dictionary
-   sorter) it re-runs once and reports only the second result; when
-   `biome` / `tsc` lack frontend `node_modules` it installs them, and
-   if that fails, skips them and prints `UNVERIFIABLE locally` — never
-   gate on such a hook; CI runs it. A rewrite that then passed is still
+   **The tool absorbs the by-design failures**: when a hook rewrites
+   files (`mdformat`, `ruff format`, `biome`, the dictionary sorter) it
+   re-runs once and reports only the second result; when `biome` /
+   `tsc` / `tsc-sdk` lack `node_modules` it installs them, and if that
+   fails, or `pnpm` is off PATH, skips them; when a hook's pre-commit
+   environment will not install, it skips that repo's hooks and re-runs.
+   Each skip prints `UNVERIFIABLE locally` with its reason — never gate
+   on such a hook; CI runs it. SDK type-checking is the `tsc-sdk` hook,
+   never the frontend `tsc`. A rewrite that then passed is still
    uncommitted, and the quiet runner hides the notice on a pass, so
    check `git status --short` after every lint run and commit any
    rewrite signed.

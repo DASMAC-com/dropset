@@ -91,6 +91,13 @@ say so; `install` — re-run
 by hand, since the `biome` and `tsc` hooks fail the first full
 `make lint` without it; `spec` — fall back to `get_issue`.
 
+**`facts.pnpm: absent`** means the binary is off PATH. The install
+already ran through the helper's `npx --yes pnpm@<pin>` fallback (its
+`detail` says so); use that same prefix for any later `pnpm` command,
+never a corepack shim. `lint_paths.py` skips the `biome` / `tsc` hooks
+and reports them `UNVERIFIABLE locally`, so say so once and never gate
+on them. An install that failed even through `npx` is the same note.
+
 Two **measured facts** in `facts` are acted on, not reasoned about
 from the diff:
 
@@ -179,7 +186,7 @@ shape (dry runs included), never polling a backgrounded log,
 `make tools-tests` whole, `wait_for_checks.py` for CI, and never
 re-reading what you authored. A refused search leaves its question
 unanswered, never zero hits (`docs/conventions/shell-commands.md`).
-Seven reminders neither states:
+The reminders neither states:
 
 - **Test one tools module with the wrapper**:
   `make tools-test T=test_<tool>` (`K=<name>` narrows). It resolves the
@@ -198,7 +205,34 @@ Seven reminders neither states:
   Append `-- <hook-id>` to narrow it to one hook. Scope the **file
   list**, never the crate set — a crate-scoped
   `cargo clippy` reports false dead-code errors; verify in the form
-  CI runs.
+  CI runs. A broken hook environment is skipped and reported
+  `UNVERIFIABLE locally`, not a dead run, so never sweep hook by hook.
+  The SDK's type-check is the `tsc-sdk` hook; the `tsc` hook covers
+  only the frontend.
+
+  **When the edit adds comments, doc comments or markdown, run the
+  spelling pre-flight first**, so every unknown word comes back in
+  one listing rather than one lint round each:
+
+  ```sh
+  python3 .claude/tools/run_quiet.py -- \
+    python3 .claude/tools/lint_paths.py --prose
+  ```
+
+  The US-spelling and coinage rules are `review-pr` step 4's, and the
+  cheapest fix is to avoid coining a word at all (no new `un-` / `-ed`
+  forms).
+
+- **Rewrap a whole paragraph in one `Edit`.** An edit that lengthens
+  or shortens a line in a wrapped paragraph rewraps it from the edit
+  point to the paragraph's end, with `old_string` and `new_string`
+  each running from a line start to a line end. Neither markdownlint nor
+  mdformat rewraps, so a one-line fix pushes the overflow down a line
+  and costs a lint run per line; and an `old_string` that ends mid-line
+  glues that line's tail onto the replacement. On an MD013 (or
+  yamllint line-length) failure, read the whole paragraph once and
+  rewrap it, never the single flagged line
+  (`docs/conventions/docs-and-style.md` → "Line length").
 
 - **Don't re-derive a diff.** Read a `review_diff.py --split` diff
   from its slices; reach for `git diff` only for a change you have not

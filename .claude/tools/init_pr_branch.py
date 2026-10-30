@@ -13,10 +13,11 @@ a tag, it resolves three things the skill no longer has to hand-parse:
   worktree directory) or ``eng-###``, case-insensitive, normalized to
   lowercase ``eng-###``.
 
-It also reports three **measured facts** the skill would otherwise have to
+It also reports four **measured facts** the skill would otherwise have to
 predict, each read-only and so present on every run: whether this worktree has
-``frontend/node_modules`` (``frontend_node_modules``), whether it has a built
-program artifact (``program_so``), and which commit-signing
+``frontend/node_modules`` (``frontend_node_modules``), whether ``pnpm`` is on
+PATH and how to run it if not (``pnpm``, ``pnpm_command``), whether it has a
+built program artifact (``program_so``), and which commit-signing
 configuration the machine has and whether it can sign right now (``signing``,
 plus the configured signer path as ``signing_program``). The signing field
 replaces an unconditional ``ssh-add -l`` in the skill's prose that was an
@@ -230,6 +231,36 @@ def node_modules_state(worktree_root: str) -> str:
     if os.path.isdir(os.path.join(worktree_root, _NODE_MODULES_REL)):
         return "present"
     return "absent"
+
+
+def pnpm_command(
+    worktree_root: str, which: Callable[[str], str | None] = shutil.which
+) -> str | None:
+    """How to run ``pnpm`` here: ``pnpm`` itself, else the ``npx`` fallback.
+
+    A machine upgrade can remove ``pnpm`` (Homebrew formula, global npm
+    package and corepack all gone at once), and then every ``pnpm …`` the
+    skills run fails as "command not found". ``npx --yes pnpm@<version>``,
+    pinned to ``frontend/package.json``'s ``packageManager``, runs the same
+    pnpm with no global install, and puts it on PATH for the install's own
+    lifecycle scripts. ``None`` when neither works: no ``npx``, or no
+    ``pnpm@`` pin to fetch. The ``pnpm`` field reports the binary itself,
+    since the lint hooks call it by name and a fallback cannot help them.
+    """
+    if which("pnpm"):
+        return "pnpm"
+    if not which("npx"):
+        return None
+    try:
+        with open(
+            os.path.join(worktree_root, "frontend", "package.json"), encoding="utf-8"
+        ) as fh:
+            pin = json.load(fh).get("packageManager", "")
+    except (OSError, ValueError):
+        return None
+    if not isinstance(pin, str) or not pin.startswith("pnpm@"):
+        return None
+    return f"npx --yes {pin}"
 
 
 def program_so_state(worktree_root: str) -> str:
@@ -514,6 +545,10 @@ def main(argv: list[str] | None = None) -> int:
         else None,
         # Read-only, so unconditional: `present` / `absent` / `no-frontend`.
         "frontend_node_modules": node_modules_state(args.worktree_root),
+        # Read-only too. `absent` means the biome / tsc hooks are unverifiable
+        # locally; `pnpm_command` is what an install runs instead.
+        "pnpm": "present" if shutil.which("pnpm") else "absent",
+        "pnpm_command": pnpm_command(args.worktree_root),
         # Read-only too: `present` / `absent` / `no-program`. Reported rather than
         # acted on — building it is multi-minute and most tasks never need it.
         "program_so": program_so_state(args.worktree_root),

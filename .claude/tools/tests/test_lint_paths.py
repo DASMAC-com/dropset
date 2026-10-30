@@ -277,7 +277,7 @@ class FixThenFail(unittest.TestCase):
 
     def _lint(self, runs):
         with (
-            mock.patch.object(lp, "ensure_frontend_hooks", return_value=[]),
+            mock.patch.object(lp, "ensure_frontend_hooks", return_value=([], "")),
             mock.patch.object(lp, "run_pre_commit", side_effect=runs) as rpc,
             redirect_stderr(io.StringIO()) as err,
         ):
@@ -285,22 +285,22 @@ class FixThenFail(unittest.TestCase):
         return code, rpc.call_count, err.getvalue()
 
     def test_a_rewrite_then_pass_is_a_pass_with_the_commit_reminder(self):
-        code, calls, err = self._lint([(1, True), (0, False)])
+        code, calls, err = self._lint([(1, True, None), (0, False, None)])
         self.assertEqual((code, calls), (0, 2))
         self.assertIn("re-running once", err)
         # CI lints what is committed; the passing rewrite still needs a commit.
         self.assertIn("stage and commit", err)
 
     def test_a_second_failure_is_real(self):
-        code, calls, _ = self._lint([(1, True), (1, True)])
+        code, calls, _ = self._lint([(1, True, None), (1, True, None)])
         self.assertEqual((code, calls), (1, 2))
 
     def test_a_failure_without_a_rewrite_is_not_re_run(self):
-        code, calls, _ = self._lint([(1, False)])
+        code, calls, _ = self._lint([(1, False, None)])
         self.assertEqual((code, calls), (1, 1))
 
     def test_a_pass_is_not_re_run(self):
-        code, calls, _ = self._lint([(0, False)])
+        code, calls, _ = self._lint([(0, False, None)])
         self.assertEqual((code, calls), (0, 1))
 
     def test_the_marker_is_read_from_pre_commit_output(self):
@@ -309,10 +309,10 @@ class FixThenFail(unittest.TestCase):
             f"print('- {lp.MODIFIED_MARKER}'); sys.exit(1)"
         )
         with redirect_stdout(io.StringIO()) as out:
-            code, modified = lp.run_pre_commit(
+            code, modified, broken = lp.run_pre_commit(
                 [sys.executable, "-c", script], os.getcwd()
             )
-        self.assertEqual((code, modified), (1, True))
+        self.assertEqual((code, modified, broken), (1, True, None))
         # The output is mirrored, not swallowed.
         self.assertIn("mdformat...Failed", out.getvalue())
 
@@ -324,20 +324,36 @@ class FrontendHooks(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = self._tmp.name
-        self.bin = os.path.join(self.root, "frontend", "node_modules", ".bin")
+        # pnpm is on PATH unless a test says otherwise.
+        which = mock.patch.object(lp.shutil, "which", return_value="/bin/pnpm")
+        self.which = which.start()
+        self.addCleanup(which.stop)
 
-    def _install_bins(self, *names):
-        os.makedirs(self.bin, exist_ok=True)
-        for name in names:
-            open(os.path.join(self.bin, name), "w").close()
+    def _install_bins(self, *hooks):
+        for hook in hooks:
+            path = os.path.join(self.root, lp.PNPM_HOOKS[hook][0])
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "w").close()
 
     def test_no_frontend_path_needs_nothing(self):
         self.assertEqual(lp.missing_frontend_hooks(self.root, [], ["a.rs"]), [])
 
     def test_a_ts_path_without_node_modules_misses_both(self):
         self.assertEqual(
-            lp.missing_frontend_hooks(self.root, [], ["sdk/ts/x.ts"]),
+            lp.missing_frontend_hooks(self.root, [], ["frontend/x.ts"]),
             ["biome", "tsc"],
+        )
+
+    def test_an_sdk_ts_path_also_selects_the_sdk_type_check(self):
+        # The frontend tsc never type-checks the SDK; `tsc-sdk` does, and only
+        # an `sdk/ts/` path selects it.
+        self.assertEqual(
+            lp.missing_frontend_hooks(self.root, [], ["sdk/ts/x.ts"]),
+            ["biome", "tsc", "tsc-sdk"],
+        )
+        self._install_bins("biome", "tsc")
+        self.assertEqual(
+            lp.missing_frontend_hooks(self.root, [], ["sdk/ts/x.ts"]), ["tsc-sdk"]
         )
 
     def test_a_css_only_set_selects_biome_not_tsc(self):
@@ -345,7 +361,7 @@ class FrontendHooks(unittest.TestCase):
         # reporting it unverifiable would name a hook that never runs.
         self.assertEqual(lp.missing_frontend_hooks(self.root, [], ["a.css"]), ["biome"])
 
-    def test_a_missing_pnpm_is_an_unverifiable_hook_not_a_crash(self):
+    def test_a_pnpm_that_fails_to_launch_is_unverifiable_not_a_crash(self):
         with (
             mock.patch.object(
                 lp.subprocess, "run", side_effect=FileNotFoundError("pnpm")
@@ -353,9 +369,38 @@ class FrontendHooks(unittest.TestCase):
             redirect_stderr(io.StringIO()) as err,
         ):
             self.assertEqual(
-                lp.ensure_frontend_hooks(self.root, [], ["x.ts"]), ["biome", "tsc"]
+                lp.ensure_frontend_hooks(self.root, [], ["x.ts"]),
+                (["biome", "tsc"], "frontend install failed"),
             )
         self.assertIn("pnpm", err.getvalue())
+
+    def test_pnpm_off_path_skips_every_selected_hook_without_installing(self):
+        # node_modules is present, so the old check passed and the hooks then
+        # failed as "Executable `pnpm` not found".
+        self._install_bins("biome", "tsc")
+        self.which.return_value = None
+        with (
+            mock.patch.object(lp.subprocess, "run") as run,
+            mock.patch.object(
+                lp, "run_pre_commit", return_value=(0, False, None)
+            ) as rpc,
+            redirect_stderr(io.StringIO()) as err,
+        ):
+            code = lp.lint("cfg.yml", [], ["x.ts"], self.root)
+        run.assert_not_called()
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            rpc.call_args.args[2]["SKIP"].split(",")[-2:], ["biome", "tsc"]
+        )
+        self.assertIn(
+            "UNVERIFIABLE locally: biome, tsc (pnpm not on PATH)", err.getvalue()
+        )
+
+    def test_pnpm_off_path_with_no_frontend_path_skips_nothing(self):
+        self.which.return_value = None
+        self.assertEqual(
+            lp.ensure_frontend_hooks(self.root, [], ["a.rs"]), ([], "pnpm not on PATH")
+        )
 
     def test_a_non_frontend_hook_id_needs_nothing(self):
         self.assertEqual(lp.missing_frontend_hooks(self.root, ["cspell"], ["x.ts"]), [])
@@ -369,22 +414,160 @@ class FrontendHooks(unittest.TestCase):
             mock.patch.object(lp.subprocess, "run", side_effect=install) as run,
             redirect_stderr(io.StringIO()),
         ):
-            self.assertEqual(lp.ensure_frontend_hooks(self.root, [], ["x.ts"]), [])
+            missing, _ = lp.ensure_frontend_hooks(self.root, [], ["x.ts"])
+        self.assertEqual(missing, [])
         self.assertEqual(run.call_args.args[0], lp._FRONTEND_INSTALL)
 
     def test_a_failed_install_skips_and_reports_unverifiable(self):
         failed = subprocess.CompletedProcess([], 1, "", "ERR_PNPM offline")
         with (
             mock.patch.object(lp.subprocess, "run", return_value=failed),
-            mock.patch.object(lp, "run_pre_commit", return_value=(0, False)) as rpc,
+            mock.patch.object(
+                lp, "run_pre_commit", return_value=(0, False, None)
+            ) as rpc,
             redirect_stderr(io.StringIO()) as err,
         ):
             code = lp.lint("cfg.yml", [], ["x.ts"], self.root)
         self.assertEqual(code, 0)
         env = rpc.call_args.args[2]
         self.assertEqual(env["SKIP"].split(",")[-2:], ["biome", "tsc"])
-        self.assertIn("UNVERIFIABLE locally: biome, tsc", err.getvalue())
+        self.assertIn(
+            "UNVERIFIABLE locally: biome, tsc (frontend install failed)",
+            err.getvalue(),
+        )
         self.assertIn("ERR_PNPM offline", err.getvalue())
+
+
+# A trimmed copy of the lint config's shape: a remote repo with two hooks, a
+# local block mixing a system hook with an environment-building one, and a
+# nested list that must not read as a hook key.
+_CONFIG = """\
+---
+- hooks:
+  - args:
+    - '--format=parseable'
+    id: 'cfn-lint'
+    files: '^infra/'
+  repo: 'https://github.com/aws-cloudformation/cfn-lint'
+  rev: 'v1.53.0'
+- hooks:
+  - id: 'ruff-check'
+  - id: 'ruff-format'
+  repo: 'https://github.com/astral-sh/ruff-pre-commit'
+  rev: 'v0.15.18'
+- hooks:
+  - entry: 'cargo fmt --'
+    id: 'rustfmt'
+    language: 'system'
+    types:
+    - 'rust'
+  - entry: 'python3 x.py'
+    id: 'dashboard-sql-lint'
+    language: 'python'
+  repo: 'local'
+...
+"""
+
+# pre-commit's output for an environment that will not install, as captured
+# from cfn-lint under an unsupported Python (paths trimmed).
+_ENV_FAILURE = [
+    "[INFO] Installing environment for https://github.com/astral-sh/ruff-pre-commit.\n",
+    "[INFO] Once installed this environment will be reused.\n",
+    "[INFO] Installing environment for https://github.com/aws-cloudformation/cfn-lint.\n",
+    "[INFO] Once installed this environment will be reused.\n",
+    "[INFO] This may take a few minutes...\n",
+    "An unexpected error has occurred: CalledProcessError: command: "
+    "('/cache/py_env-python3/bin/python', '-m', 'pip', 'install', '.')\n",
+    "return code: 1\n",
+    "Check the log at /cache/pre-commit.log\n",
+]
+
+
+class HookEnvironmentFailure(unittest.TestCase):
+    """One hook environment that will not install: skip it, re-run, and report
+    it unverifiable instead of aborting every hook."""
+
+    def test_the_config_maps_each_repo_to_its_env_hooks(self):
+        self.assertEqual(
+            lp.env_hooks_by_repo(_CONFIG),
+            {
+                "https://github.com/aws-cloudformation/cfn-lint": ["cfn-lint"],
+                "https://github.com/astral-sh/ruff-pre-commit": [
+                    "ruff-check",
+                    "ruff-format",
+                ],
+                # The system hook needs no environment, so it is never skipped.
+                "local": ["dashboard-sql-lint"],
+            },
+        )
+
+    def test_the_live_config_parses_to_known_repos(self):
+        with open(
+            os.path.join(lp.repo_root(), lp.DEFAULT_CONFIG), encoding="utf-8"
+        ) as fh:
+            repos = lp.env_hooks_by_repo(fh.read())
+        self.assertEqual(
+            repos["https://github.com/aws-cloudformation/cfn-lint"], ["cfn-lint"]
+        )
+        self.assertNotIn("biome", repos["local"])
+
+    def test_the_last_install_line_names_the_broken_repo(self):
+        self.assertEqual(
+            lp.broken_env_repo(_ENV_FAILURE),
+            "https://github.com/aws-cloudformation/cfn-lint",
+        )
+
+    def test_no_failure_marker_is_no_broken_repo(self):
+        self.assertIsNone(lp.broken_env_repo(_ENV_FAILURE[:5]))
+
+    def test_the_failure_is_read_from_pre_commit_output(self):
+        lines = "".join(_ENV_FAILURE)
+        script = f"import sys; sys.stdout.write({lines!r}); sys.exit(3)"
+        with redirect_stdout(io.StringIO()):
+            _, _, broken = lp.run_pre_commit(
+                [sys.executable, "-c", script], os.getcwd()
+            )
+        self.assertEqual(broken, "https://github.com/aws-cloudformation/cfn-lint")
+
+    def _lint(self, runs):
+        with (
+            mock.patch.object(lp, "ensure_frontend_hooks", return_value=([], "")),
+            mock.patch.object(lp, "_config_text", return_value=_CONFIG),
+            mock.patch.object(lp, "run_pre_commit", side_effect=runs) as rpc,
+            redirect_stderr(io.StringIO()) as err,
+        ):
+            code = lp.lint("cfg.yml", [], ["a.yaml"], "/root")
+        return code, rpc, err.getvalue()
+
+    def test_a_broken_env_is_skipped_and_the_rest_reports(self):
+        cfn = "https://github.com/aws-cloudformation/cfn-lint"
+        code, rpc, err = self._lint([(3, False, cfn), (0, False, None)])
+        self.assertEqual((code, rpc.call_count), (0, 2))
+        self.assertEqual(rpc.call_args.args[2]["SKIP"].split(",")[-1], "cfn-lint")
+        self.assertIn(
+            "UNVERIFIABLE locally: cfn-lint (its pre-commit environment failed "
+            "to install)",
+            err,
+        )
+
+    def test_a_second_broken_env_is_skipped_too(self):
+        cfn = "https://github.com/aws-cloudformation/cfn-lint"
+        ruff = "https://github.com/astral-sh/ruff-pre-commit"
+        code, rpc, err = self._lint(
+            [(3, False, cfn), (3, False, ruff), (1, False, None)]
+        )
+        self.assertEqual((code, rpc.call_count), (1, 3))
+        self.assertIn("cfn-lint, ruff-check, ruff-format", err)
+
+    def test_an_unattributable_failure_stands(self):
+        # The same repo breaking again after its hooks were skipped, or a repo
+        # the config does not name, cannot be skipped: the failure is the verdict.
+        cfn = "https://github.com/aws-cloudformation/cfn-lint"
+        code, rpc, _ = self._lint([(3, False, cfn), (3, False, cfn)])
+        self.assertEqual((code, rpc.call_count), (3, 2))
+        code, rpc, err = self._lint([(3, False, "https://example.invalid/x")])
+        self.assertEqual((code, rpc.call_count), (3, 1))
+        self.assertNotIn("UNVERIFIABLE", err)
 
 
 if __name__ == "__main__":
