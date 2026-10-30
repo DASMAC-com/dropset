@@ -992,22 +992,16 @@ class ItermDriftTests(RepoFixture):
         )
 
 
-class GuardEnvTests(unittest.TestCase):
+class GuardEnvTests(RepoFixture):
     """The private-key guard's variables are reported by count, never value."""
 
     VAULT = "DS_OP_PRIVATE_KEYS_VAULT"
     ITEMS = "DS_OP_PRIVATE_KEY_ITEMS"
 
     def _render(self, counts):
-        result = {
-            "wired": {"x.py": ["s"]},
-            "mismatched": {},
-            "misdirected": {},
-            "unwired": [],
-            "deny_missing": [],
-            "iterm": {"drift": {}, "deployed": False},
-            "guard_env": counts,
-        }
+        # A real scan's result, so the fixture carries every key render reads.
+        result = hw.scan(self.repo, self.no_user)
+        result["guard_env"] = counts
         return hw.render(result)
 
     def test_counts_parse_with_the_guards_own_rules(self):
