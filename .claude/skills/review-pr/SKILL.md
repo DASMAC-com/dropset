@@ -1777,7 +1777,17 @@ migrations or generation inputs, and whether it spans crates.
      `not_queued.classification` is present an earlier cycle failed and
      this watch began too late to see it: branch on its `cause` as the
      `dequeued` bullet does, unless you already fixed that failure.
-     Otherwise re-run step 20's `--enqueue`, then the watch.
+     Otherwise re-run step 20's `--enqueue`, then the watch. This is the
+     both-null shape (auto-merge off, no entry).
+   - **`auto_merge_waiting`** → auto-merge is enabled but the PR never
+     entered the queue (the PR 548 shape): auto-merge waits on every
+     pending check, required or not, and `last.pending_checks` names
+     it. Run the plain `gh pr merge <number>` (no `--auto`), then the
+     watch.
+   - **`queued_no_group`** → the entry exists (`last.entry_state`,
+     `last.entry_position`) but no merge-group run started within
+     `--await-group-seconds`; report it and restart the watch — a
+     long queue ahead is the usual cause.
    - **`conflicting`** (or `dequeue_reason: merge_conflict`) → step 2's
      rebase straight from `dequeue.base_gained`, then re-run; on
      `dequeue.error`, read by hand only what is `null`.
