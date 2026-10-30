@@ -157,10 +157,12 @@ The three rules specific to `init-pr`:
    "now that Y is retired"). A filed issue is a snapshot of its
    discovery commit; one message to the owning session costs a
    fraction of one map, and a reversed premise invalidates the map.
-   **A headline figure is a premise too**: when the issue rests on a
-   measured number ("costs about 285k CU", "fails at X"), re-measure
-   it against `HEAD` before any design or survey. A probe costs a few
-   turns; a misread figure invalidates everything built on it.
+   **A headline figure is a premise too**: when the issue's premise
+   rests on a measured number ("costs about 285k CU", "fails 3 runs in
+   10"), re-measure that number against `HEAD` before any design or
+   survey; an incidental estimate or past cost in the body is not one.
+   A probe costs a few turns; a misread figure invalidates everything
+   built on it.
 
 1. **Survey with a scoped `Explore` agent, or not at all.** A survey
    **locates** code; it never maps code you are about to edit. When
@@ -188,11 +190,12 @@ The three rules specific to `init-pr`:
    document.** `ListAgents` is the liveness check. The document getter
    returns the whole, growing body with no slice accessor, and a stale
    line reads exactly like a current one; a scheduler session answers
-   with the current ruling. Read the document only when none is live,
-   the scheduler approved the read, or the task's subject is the
-   document itself — and then through `planning_doc.py` (`--headings`
-   then `--section <re>`, or `--out <file>` to spill the body and
-   print only its heading map), never the whole-document getter.
+   with the current ruling. Read the document only when none is live
+   or the scheduler approved the read; a task whose subject is the
+   document itself needs its text, not a ruling, so it reads without
+   asking. **Every such read goes through `planning_doc.py`**
+   (`--headings` then `--section <re>`, or `--out <file>` to spill the
+   body and print only its heading map), never `get_document`.
 
 The convention owns the rules this phase slips on most — the four
 whole-read licenses, declaration-only section maps, `run_quiet.py` by
@@ -310,11 +313,14 @@ The reminders neither states:
 
    - **A re-scope that changes the subject gets its own issue — ask
      first.** When the body carries a re-scope section that changes
-     what the issue is about, not just its size, ask via
-     `AskUserQuestion` before mapping anything: file the new scope as
-     its own issue, or widen this one. The branch, PR and title all
-     inherit this issue's identity, so a subject change found later
-     costs a split, a retitle and a force-push.
+     what the issue is about, not just its size, stop before mapping
+     anything. The tell: the current title would no longer describe
+     the work, and an added deliverable that is a different feature
+     counts. Consult the live scheduler first, then ask via
+     `AskUserQuestion`: file the new scope as its own issue, or widen
+     this one. The branch, PR and title all inherit this issue's
+     identity, so a subject change found later costs a split, a
+     retitle and a force-push.
 
    - **Check the declared parts against the scope band** (4–5 parts,
      300–800 lines, split at 1,000;
@@ -337,10 +343,10 @@ The reminders neither states:
      pullable units, never a second PR here.
 
    Present the description and checklist as the plan of work, then
-   **grade the plan against each scope bullet**: beside every
-   requirement-phrased bullet, name the planned change that serves
-   it, and say how any bullet the plan does not yet cover will be
-   met. It is `review-pr` step 3's grading run before the code
+   **grade the plan against each requirement**: beside every checkbox
+   and requirement-phrased scope bullet, name the planned change that
+   serves it, and name any the plan does not yet cover with how it
+   will be met. It is `review-pr` step 3's grading run before the code
    exists, when a dropped part costs nothing. The user's own
    instructions win.
 
