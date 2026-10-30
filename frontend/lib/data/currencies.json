@@ -186,8 +186,8 @@
       {
         "symbol": "CADC",
         "name": "CAD Coin",
-        "mint": "9ewjJpmD1ES83RDRFnHs7V2hUdH76WAVjdvu6UV6WNo7",
-        "mintSourceUrl": "https://loon.finance/access-cadc/",
+        "mint": "52spLAAFjKMwhNJ3TL2PUAUGYGgXsbvipP4whRtBp82S",
+        "mintSourceUrl": "https://loon.finance/cadc/",
         "decimals": 6,
         "tokenProgram": "classic",
         "icon": "https://assets.loon.finance/cadc/logo.png",
