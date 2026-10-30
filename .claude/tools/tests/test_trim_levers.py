@@ -87,8 +87,22 @@ class FingerprintTests(unittest.TestCase):
             "claude-tools:review_diff.py-drift",
         )
 
+    def test_a_wait_fingerprint_with_a_colon_separated_slug_passes(self):
+        self.assertEqual(
+            validate_fingerprint("wait:operator:review-pr-merge-queue"),
+            "wait:operator:review-pr-merge-queue",
+        )
+
     def test_malformed_keys_are_refused(self):
-        for key in ("noseparator", "   ", "Session-Metrics:Foo"):
+        for key in (
+            "noseparator",
+            "   ",
+            "Session-Metrics:Foo",
+            "wait::cause",
+            "wait:op::cause",
+            "wait:operator:",
+            "wait:Operator:x",
+        ):
             with self.subTest(key=key), self.assertRaises(TrimLeversError):
                 validate_fingerprint(key)
 
@@ -233,6 +247,14 @@ class SplitPartsTests(unittest.TestCase):
     def test_a_dotted_section_key_is_refused(self):
         with self.assertRaises(TrimLeversError):
             tl.split_parts("## http.rs:x | One\n\nx\n")
+
+    def test_a_wait_section_key_is_accepted(self):
+        text = (
+            "## wait:operator:review-pr-merge-queue | Wait\n\nx\n\n"
+            "**Fingerprint**: wait:operator:review-pr-merge-queue\n"
+        )
+        parts = tl.split_parts(text)
+        self.assertEqual(parts[0][0], "wait:operator:review-pr-merge-queue")
 
     def test_no_sections_is_refused(self):
         with self.assertRaises(TrimLeversError):

@@ -102,7 +102,8 @@ operator lever, never this mechanism.
 - **The warm bootstrap.** A full bootstrap writes a
   `Bootstrap stamp: <YYYY-MM-DD>` line to the document, and every
   close-out rewrite keeps it. A bootstrap finding today's date
-  there is **warm**: read `rulings.md` and the document, run
+  there is **warm**: read `rulings.md` and the document (step 1's
+  spill and slice), run
   `ListAgents` — and skip the once-a-day duties (the fold line,
   the audit heartbeat, the parked counts, the upkeep report, the
   launcher's message, step 8). No stamp
@@ -112,9 +113,12 @@ operator lever, never this mechanism.
 
 **1. Bootstrap.** Read
 [`rulings.md`](rulings.md) first — the rules this session obeys.
-Then fetch the Planning document with
-`mcp__claude_ai_Linear__get_document` — the last session's
-handoff — and, warm or full:
+Then read the Planning document — the last session's handoff —
+with `python3 .claude/tools/planning_doc.py --out <scratch>`,
+which spills it and prints only the heading map, and slice it by
+`--section`. **The document and `rulings.md` are each read
+once**; a later check is a `--section` read, never the whole body
+in context a second time. Then, warm or full:
 
 - **Act on each `Discuss with operator` item first**, before the
   board — one needing the operator's word joins step 8's ask.
@@ -471,6 +475,12 @@ an item the operator executes by hand `[Operator]`.
   rather than retrying. `--dry-run` shows them.
 - **A batch is all-or-nothing on validation** — fix the typo and
   re-run the whole call.
+- **A kick-off wave or a fleet-wide notice is one turn.** Compose
+  the text once, name the recipients from one `ListAgents` read,
+  and send every `SendMessage` in the same turn — never one
+  recipient per turn. The turn count is the cost; there is no
+  broadcast tool, and typing into tabs is ruled out (it lands as
+  operator input and can clobber a half-typed prompt).
 - **An `architect` kick-off is this fixed text, never a
   paraphrase:** "Two stages: agree the spec and file nothing,
   then run `ratify-staged`; open your handoff with the task list
