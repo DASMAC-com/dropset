@@ -123,5 +123,6 @@ frontend, then takes the whole localnet compose stack down — the collectors,
 the estimator, Grafana and Postgres — so `docker ps` shows no localnet
 container afterwards. The recorded history is kept: the teardown removes the
 containers but not the postgres volume, so the next run reads it again. The
-stack's project is shared across worktrees, so a sibling's indexer stops too.
+stack's project is shared across worktrees, so a sibling worktree's localnet
+containers (its indexer, say) stop too.
 To keep recording past the demo, run `make collectors-up` after quitting.

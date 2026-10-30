@@ -733,10 +733,10 @@ decks-build: check-pnpm
 # started. It has no way to tell — `collectors-up` is idempotent, so a demo
 # cannot distinguish the collectors it launched from ones already running —
 # and the project name is shared across worktrees, so a sibling's indexer goes
-# too. All three profiles are named because `down` reaches only the services
-# in the profiles it is given. Nothing it removes holds validator or key
-# state: the validator's ledger is the TUI's own temp directory and `keys/` is
-# a read-only bind mount.
+# too. All three profiles are named so every profiled service is in scope,
+# however a given Compose version treats a profile left off the command line.
+# Nothing it removes holds validator or key state: the validator's ledger is
+# the TUI's own temp directory and `keys/` is a read-only bind mount.
 #
 # `DEMO_CLEANUP` still disarms the trap (`trap -`) as its first act. INT and
 # EXIT are both trapped and the shell runs the EXIT handler after the INT one,
