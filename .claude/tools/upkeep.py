@@ -201,12 +201,16 @@ OPEN_PR_LIMIT = 100
 
 RESOLVED_TYPES = ("completed", "canceled")
 # The parking milestones, in report order. Session pending is short-lived by
-# design: a count there is a seat session that died mid-review. Follow-ups is
-# retired as a parking set: filers now land un-parked in the curator's pool,
-# and issues still carrying it go uncounted until the milestone is deleted.
+# design: a count there is a seat session that died mid-review. Curator pending
+# is the curator's in-flight batch, stamped before each ask and cleared on the
+# move, so a count with no live curator is a curator that stopped mid-day.
+# Follow-ups is retired as a parking set: filers now land un-parked in the
+# curator's pool, and issues still carrying it go uncounted until the
+# milestone is deleted.
 PARKED_MILESTONES = (
     "Audit findings",
     "Session pending",
+    "Curator pending",
 )
 # A branch tied to an ENG issue, by its NUMBER whatever the verb: `eng-<n>`,
 # which every issue-keyed launch now creates, or a pre-scheme spelling — the
