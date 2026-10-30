@@ -138,6 +138,20 @@ class TheDefaultPools(CargoPoolHarness):
         _, jobs = self._pool(REPO)
         self.assertEqual(jobs, _UNSET)
 
+    def test_a_reload_drops_the_old_hooks_derived_bound(self):
+        # The pre-required hook exported its guess and recorded it as owned;
+        # a re-source after the pull must not let it pass the launch check.
+        old = (
+            "_DS_CARGO_POOL_OWNED[CARGO_BUILD_JOBS]=16; "
+            "export CARGO_BUILD_JOBS=16; _ds_cargo_pool; "
+        )
+        _, jobs = self._pool(REPO, pin=old)
+        self.assertEqual(jobs, _UNSET)
+
+    def test_a_hand_pin_of_the_job_bound_survives(self):
+        _, jobs = self._pool(REPO, pin="export CARGO_BUILD_JOBS=8; _ds_cargo_pool; ")
+        self.assertEqual(jobs, "8")
+
 
 class AnExportedValueWins(CargoPoolHarness):
     PINNED = {"CARGO_TARGET_DIR": "/scratch/t", "CARGO_BUILD_JOBS": "3"}

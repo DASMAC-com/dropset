@@ -40,7 +40,8 @@ DS_FLEET_TOTAL=16
 # The one-minute load average (cores in use) past which nothing new starts.
 DS_FLEET_CPU_LOAD_MAX=16
 # Builds running at once across the fleet: the cargo pool's lane count.
-DS_CARGO_LANES=2
+# Exported, so the upkeep pass's lane report reads it even when run by hand.
+export DS_CARGO_LANES=2
 # Compiler processes one build may run. Exported, so cargo reads it everywhere.
 # The fleet's compiler ceiling is lanes × jobs: 16 here.
 export CARGO_BUILD_JOBS=8

@@ -195,6 +195,15 @@ _ds_cargo_pool() {
       unset "_DS_CARGO_POOL_OWNED[$var]"
     fi
   done
+  # A shell that ran the hook from before the job bound became required, then
+  # re-sourced this file after a pull, still holds the bound the hook derived
+  # (the cores minus two). Drop it while it is unchanged, so the launch asks
+  # the runtime config rather than passing on a guess.
+  if [[ -n "${_DS_CARGO_POOL_OWNED[CARGO_BUILD_JOBS]-}" ]]; then
+    [[ "${CARGO_BUILD_JOBS-}" == "${_DS_CARGO_POOL_OWNED[CARGO_BUILD_JOBS]}" ]] &&
+      unset CARGO_BUILD_JOBS
+    unset "_DS_CARGO_POOL_OWNED[CARGO_BUILD_JOBS]"
+  fi
 }
 autoload -Uz add-zsh-hook
 add-zsh-hook chpwd _ds_cargo_pool

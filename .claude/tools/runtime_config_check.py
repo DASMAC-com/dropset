@@ -125,13 +125,26 @@ def load_manifest(path: Path) -> dict:
         if row.get("kind") in OPAQUE and row.get("default") is not None:
             raise ManifestError(f"{name}: a {row['kind']} row carries no default")
         unless = row.get("required_unless", {})
-        if not isinstance(unless, dict) or (unless and not row.get("required")):
+        # String values only: the environment holds strings, so a JSON 0
+        # would never match and the requirement would silently never lift.
+        if (
+            not isinstance(unless, dict)
+            or (unless and not row.get("required"))
+            or not all(isinstance(v, str) for v in unless.values())
+        ):
             raise ManifestError(
-                f"{name}: `required_unless` is a {{NAME: value}} map on a required row"
+                f'{name}: `required_unless` is a {{NAME: "value"}} map on a '
+                "required row"
             )
         if name in seen:
             raise ManifestError(f"{name}: listed twice")
         seen.add(name)
+    for row in rows:
+        for key in row.get("required_unless", {}):
+            if key not in seen:
+                raise ManifestError(
+                    f"{row['name']}: `required_unless` names {key}, not a row"
+                )
     return data
 
 
