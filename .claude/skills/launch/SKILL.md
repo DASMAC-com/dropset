@@ -192,8 +192,9 @@ python3 .claude/tools/memory_scan_gate.py judge-check <memory-dir>
 ```
 
 On `judge: false`, skip to step 4. Otherwise take the pre-filter
-(`memory_audit.py <memory-dir> --repo-root . --json`, written to a
-scratch file) and spawn **one** read-only `Explore` sub-agent: the
+(`memory_audit.py <memory-dir> --repo-root . --json`, its output
+written with the Write tool to the session scratchpad, never into the
+checkout) and spawn **one** read-only `Explore` sub-agent: the
 canonical brief by pointer (`lens_preamble.py` with `--out` and
 `--no-facts`), the memory directory and the base checkout as its
 named-path allowlist, the pre-filter's path, a budget (≤ 30 turns),
@@ -210,8 +211,9 @@ board:
 - **keep** — about the operator or how to work, not derivable from
   the repo. `feedback` memories are always kept.
 
-**`first: true` is the full cull**: the whole set, uncapped. Later
-runs are incremental, capped at the ten strongest non-keep verdicts.
+**`first: true` is the full cull**: every memory, `keep` verdicts
+included, uncapped. Later runs are incremental: the ten strongest
+non-keep verdicts.
 Record the run whatever the yield:
 
 ```sh
@@ -238,15 +240,19 @@ Gather, each with one call:
   section in context: allowlist cruft and permission-refresh
   candidates, when listed.
 
-- **Memories**, from step 3 on a judge day: every stale, superseded
-  and repo-bound verdict with its fact beside the name (the first
-  run's whole set as one checklist, uncapped).
+- **Memories**, from step 3 on a judge day: each verdict with its
+  fact beside the name (on the first run, the whole set).
 
 Then **one `AskUserQuestion` call**, one question per category with
 something in it (none for an empty one): the purge's total and its
-named tags; a `multiSelect` over the report's items; and a
-`multiSelect` over the memories. The recommended answer first.
-Apply only what is ticked:
+named tags; a `multiSelect` over the report's items; and the first
+page of memories. The recommended answer first. **Memories page**:
+a question holds at most four options and a call four questions, so
+each memory question is a `multiSelect` of four, the label the file
+name and the description `<verdict> — <fact>`, a non-keep verdict
+being the recommended tick. Fill the first call's spare questions
+with memory pages, then ask further calls of four pages each until
+every memory has been shown. Apply only what is ticked:
 
 - **Purge**: `purge-conversations` step 4's apply, this yes its
   approval, then its step 5 report.
@@ -280,8 +286,9 @@ once-per-day dispatch rule.
 - **Writes to Linear** only the fold's batches, folds and
   rejections and the memory judge's docs task. No state write on any
   other issue, no edges, no priorities, no Planning-document write —
-  the document is the scheduler's. Locally it prunes finished
-  worktrees unasked and deletes only the memories the operator
-  ticked.
+  the document is the scheduler's. Locally, unasked, it prunes
+  finished worktrees and writes the fold and judge stamps; every
+  other deletion — memories, the purge, allowlist entries — waits on
+  the operator's tick.
 - **Shell discipline** (`docs/conventions/shell-commands.md`): every
   command is one bare call.

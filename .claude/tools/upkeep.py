@@ -466,10 +466,15 @@ def undigested(ctx: Ctx, targets: list[str]) -> list[str]:
     projects = ctx.projects or prune_conversations.projects_root()
     close = session_digest.last_close(ctx.base / session_digest.DIGEST_DIR)
     cutoff = close.timestamp() if close is not None else None
+    # A projects root that is absent holds no session; one that exists but
+    # cannot be listed might, so it holds every tree.
+    unlisted = False
     try:
         dirs = [p for p in projects.iterdir() if p.is_dir()]
-    except OSError:
+    except FileNotFoundError:
         dirs = []
+    except OSError:
+        dirs, unlisted = [], True
     held = []
     for tree in ctx.data.get("trees", []):
         if tree.get("branch") not in targets or prune_worktrees.is_base(tree):
@@ -478,12 +483,19 @@ def undigested(ctx: Ctx, targets: list[str]) -> list[str]:
         # it (`<slug>-<sub>`), which the digest's prefix discovery also reads.
         slug = prune_conversations.slugify(Path(tree["path"]))
         mtimes: list[float] = []
-        unreadable = False
+        unreadable = unlisted
         for project in dirs:
             if project.name != slug and not project.name.startswith(slug + "-"):
                 continue
             # Top-level transcripts only, as the digest's discovery reads them.
-            for transcript in project.glob("*.jsonl"):
+            # Listed directly: a glob over an unreadable directory yields
+            # nothing rather than raising.
+            try:
+                transcripts = [p for p in project.iterdir() if p.suffix == ".jsonl"]
+            except OSError:
+                unreadable = True
+                continue
+            for transcript in transcripts:
                 try:
                     mtimes.append(transcript.stat().st_mtime)
                 except OSError:

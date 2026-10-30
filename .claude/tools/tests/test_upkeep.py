@@ -570,6 +570,15 @@ class PassTests(unittest.TestCase):
             (project / "s.jsonl").symlink_to(project / "gone.jsonl")
             self.assertEqual(self._prune_with_projects(tmp), ["eng-10"])
 
+    def test_a_projects_root_that_cannot_be_listed_holds_every_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # A file where the root should be: it exists but cannot be listed.
+            root = Path(tmp) / "projects"
+            root.write_text("")
+            ctx = make_ctx(FakeRun())
+            ctx.projects = root
+            self.assertEqual(upkeep.undigested(ctx, ["eng-10"]), ["eng-10"])
+
     def test_a_tree_digested_before_the_close_goes(self):
         written = datetime(2026, 10, 8, 7, tzinfo=timezone.utc)
         sent, step = self._held_pass("2026-10-08T08:00:00", written)
