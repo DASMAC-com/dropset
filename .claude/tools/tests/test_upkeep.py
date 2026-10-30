@@ -11,6 +11,7 @@ import io
 import json
 import os
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -351,6 +352,7 @@ class FakeRun:
 PARKED = {
     "Audit findings": 0,
     "Session pending": 2,
+    "Curator pending": 1,
 }
 
 
@@ -656,11 +658,12 @@ class PassTests(unittest.TestCase):
 
     def test_parked_counts_carry_their_direction_since_the_previous_stamp(self):
         step, result = self._parked_step(
-            previous={"Audit findings": 2, "Session pending": 1}
+            previous={"Audit findings": 2, "Session pending": 1, "Curator pending": 1}
         )
         self.assertEqual(
             step["line"],
-            "Audit findings 0 (down 2), Session pending 2 (up 1)",
+            "Audit findings 0 (down 2), Session pending 2 (up 1), "
+            "Curator pending 1 (unchanged)",
         )
         self.assertEqual(result["parked"], PARKED)
 
@@ -1338,6 +1341,202 @@ class ProgressTests(unittest.TestCase):
                 run_pass(ctx, ("pull",))
         self.assertEqual((out.getvalue(), err.getvalue()), ("", ""))
 
+    def test_start_lines_name_last_times_figure_and_completed_steps_carry_one(self):
+        def run(cmd, timeout, cwd=None):
+            if cmd[0] == "brew":
+                raise RuntimeError("brew wedged")
+            return 0, "", ""
+
+        ticks = iter(range(0, 100, 2))
+        lines: list[str] = []
+        ctx = make_ctx(run)
+        ctx.progress = lines.append
+        ctx.clock = lambda: float(next(ticks))
+        # `cli` crashed last time, so it has no figure to name.
+        ctx.data["previous_durations"] = {"pull": 71.0}
+        ctx.data["previous_elapsed"] = 230.0
+        # A whole pass, shortened to `pull` and `cli`: only a whole pass
+        # compares against the stamped total.
+        with mock.patch.object(upkeep, "STEPS", upkeep.STEPS[:2]):
+            result = run_pass(ctx)
+        self.assertEqual(
+            lines[0],
+            "upkeep: [1/2] pull — fast-forward main (per-call timeout 120s, last 71s)",
+        )
+        self.assertNotIn("last", lines[2])
+        self.assertEqual(
+            lines[-1], "upkeep: 2 step(s) in 10.0s (last 3m50s), 1 crashed"
+        )
+        # The crashed step records no duration for the next pass.
+        self.assertEqual(result["durations"], {"pull": 2.0})
+        self.assertEqual((result["elapsed"], result["last_elapsed"]), (10.0, 230.0))
+        self.assertIn("ran in 10s (last 3m50s).", render(result))
+
+    def test_the_bar_fills_against_last_time_and_stays_full_past_it(self):
+        self.assertEqual(
+            upkeep.bar_line(6, 14, "notifications", 32, 71),
+            "upkeep: [6/14] notifications ▓▓▓▓░░░░ 32s / ~71s",
+        )
+        self.assertEqual(
+            upkeep.bar_line(6, 14, "notifications", 90, 71),
+            "upkeep: [6/14] notifications ▓▓▓▓▓▓▓▓ 90s / ~71s",
+        )
+        self.assertEqual(
+            upkeep.bar_line(6, 14, "notifications", 32, None),
+            "upkeep: [6/14] notifications 32s",
+        )
+        # Not full a moment early: the last cell waits for last time's figure.
+        self.assertEqual(
+            upkeep.bar_line(6, 14, "notifications", 70, 71),
+            "upkeep: [6/14] notifications ▓▓▓▓▓▓▓░ 70s / ~71s",
+        )
+
+    def test_a_prune_subset_names_no_whole_pass_total(self):
+        ctx = make_ctx(lambda cmd, timeout, cwd=None: (0, "", ""))
+        lines: list[str] = []
+        ctx.progress = lines.append
+        ctx.data["previous_elapsed"] = 250.0
+        result = run_pass(ctx, ("pull",))
+        self.assertNotIn("last", lines[-1])
+        self.assertNotIn("last_elapsed", result)
+
+    def test_a_slow_step_draws_the_bar_in_place_then_clears_it(self):
+        drawn: list[str] = []
+        seen = threading.Event()
+
+        def live(text):
+            drawn.append(text)
+            if text:
+                seen.set()
+
+        def run(cmd, timeout, cwd=None):
+            # Hold the step until the side thread has drawn once.
+            seen.wait(5)
+            return 0, "Already up to date.\n", ""
+
+        ctx = make_ctx(run)
+        ctx.live = live
+        # The pass, step and bar starts read 0; every tick after reads past the
+        # bar's threshold, so the first tick draws.
+        clock = iter([0.0] * 3 + [40.0] * 500)
+        ctx.clock = lambda: next(clock)
+        ctx.data["previous_durations"] = {"pull": 71.0}
+        with mock.patch.object(upkeep, "BAR_TICK", 0.01):
+            run_pass(ctx, ("pull",))
+        self.assertTrue(seen.is_set())
+        self.assertIn("upkeep: [1/1] pull ▓▓▓▓▓░░░ 40s / ~71s", drawn)
+        self.assertEqual(drawn[-1], "")
+
+    def test_no_live_writer_draws_no_bar(self):
+        ctx = make_ctx(lambda cmd, timeout, cwd=None: (0, "", ""))
+        with mock.patch.object(upkeep.threading, "Thread") as thread:
+            run_pass(ctx, ("pull",))
+        thread.assert_not_called()
+
+
+class PreflightTests(unittest.TestCase):
+    def fake(self, gh_rc=0, aws_rc=0, gh_err=""):
+        calls = []
+
+        def run(cmd, timeout, cwd=None):
+            calls.append(cmd)
+            if cmd[:3] == ["gh", "auth", "status"]:
+                return gh_rc, "", gh_err
+            if cmd[:3] == ["aws", "sts", "get-caller-identity"]:
+                return aws_rc, "", "Error when retrieving token from sso: expired"
+            return 0, "", ""
+
+        return run, calls
+
+    def test_everything_signed_in_skips_nothing(self):
+        run, _ = self.fake()
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
+            ctx = make_ctx(run)
+            ctx.preflight = True
+            run_pass(ctx, ("pull",))
+        self.assertTrue(ctx.steps[0]["ok"])
+        self.assertEqual(ctx.steps[0]["step"], "auth")
+
+    def test_a_signed_out_gh_skips_its_steps_and_the_digest_ci_section(self):
+        run, calls = self.fake(
+            gh_rc=1,
+            gh_err="github.com\n  X Failed to log in to github.com: token is invalid",
+        )
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
+            ctx = make_ctx(run)
+            ctx.preflight = True
+            result = run_pass(ctx, ("prs", "board", "notifications", "deps", "digest"))
+        auth = ctx.steps[0]
+        self.assertFalse(auth["ok"])
+        self.assertIn("token is invalid", auth["line"])
+        self.assertIn("gh auth login", auth["line"])
+        skipped = {s["step"] for s in ctx.steps if s["line"].startswith("skipped")}
+        # `board` skips with gh's reason, not its own "no PR set" failure.
+        self.assertEqual(set(skipped), {"prs", "board", "notifications", "deps"})
+        # No gated step ever reached its tool.
+        self.assertFalse([c for c in calls if c[:3] == ["gh", "pr", "list"]])
+        digests = [
+            c for c in calls if len(c) > 1 and c[1].endswith("session_metrics.py")
+        ]
+        self.assertTrue(digests)
+        self.assertNotIn("--ci", digests[0])
+        self.assertNotIn("prs", result["durations"])
+        self.assertEqual(result["auth"]["gh"].split(":")[0], "gh auth status failed")
+
+    def test_a_timed_out_gh_reads_as_a_timeout(self):
+        run, _ = self.fake(gh_rc=124)
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
+            auth = upkeep.auth_preflight(make_ctx(run))
+        self.assertIn("timed out after 15s", auth["gh"])
+
+    def test_a_missing_linear_key_and_an_expired_aws_session_skip_their_steps(self):
+        run, _ = self.fake(aws_rc=255)
+        env = {k: v for k, v in os.environ.items() if k != "LINEAR_API_KEY"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            auth = upkeep.auth_preflight(make_ctx(run))
+        self.assertIn("LINEAR_API_KEY is unset", auth["linear"])
+        self.assertIn("expired", auth["aws"])
+        # AWS gates no whole step: the reconcile is skipped inside `step_cost`.
+        # The prune reads status from Linear, so it skips too, fail closed.
+        self.assertEqual(
+            set(upkeep.preflight_skips(auth)), {"board", "prune", "parked"}
+        )
+
+    def test_an_expired_aws_session_skips_the_reconcile_but_keeps_the_local_day(self):
+        run, calls = self.fake(aws_rc=255)
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
+            ctx = make_ctx(run)
+            ctx.preflight = True
+            run_pass(ctx, ("cost",))
+        lines = {s["step"]: s["line"] for s in ctx.steps}
+        self.assertTrue(lines["fleet-cost"].startswith("skipped — aws sts"))
+        cost_calls = [c for c in calls if len(c) > 1 and c[1].endswith("fleet_cost.py")]
+        self.assertEqual([c[2] for c in cost_calls], ["local"])
+
+    def test_a_pass_with_no_cost_step_never_probes_aws(self):
+        run, calls = self.fake()
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
+            ctx = make_ctx(run)
+            ctx.preflight = True
+            run_pass(ctx, upkeep.PRUNE_STEPS)
+        self.assertFalse([c for c in calls if c[0] == "aws"])
+        self.assertNotIn("AWS", ctx.steps[0]["line"])
+
+    def test_gh_is_probed_for_the_active_account_only(self):
+        run, calls = self.fake()
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
+            upkeep.auth_preflight(make_ctx(run), aws=False)
+        self.assertIn(["gh", "auth", "status", "--active"], calls)
+
+    def test_the_aws_probe_honors_the_configured_profile(self):
+        run, calls = self.fake()
+        with mock.patch.dict(
+            os.environ, {"DS_AWS_PROFILE": "ops", "LINEAR_API_KEY": "k"}
+        ):
+            upkeep.auth_preflight(make_ctx(run))
+        aws = next(c for c in calls if c[0] == "aws")
+        self.assertEqual(aws[-2:], ["--profile", "ops"])
+
 
 class WriteReportTests(unittest.TestCase):
     def test_the_report_is_made_safe_spliced_and_written(self):
@@ -1443,6 +1642,57 @@ class CliTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 upkeep.run(["upkeep.py", "run"])
             self.assertEqual(upkeep.previous_parked(upkeep.stamp_path(base)), {"x": 1})
+
+    def test_the_stamp_carries_durations_to_the_next_pass(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            upkeep.write_report = lambda report: None
+            seen = []
+
+            def fake_pass(ctx):
+                seen.append(
+                    (
+                        ctx.preflight,
+                        ctx.data["previous_durations"],
+                        ctx.data["previous_elapsed"],
+                    )
+                )
+                return {
+                    "ran_at": "t",
+                    "armed": False,
+                    "steps": [],
+                    "durations": {"pull": 3.2},
+                    "elapsed": 250.0,
+                }
+
+            upkeep.run_pass = fake_pass
+            with contextlib.redirect_stdout(io.StringIO()):
+                upkeep.run(["upkeep.py", "run"])
+                upkeep.run(["upkeep.py", "run"])
+        self.assertEqual(seen, [(True, {}, None), (True, {"pull": 3.2}, 250.0)])
+
+    def test_a_non_tty_stderr_draws_no_bar(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            ctx = make_ctx(lambda cmd, timeout, cwd=None: (0, "", ""))
+            with contextlib.redirect_stderr(io.StringIO()):
+                upkeep.wire_terminal(ctx, base)
+        self.assertTrue(ctx.preflight)
+        self.assertIsNone(ctx.live)
+
+    def test_a_malformed_timing_reads_as_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "stamp.json"
+            path.write_text(
+                json.dumps(
+                    {"durations": {"pull": "x", "cli": True, "prs": 4}, "elapsed": "y"}
+                )
+            )
+            self.assertEqual(upkeep.previous_timing(path), ({"prs": 4.0}, None))
+            self.assertEqual(upkeep.previous_timing(Path(d) / "absent"), ({}, None))
 
     def test_a_stamp_without_counts_reads_as_no_previous(self):
         with tempfile.TemporaryDirectory() as d:

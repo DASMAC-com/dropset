@@ -11,6 +11,8 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -403,7 +405,74 @@ class DailySessionIdTests(unittest.TestCase):
         # Pinned against the `_ds_daily_sid` callers in
         # `.claude/shell/init.zsh`. If a second daily verb is added there, this
         # fails and points at the list that needs it.
-        self.assertEqual(rs.DAILY_KINDS, ("plan", "curate"))
+        self.assertEqual(rs.DAILY_KINDS, ("plan", "curate", "launch"))
+
+
+def _shell(fn_call: str) -> str:
+    """What `.claude/shell/init.zsh` itself computes for ``fn_call``."""
+    init = Path(__file__).resolve().parents[2] / "shell" / "init.zsh"
+    got = subprocess.run(
+        ["zsh", "-fc", f'source "$1" >/dev/null 2>&1; {fn_call}', "zsh", str(init)],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin:/sbin:/usr/local/bin:/opt/homebrew/bin"},
+        check=False,
+    )
+    return got.stdout.strip()
+
+
+@unittest.skipUnless(shutil.which("zsh"), "needs zsh")
+class LaunchAndChoreIdTests(unittest.TestCase):
+    """The launcher and a chore printed no estimate at close (measured
+    2026-10-29) because neither id had a computed path. Both are pinned to the
+    shell's own functions, run live, so the two can never drift."""
+
+    def test_launch_matches_the_shell_and_ignores_any_counter(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = Path(d) / rs.STATE_DIR
+            state.mkdir(parents=True)
+            # `launch` seeds cycle 0 always, so a stray counter must not move it.
+            (state / "launch-cycle-20261029").write_text("3\n")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rs.run(
+                    [
+                        "resolve_session.py",
+                        "--daily-id",
+                        "launch",
+                        "--date",
+                        "20261029",
+                        "--repo",
+                        d,
+                    ]
+                )
+        self.assertEqual(
+            out.getvalue().strip(), _shell("_ds_daily_sid launch 0 20261029")
+        )
+
+    def test_a_chore_matches_the_shell_by_bare_number_or_eng_tag(self):
+        want = _shell("_ds_topic_sid chore 2348")
+        self.assertRegex(want, r"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
+        for tag in ("2348", "eng-2348", "ENG-2348"):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = rs.run(["resolve_session.py", "--daily-id", "chore", "--tag", tag])
+            self.assertEqual((rc, out.getvalue().strip()), (0, want), tag)
+
+    def test_a_chore_needs_a_numeric_tag(self):
+        with self.assertRaises(rs.ResolveSessionError):
+            rs.run(["resolve_session.py", "--daily-id", "chore"])
+        with self.assertRaises(rs.ResolveSessionError):
+            rs.run(["resolve_session.py", "--daily-id", "chore", "--tag", "exp-x"])
+
+    def test_inputs_the_seed_never_uses_are_refused_not_ignored(self):
+        for argv in (
+            ["--daily-id", "chore", "--tag", "2348", "--date", "20261029"],
+            ["--daily-id", "chore", "--tag", "2348", "--cycle", "0"],
+            ["--daily-id", "launch", "--cycle", "2"],
+        ):
+            with self.assertRaises(rs.ResolveSessionError, msg=argv):
+                rs.run(["resolve_session.py", *argv])
 
 
 class CycleIdTests(unittest.TestCase):

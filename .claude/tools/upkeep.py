@@ -77,6 +77,16 @@ refuses the whole pass, since every later step assumes it.
     with the delta against the previous run's ids kept beside the stamp.
     Report-only — never a CI gate.
 
+**Auth preflight.** Before the first step, ``gh auth status --active``
+(bounded by ``TIMEOUT_PREFLIGHT``, with ``GH_PROMPT_DISABLED`` set), the Linear
+key's presence and, when the cost step runs, the AWS identity are checked
+once. A failed or timed-out ``gh`` skips the ``gh``-backed steps
+(``GH_STEPS``, and the digest's CI section), a missing key the Linear-backed
+ones (``LINEAR_STEPS``), and an expired AWS session the fleet-cost reconcile
+alone, each with a one-line reason, rather than hanging the pass on an
+interactive prompt; the report's ``auth`` line names the re-authentication
+once.
+
 **Arming.** Steps 6 and 8 run as a dry run and touch nothing unless
 ``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. Step 7 is
 always armed in ``run``: with the board gate gone, a settled PR's threads are
@@ -91,9 +101,13 @@ through its ``REPORT_END`` line — is replaced wholesale each run, bounded to
 prints to stdout (the standalone interface, and the fallback when Linear is
 unreachable); ``--json`` prints the structured twin instead. Progress — a line
 as each step starts and ends, then a total — goes to stderr, so neither stdout
-form changes and the launcher's terminal shows which wait it is on. A local stamp beside
-the allowlist refresh marker answers ``ran-today`` with no network read, and
-carries the parked counts the next pass measures direction against; it is
+form changes and the launcher's terminal shows which wait it is on. Each start
+line names the step's duration last time, and on a tty a step past
+``BAR_AFTER`` seconds draws one in-place bar of elapsed against that figure. A
+local stamp beside the allowlist refresh marker answers ``ran-today`` with no
+network read, and carries the parked counts the next pass measures direction
+against and each completed step's duration (a crashed or skipped step has
+none); it is
 written only when the report reached the document, so a ``--no-doc`` preview or
 a failed write never answers it. ``run --if-stale`` consults that stamp first
 and skips the pass when it already answers yes — the form the ``plan`` launcher
@@ -109,12 +123,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -149,6 +166,14 @@ REPORT_CHAR_CAP = 6000
 LIST_CAP = 6
 
 TIMEOUT_GIT = 120
+# Short on purpose: the preflight exists so a signed-out `gh` costs seconds,
+# not a pass hung on a prompt.
+TIMEOUT_PREFLIGHT = 15
+# A step past this many seconds draws the in-place bar on a tty, redrawn every
+# BAR_TICK seconds across BAR_CELLS cells.
+BAR_AFTER = 5.0
+BAR_TICK = 1.0
+BAR_CELLS = 8
 TIMEOUT_BREW = 60
 TIMEOUT_GH = 60
 TIMEOUT_TOOL = 120
@@ -179,12 +204,16 @@ OPEN_PR_LIMIT = 100
 
 RESOLVED_TYPES = ("completed", "canceled")
 # The parking milestones, in report order. Session pending is short-lived by
-# design: a count there is a seat session that died mid-review. Follow-ups is
-# retired as a parking set: filers now land un-parked in the curator's pool,
-# and issues still carrying it go uncounted until the milestone is deleted.
+# design: a count there is a seat session that died mid-review. Curator pending
+# is the curator's in-flight batch, stamped before each ask and cleared on the
+# move, so a count with no live curator is a curator that stopped mid-day.
+# Follow-ups is retired as a parking set: filers now land un-parked in the
+# curator's pool, and issues still carrying it go uncounted until the
+# milestone is deleted.
 PARKED_MILESTONES = (
     "Audit findings",
     "Session pending",
+    "Curator pending",
 )
 # A branch tied to an ENG issue, by its NUMBER whatever the verb: `eng-<n>`,
 # which every issue-keyed launch now creates, or a pre-scheme spelling — the
@@ -241,6 +270,12 @@ class Ctx:
     # The Claude projects tree the prune's digest hold reads transcripts from;
     # None is the Claude home's.
     projects: Path | None = None
+    # The in-place bar's writer — set by the CLI only when stderr is a tty; an
+    # empty string clears the line. None draws no bar.
+    live: Callable[[str], None] | None = None
+    # Whether `run_pass` checks the credentials first — the CLI's, off under
+    # test so a fake runner need not answer `gh auth status`.
+    preflight: bool = False
 
     def tool(self, name: str, *args: str, timeout: float = TIMEOUT_TOOL):
         return self.run(
@@ -766,10 +801,22 @@ def cost_day_line(day: str, summary: dict) -> str:
 
 def step_cost(ctx: Ctx) -> None:
     # Exit 1 is a settled day flagged: a finding the report carries, not a
-    # failed read. Exit 2 (an AWS error, expired credentials included) is.
-    report = _json_tool(
-        ctx, "fleet-cost", "fleet_cost.py", "reconcile", "--json", timeout=TIMEOUT_COST
-    )
+    # failed read. Exit 2 (an AWS error, expired credentials included) is. A
+    # failed AWS preflight skips the reconcile alone: the local-day table
+    # below meters transcripts and only marks its billed column unread.
+    aws_down = (ctx.data.get("auth") or {}).get("aws")
+    if aws_down:
+        ctx.record("fleet-cost", f"skipped — {aws_down}", False)
+        report = None
+    else:
+        report = _json_tool(
+            ctx,
+            "fleet-cost",
+            "fleet_cost.py",
+            "reconcile",
+            "--json",
+            timeout=TIMEOUT_COST,
+        )
     if report is not None:
         ctx.data["fleet_cost"] = report
         days = sorted(report.get("days", {}).items())
@@ -858,7 +905,12 @@ def step_digest(ctx: Ctx) -> None:
         "w", suffix=".json", prefix="upkeep-calibration-", delete=False
     ) as handle:
         json.dump(calibration, handle)
-    args = ["digest", "--base", str(ctx.base), "--calibration", handle.name, "--ci"]
+    # The CI section reads the merge queue through `gh`; a failed preflight
+    # drops it rather than the whole digest.
+    gh_down = (ctx.data.get("auth") or {}).get("gh")
+    args = ["digest", "--base", str(ctx.base), "--calibration", handle.name]
+    if not gh_down:
+        args.append("--ci")
     if ctx.data.get("previous_run"):
         args += ["--since", ctx.data["previous_run"]]
     try:
@@ -882,7 +934,8 @@ def step_digest(ctx: Ctx) -> None:
         f"{summary.get('sessions', 0)} session(s), "
         f"Bedrock {fleet_cost.money(summary.get('bedrock', 0.0))}, seat "
         f"{fleet_cost.money(summary.get('seat', 0.0))} {fleet_cost.sm.NOT_BILLED}, "
-        f"{summary.get('flagged', 0)} flagged line(s); {path}",
+        f"{summary.get('flagged', 0)} flagged line(s); {path}"
+        + ("; CI section skipped (gh auth)" if gh_down else ""),
         ok=bool(summary.get("path")),
     )
 
@@ -1071,9 +1124,96 @@ STEP_LABELS = {
 PRUNE_STEPS = ("prs", "board", "prune", "notifications")
 
 
-def step_start_line(index: int, total: int, name: str) -> str:
+# The steps each credential gates. Two gates sit inside a step instead, since
+# the rest of the step needs no credential: `gh` drops the digest's CI section
+# (`step_digest`), and AWS drops the fleet-cost reconcile while the local-day
+# table, read from transcripts, still prints (`step_cost`).
+# `board` judges the PR set `prs` reads, so a gh failure skips it with gh's
+# reason rather than letting it report a second, misleading failure.
+GH_STEPS = ("prs", "board", "notifications", "deps")
+# `prune` decides on the issue's status type read from Linear, so without the
+# key it skips outright, fail closed, rather than reporting nothing to clean.
+LINEAR_STEPS = ("board", "prune", "parked")
+REAUTH = {
+    "gh": "gh auth login",
+    "linear": "export LINEAR_API_KEY",
+    "aws": "aws login --remote",
+}
+
+
+def _auth_reason(rc: int, out: str, err: str, what: str) -> str:
+    if rc == 124:
+        return f"{what} timed out after {TIMEOUT_PREFLIGHT}s"
+    lines = [ln.strip() for ln in f"{err}\n{out}".splitlines() if ln.strip()]
+    # `gh auth status` leads with a hostname line; the useful one names the
+    # failure.
+    telling = re.compile(r"invalid|not logged|expired|failed|error|token", re.I)
+    why = next((ln for ln in lines if telling.search(ln)), lines[0] if lines else "")
+    return f"{what} failed: {why[:160] or f'exit {rc}'}"
+
+
+def auth_preflight(ctx: Ctx, aws: bool = True) -> dict[str, str | None]:
+    """Why each credential family cannot be used this pass, or None when it can:
+    ``gh`` (the active account only, so a stale secondary one does not skip
+    steps the active one can run), ``linear`` (the key's presence) and, when
+    ``aws``, the fleet-cost profile's identity — an expired SSO session is the
+    failure that recurs. A pass with no cost step never probes AWS."""
+    rc, out, err = ctx.run(
+        ["gh", "auth", "status", "--active"], TIMEOUT_PREFLIGHT, str(ctx.base)
+    )
+    found: dict[str, str | None] = {
+        "gh": None if rc == 0 else _auth_reason(rc, out, err, "gh auth status")
+    }
+    try:
+        linear_api.env_var("LINEAR_API_KEY")
+        found["linear"] = None
+    except linear_api.LinearApiError as e:
+        found["linear"] = first_line(str(e))
+    if aws:
+        cmd = ["aws", "sts", "get-caller-identity", "--output", "json"]
+        profile = os.environ.get("DS_AWS_PROFILE", "").strip()
+        if profile:
+            cmd += ["--profile", profile]
+        rc, out, err = ctx.run(cmd, TIMEOUT_PREFLIGHT, None)
+        found["aws"] = (
+            None
+            if rc == 0
+            else _auth_reason(rc, out, err, "aws sts get-caller-identity")
+        )
+    return found
+
+
+def preflight_skips(auth: dict[str, str | None]) -> dict[str, str]:
+    """Each gated step's skip line, keyed by step name."""
+    skips: dict[str, str] = {}
+    for family, steps in (("gh", GH_STEPS), ("linear", LINEAR_STEPS)):
+        if auth.get(family):
+            for name in steps:
+                skips[name] = f"skipped — {auth[family]}"
+    return skips
+
+
+def auth_line(auth: dict[str, str | None]) -> tuple[str, bool]:
+    down = [f for f in ("gh", "linear", "aws") if auth.get(f)]
+    if not down:
+        checked = ", AWS identity resolves" if "aws" in auth else ""
+        return f"gh signed in, Linear key present{checked}", True
+    parts = [f"{auth[f]} (re-authenticate: {REAUTH[f]})" for f in down]
+    return "; ".join(parts) + "; what each gates is skipped", False
+
+
+def clock_text(seconds: float) -> str:
+    """``71s`` under a minute, ``4m10s`` past one."""
+    whole = int(round(seconds))
+    return f"{whole // 60}m{whole % 60:02d}s" if whole >= 60 else f"{whole}s"
+
+
+def step_start_line(
+    index: int, total: int, name: str, last: float | None = None
+) -> str:
     what, bound = STEP_LABELS.get(name, (name, "no timeout recorded"))
-    return f"upkeep: [{index}/{total}] {name} — {what} ({bound})"
+    tail = f", last {last:.0f}s" if last is not None else ""
+    return f"upkeep: [{index}/{total}] {name} — {what} ({bound}{tail})"
 
 
 def step_end_line(
@@ -1083,9 +1223,57 @@ def step_end_line(
     return f"upkeep: [{index}/{total}] {name} — {verdict} in {elapsed:.1f}s"
 
 
-def total_line(total: int, elapsed: float, crashed: int) -> str:
+def total_line(
+    total: int, elapsed: float, crashed: int, last: float | None = None
+) -> str:
     tail = f", {crashed} crashed" if crashed else ""
-    return f"upkeep: {total} step(s) in {elapsed:.1f}s{tail}"
+    before = f" (last {clock_text(last)})" if last is not None else ""
+    return f"upkeep: {total} step(s) in {elapsed:.1f}s{before}{tail}"
+
+
+def bar_line(
+    index: int, total: int, name: str, elapsed: float, expected: float | None
+) -> str:
+    """The in-place line: elapsed against last time, the bar full and the
+    counter still running once past it; a bare counter with no figure."""
+    head = f"upkeep: [{index}/{total}] {name}"
+    if not expected:
+        return f"{head} {elapsed:.0f}s"
+    # A started cell counts (32s of 71s is four cells, the spec's example), but
+    # the last one only fills once last time's figure is reached.
+    filled = math.ceil(BAR_CELLS * elapsed / expected)
+    filled = min(filled, BAR_CELLS if elapsed >= expected else BAR_CELLS - 1)
+    bar = "▓" * filled + "░" * (BAR_CELLS - filled)
+    return f"{head} {bar} {elapsed:.0f}s / ~{expected:.0f}s"
+
+
+@contextmanager
+def live_bar(ctx: Ctx, index: int, total: int, name: str, expected: float | None):
+    """Redraw the bar on a side thread while the step runs; clear it after, so
+    the end line prints on a clean line. A no-op without ``ctx.live``."""
+    if ctx.live is None:
+        yield
+        return
+    start = ctx.clock()
+    stop = threading.Event()
+    drawn = threading.Event()
+
+    def tick() -> None:
+        while not stop.wait(BAR_TICK):
+            elapsed = ctx.clock() - start
+            if elapsed >= BAR_AFTER:
+                ctx.live(bar_line(index, total, name, elapsed, expected))
+                drawn.set()
+
+    thread = threading.Thread(target=tick, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+        if drawn.is_set():
+            ctx.live("")
 
 
 def run_pass(ctx: Ctx, only: tuple[str, ...] | None = None) -> dict:
@@ -1093,27 +1281,60 @@ def run_pass(ctx: Ctx, only: tuple[str, ...] | None = None) -> dict:
     # report or its JSON twin byte for byte.
     say = ctx.progress or (lambda _line: None)
     chosen = [(n, fn) for n, fn in STEPS if only is None or n in only]
+    previous = ctx.data.get("previous_durations") or {}
+    skips: dict[str, str] = {}
+    if ctx.preflight:
+        # Said first: the probes can take a timeout each before any step line.
+        say("upkeep: auth — checking the gh, Linear and AWS credentials")
+        auth = auth_preflight(ctx, aws=any(n == "cost" for n, _ in chosen))
+        ctx.data["auth"] = auth
+        line, ok = auth_line(auth)
+        ctx.record("auth", line, ok)
+        say(f"upkeep: auth — {line}")
+        skips = preflight_skips(auth)
     began = ctx.clock()
     crashes = 0
+    durations: dict[str, float] = {}
     for index, (name, fn) in enumerate(chosen, 1):
-        say(step_start_line(index, len(chosen), name))
+        say(step_start_line(index, len(chosen), name, previous.get(name)))
+        if name in skips:
+            ctx.record(name, skips[name], False)
+            say(f"upkeep: [{index}/{len(chosen)}] {name} — skipped")
+            continue
         start = ctx.clock()
         crashed = False
-        try:
-            fn(ctx)
-        except Exception as e:  # noqa: BLE001 — best-effort: a crash is a line
-            crashed = True
-            crashes += 1
-            ctx.record(
-                name, f"step crashed: {type(e).__name__}: {first_line(str(e))}", False
-            )
-        say(step_end_line(index, len(chosen), name, ctx.clock() - start, crashed))
-    say(total_line(len(chosen), ctx.clock() - began, crashes))
+        with live_bar(ctx, index, len(chosen), name, previous.get(name)):
+            try:
+                fn(ctx)
+            except Exception as e:  # noqa: BLE001 — best-effort: a crash is a line
+                crashed = True
+                crashes += 1
+                ctx.record(
+                    name,
+                    f"step crashed: {type(e).__name__}: {first_line(str(e))}",
+                    False,
+                )
+        elapsed = ctx.clock() - start
+        # A crashed step's figure would mislead the next bar; it has none.
+        if not crashed:
+            durations[name] = round(elapsed, 1)
+        say(step_end_line(index, len(chosen), name, elapsed, crashed))
+    total = ctx.clock() - began
+    # The stamped total is the whole pass's, so only a whole pass compares
+    # against it; a `prune` subset names per-step figures alone.
+    last_total = ctx.data.get("previous_elapsed") if only is None else None
+    say(total_line(len(chosen), total, crashes, last_total))
     result = {
         "ran_at": ctx.now.isoformat(),
         "armed": ctx.armed,
         "steps": ctx.steps,
+        "durations": durations,
+        "elapsed": round(total, 1),
     }
+    if last_total is not None:
+        result["last_elapsed"] = last_total
+    if "auth" in ctx.data:
+        result["auth"] = ctx.data["auth"]
     if "parked" in ctx.data:
         result["parked"] = ctx.data["parked"]
     return result
@@ -1162,7 +1383,12 @@ def one_line(text: object) -> str:
 
 def render(result: dict, cap: int = REPORT_CHAR_CAP) -> str:
     mode = "armed" if result["armed"] else "dry run (disarmed)"
-    lines = [f"Run {result['ran_at']}, {mode}.", ""]
+    took = ""
+    if result.get("elapsed") is not None:
+        took = f", ran in {clock_text(result['elapsed'])}"
+        if result.get("last_elapsed") is not None:
+            took += f" (last {clock_text(result['last_elapsed'])})"
+    lines = [f"Run {result['ran_at']}, {mode}{took}.", ""]
     for s in result["steps"]:
         mark = "" if s["ok"] else " (failed)"
         lines.append(f"- {s['step']}{mark}: {one_line(s['line'])}")
@@ -1261,12 +1487,47 @@ def stamp_path(base: Path) -> Path:
 
 
 def write_stamp(
-    base: Path, now: datetime, armed: bool, parked: dict | None = None
+    base: Path,
+    now: datetime,
+    armed: bool,
+    parked: dict | None = None,
+    durations: dict | None = None,
+    elapsed: float | None = None,
 ) -> None:
     stamp = {"last_run": now.isoformat(), "armed": armed}
     if parked is not None:
         stamp["parked"] = parked
+    if durations is not None:
+        stamp["durations"] = durations
+    if elapsed is not None:
+        stamp["elapsed"] = elapsed
     stamp_path(base).write_text(json.dumps(stamp) + "\n", encoding="utf-8")
+
+
+def previous_timing(path: Path) -> tuple[dict[str, float], float | None]:
+    """``(durations, elapsed)`` from the last stamped pass — each completed
+    step's seconds and the whole pass's — empty and None before the first."""
+    try:
+        stamp = json.loads(path.read_text("utf-8"))
+        durations, elapsed = stamp.get("durations"), stamp.get("elapsed")
+    except (OSError, ValueError, AttributeError):
+        return {}, None
+    number = (int, float)
+    steps = (
+        {
+            k: float(v)
+            for k, v in durations.items()
+            if isinstance(v, number) and not isinstance(v, bool)
+        }
+        if isinstance(durations, dict)
+        else {}
+    )
+    whole = (
+        float(elapsed)
+        if isinstance(elapsed, number) and not isinstance(elapsed, bool)
+        else None
+    )
+    return steps, whole
 
 
 def previous_parked(path: Path) -> dict | None:
@@ -1339,6 +1600,22 @@ def to_stderr(line: str) -> None:
     print(line, file=sys.stderr, flush=True)
 
 
+def to_tty_line(text: str) -> None:
+    # Return, clear to end of line, redraw: one line updated in place.
+    sys.stderr.write(f"\r\033[K{text}")
+    sys.stderr.flush()
+
+
+def wire_terminal(ctx: Ctx, base: Path) -> None:
+    """The CLI's half of a pass: the preflight on, the bar on a tty only, and
+    the last stamped pass's timings for the start lines to name."""
+    ctx.preflight = True
+    ctx.live = to_tty_line if sys.stderr.isatty() else None
+    durations, elapsed = previous_timing(stamp_path(base))
+    ctx.data["previous_durations"] = durations
+    ctx.data["previous_elapsed"] = elapsed
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="upkeep.py", description=__doc__.split("\n")[0]
@@ -1383,6 +1660,9 @@ def run(argv: list[str]) -> int:
         print(f"upkeep: refused — {why}", file=sys.stderr)
         return 2
     now = datetime.now(timezone.utc)
+    # Inherited by every `gh` the pass spawns: a credential problem fails fast
+    # instead of waiting on a prompt no one is watching.
+    os.environ.setdefault("GH_PROMPT_DISABLED", "1")
 
     if args.cmd == "ran-today":
         print(json.dumps(ran_today(stamp_path(base), now)))
@@ -1416,6 +1696,7 @@ def run(argv: list[str]) -> int:
             progress=to_stderr,
         )
         ctx.data["trees"] = trees
+        wire_terminal(ctx, base)
         result = run_pass(ctx, PRUNE_STEPS)
         print(json.dumps(result, indent=2) if args.json else render(result))
         return 0
@@ -1432,6 +1713,7 @@ def run(argv: list[str]) -> int:
     ctx.data["trees"] = trees
     ctx.data["previous_parked"] = previous_parked(stamp_path(base))
     ctx.data["previous_run"] = previous_run(stamp_path(base))
+    wire_terminal(ctx, base)
     result = run_pass(ctx)
     report = render(result)
     if not args.no_doc:
@@ -1451,7 +1733,14 @@ def run(argv: list[str]) -> int:
             # A failed count carries the last good one forward, so one Linear
             # blip does not cost the next pass its direction.
             parked = result.get("parked") or ctx.data["previous_parked"]
-            write_stamp(base, now, ctx.armed, parked)
+            write_stamp(
+                base,
+                now,
+                ctx.armed,
+                parked,
+                result.get("durations"),
+                result.get("elapsed"),
+            )
         except OSError as e:
             print(f"upkeep: run stamp not written: {e}", file=sys.stderr)
     return 0
