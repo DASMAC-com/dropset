@@ -1,4 +1,5 @@
 ---
+# cspell:word prismjs
 # Hold any dependency version published less than two days ago (the value is
 # in minutes): every 2026 npm worm's malicious versions were pulled from the
 # registry inside that window. Seven days buys no extra coverage and only
@@ -26,9 +27,24 @@ onlyBuiltDependencies:
 # floor is pinned here rather than trusting each Next release's own range;
 # the caret keeps it inside the range Next declares, so revisit it when a
 # Next bump moves sharp's range.
+#
+# The parent-scoped entries below lift prod advisories (`make deps-audit`)
+# a parent pins in place: Next pins postcss exactly, Spectacle's chain
+# (remark-parse, broadcast-channel, refractor) holds old trim,
+# @babel/runtime and prismjs, and @metamask/utils holds uuid 9. Drop each
+# entry once its parent's own range clears the advisory. Spectacle's
+# decode-uri-component has no override: the fixed line is ESM-only, which
+# its CJS query-string 7 cannot require, and query-string 9 drops the named
+# exports Spectacle imports, so those two ids are standing exceptions in
+# cfg/pnpm-audit.toml.
 overrides:
+  '@metamask/utils>uuid': '^11.1.1'
   '@types/react': '^19'
   '@types/react-dom': '^19'
+  'broadcast-channel>@babel/runtime': '^7.26.10'
+  'next>postcss': '^8.5.23'
+  'refractor>prismjs': '^1.30.0'
+  'remark-parse>trim': '^0.0.3'
   'sharp': '^0.35.5'
 packages:
 - 'frontend'
