@@ -58,7 +58,7 @@ export type Vault = {
   // price); see vaultRefPrice for the stand-in.
   refPrice: number | null;
   // USD per quote token, and whether that rate (or TVL's base leg) fell back
-  // to the indicative TOKEN_USD table rather than an on-chain price. See
+  // to the indicative CURRENCY_USD table rather than an on-chain price. See
   // quoteUsdRate.
   quoteUsd: number;
   usdIndicative: boolean;
@@ -241,23 +241,31 @@ export const resolveVaultMarket = (
   };
 };
 
-// Hard-coded indicative USD prices per token symbol: the fallback when a vault
-// has no on-chain price to value a leg at (a dark book, or a pair with no USD
-// leg).
-const TOKEN_USD: Record<string, number> = {
-  USDC: 1,
-  USDT: 1,
-  EURC: 1.08,
-  GYEN: 0.0067,
-  TGBP: 1.27,
-  VGBP: 1.27,
-  VCHF: 1.12,
-  CADC: 0.73,
-  AUDD: 0.66,
+// Hard-coded indicative USD prices per pegged currency: the fallback when a
+// vault has no on-chain price to value a leg at (a dark book, or a pair with no
+// USD leg). Keyed by currency, not token, so every stablecoin on the roster
+// shares its peg's entry; ZAR, MXN, SGD and IDR take the localnet bootstrap's
+// seed references (tui/src/market.rs).
+const CURRENCY_USD: Partial<Record<IsoCurrencyCode, number>> = {
+  USD: 1,
+  EUR: 1.08,
+  JPY: 0.0067,
+  GBP: 1.27,
+  CHF: 1.12,
+  CAD: 0.73,
+  AUD: 0.66,
+  ZAR: 0.0605,
+  MXN: 0.0573,
+  SGD: 0.7705,
+  IDR: 0.000056,
 };
 
-// USD price for a stablecoin symbol; defaults to 1 (a USD stable) when unknown.
-export const tokenUsdPrice = (symbol: string): number => TOKEN_USD[symbol] ?? 1;
+// USD price for a stablecoin symbol, by its currency's peg; defaults to 1 (a
+// USD stable) when the currency has no entry.
+export const tokenUsdPrice = (symbol: string): number => {
+  const code = currencyForStablecoin(symbol);
+  return (code ? CURRENCY_USD[code] : undefined) ?? 1;
+};
 
 const isUsd = (symbol: string): boolean =>
   currencyForStablecoin(symbol) === "USD";
@@ -288,7 +296,7 @@ const ROSTER_QUOTE = "USDC";
 // the roster, so every non-USD stablecoin in it pairs against USDC, and a
 // market for a newly listed stablecoin shows without an edit here. The live
 // read takes each market's real orientation from the chain, so the order
-// written here is only the roster's.
+// derived here is only the roster's.
 export const VAULT_PAIR_ROSTER: VaultPair[] = ALL_STABLECOINS.filter(
   (s) => currencyForStablecoin(s.symbol) !== "USD",
 ).map((s) => ({ base: s.symbol, quote: ROSTER_QUOTE }));
