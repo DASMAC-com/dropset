@@ -3,11 +3,13 @@
 //
 // Everything here is enforced: the site may never be framed (a hostile page
 // could otherwise clickjack the picker or the swap CTA), nothing it serves is
-// sniffed into another type, and the browser may load and connect only to the
-// sources listed. A connector that breaks under the policy is a missing
-// source, added here, never a reason to widen a directive. Next's own
-// hydration scripts are inline, so scripts need 'unsafe-inline' until the app
-// adopts per-request nonces.
+// sniffed into another type, no script loads from a foreign host, and fetches
+// and sockets reach only the sources listed. A connector that breaks under
+// the policy is a missing source, added here, never a reason to widen a
+// directive. Next's own hydration scripts are inline, so scripts need
+// 'unsafe-inline' until the app adopts per-request nonces; until then the
+// policy does not stop an injected inline script sending data out (an image
+// request to any https: host, or a message on the MetaMask relay).
 
 import {
   DFLOW_ORDER_URLS,
@@ -72,6 +74,10 @@ export const CONNECTOR_SOURCES = [
   "ws://localhost:*",
 ];
 
+// The frames the connectors' SDKs open: MetaMask's onboarding forwarder, a
+// hidden frame its extension-install flow talks to.
+export const CONNECTOR_FRAMES = ["https://fwd.metamask.io"];
+
 export function securityHeaders(
   env: Record<string, string | undefined>,
   { dev }: { dev: boolean },
@@ -83,13 +89,17 @@ export function securityHeaders(
     `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${dev ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline'",
     // Token icons come from each issuer's own host, which no list can name
-    // ahead of time; an image cannot run script.
+    // ahead of time; an image runs no script, though a request for one can
+    // carry data out (see the top of this file).
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
     `connect-src 'self' ${[...connectSources(env), ...CONNECTOR_SOURCES].join(" ")}`,
+    `frame-src ${CONNECTOR_FRAMES.join(" ")}`,
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",
+    // The app posts no form; injected markup may not post one elsewhere.
+    "form-action 'self'",
     "frame-ancestors 'none'",
   ];
   return [

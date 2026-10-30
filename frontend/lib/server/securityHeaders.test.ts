@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CONNECTOR_FRAMES,
   CONNECTOR_SOURCES,
   connectSources,
   securityHeaders,
@@ -36,25 +37,31 @@ describe("security headers", () => {
     expect(policy).toContain("default-src 'self'");
     expect(policy).toContain("object-src 'none'");
     expect(policy).toContain("base-uri 'self'");
+    expect(policy).toContain("form-action 'self'");
     expect(header(headers, "Content-Security-Policy-Report-Only")).toBe(
       undefined,
     );
   });
 
-  it("names a host in every source directive but img-src", () => {
+  it("widens no source past one origin but the two documented ones", () => {
     const policy = header(
       securityHeaders({}, { dev: false }),
       "Content-Security-Policy",
     );
+    expect(policy).toBeDefined();
+    // img-src https: (issuer icon hosts) and MWA's per-session loopback port.
+    const exceptions = new Set([
+      "img-src https:",
+      "connect-src ws://localhost:*",
+    ]);
+    const wide: string[] = [];
     for (const directive of policy?.split("; ") ?? []) {
       const [name, ...sources] = directive.split(" ");
-      if (name === "img-src") continue;
-      for (const source of sources) {
-        expect(source).not.toBe("*");
-        expect(source).not.toMatch(/^(https?|wss?):$/);
-        expect(source).not.toMatch(/\/\/\*/);
-      }
+      for (const source of sources)
+        if (source.includes("*") || /^(https?|wss?):$/.test(source))
+          wide.push(`${name} ${source}`);
     }
+    expect(new Set(wide)).toEqual(exceptions);
   });
 
   it("lists the RPC, WS and API origins, never a key", () => {
@@ -87,6 +94,7 @@ describe("security headers", () => {
     expect(policy).toContain(
       `connect-src 'self' ${[...connectSources(env), ...CONNECTOR_SOURCES].join(" ")}`,
     );
+    expect(policy).toContain(`frame-src ${CONNECTOR_FRAMES.join(" ")}`);
   });
 
   it("keeps a local validator's port", () => {
