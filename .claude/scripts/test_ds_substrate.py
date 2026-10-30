@@ -755,11 +755,11 @@ class VerbLaunch(SubstrateHarness):
                 result, out = self._launch(verb)
                 self.assertIn("RC=1", out)
                 self.assertNotIn("MODEL=", out)
-        # The retired order launches nothing and names the new one.
+        # The retired order launches nothing: a plain usage error.
         result, out = self._launch("architect 12 bedrock", env=self._TOKEN)
         self.assertIn("RC=1", out)
         self.assertNotIn("MODEL=", out)
-        self.assertIn("`architect bedrock 12`", result.stderr)
+        self.assertIn("Usage: architect [anthropic|bedrock] <n>", result.stderr)
 
     def test_architect_bedrock_survives_every_resume_path(self):
         # The third defect: the override wrote no marker, so a resume came back

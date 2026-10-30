@@ -1809,8 +1809,7 @@ substrate, number** — so a title token lowercased and followed by the
 issue number is the launch line: `[Chore/Anthropic]` on 1234 is
 `chore anthropic 1234` (the grammar is in `linear-automation.md` →
 "The verb/substrate title token"). The old `architect <n> bedrock`
-order is refused with a one-line hint naming the new one, until
-2026-10-30.
+order is refused as a plain usage error.
 **The title guard** (`.claude/tools/verb_check.py`) holds the launcher
 to that: before `claude` starts a new issue-keyed session it reads the
 title and refuses a launch line the token contradicts — no token on

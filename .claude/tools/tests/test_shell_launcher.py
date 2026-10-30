@@ -303,18 +303,18 @@ class OpSignoutTest(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("zsh"), "needs zsh")
 class LaunchLineGrammarTest(unittest.TestCase):
-    def test_architect_s_retired_order_names_the_new_one(self) -> None:
-        got = run("architect 1572 bedrock")
-        self.assertEqual(got.returncode, 1)
-        self.assertIn("`architect bedrock 1572`", got.stderr)
-        self.assertNotIn("in", sections(got.stdout))
-
     def test_architect_refuses_a_stray_word(self) -> None:
-        for command in ("architect bedrock", "architect bedrock 1572 x"):
+        # The retired order, `architect <n> bedrock`, is a plain stray word.
+        for command in (
+            "architect bedrock",
+            "architect bedrock 1572 x",
+            "architect 1572 bedrock",
+        ):
             with self.subTest(command=command):
                 got = run(command)
                 self.assertEqual(got.returncode, 1)
                 self.assertIn("Usage: architect [anthropic|bedrock] <n>", got.stderr)
+                self.assertNotIn("in", sections(got.stdout))
 
     def test_a_new_session_reaches_the_title_guard_with_its_launch_line(self) -> None:
         """Each issue verb parses its word-first form and hands the guard the

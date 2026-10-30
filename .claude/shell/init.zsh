@@ -2717,13 +2717,6 @@ fi
 # no longer holds the worktree back; only a commit of its own does.
 architect() {
   local tag model substrate override=''
-  # The retired order, `architect <n> bedrock`: a clean cut with no alias, but
-  # a one-line hint naming the new order. Remove this block after 2026-10-30.
-  if [[ -z "$3" && "$2" == (anthropic|bedrock) && "$1" != (anthropic|bedrock) ]]
-  then
-    print -u2 "architect: the word goes first now — \`architect $2 $1\`"
-    return 1
-  fi
   if [[ "$1" == (anthropic|bedrock) ]]; then
     override="$1"
     shift
