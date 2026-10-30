@@ -16,7 +16,7 @@ import { useEclobAvailable } from "@/lib/hooks/useEclobAvailable";
 import { useEclobQuote } from "@/lib/hooks/useEclobQuote";
 import { useEclobSwap } from "@/lib/hooks/useEclobSwap";
 import { useRouterQuote } from "@/lib/hooks/useRouterQuote";
-import { useTokenInfoRefresh, useUsdQuote } from "@/lib/hooks/useUsdQuote";
+import { useTokenInfoRefresh, useUsdQuote } from "@/lib/hooks/useTokenInfo";
 import { formatAtomic, readyOutAmount } from "@/lib/quote";
 import { useSameToken, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useGoToVaultsForPair, useSwapNav } from "@/lib/ui/swapUrl";

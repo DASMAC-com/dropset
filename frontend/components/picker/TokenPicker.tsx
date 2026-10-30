@@ -12,7 +12,7 @@ import {
   stablecoinMatchesQuery,
 } from "@/lib/data/currencies";
 import { useAppEvent } from "@/lib/events";
-import { sortByVolumeDesc, useInfoLookup } from "@/lib/hooks/useUsdQuote";
+import { sortByVolumeDesc, useInfoLookup } from "@/lib/hooks/useTokenInfo";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
 import { useSwapNav } from "@/lib/ui/swapUrl";

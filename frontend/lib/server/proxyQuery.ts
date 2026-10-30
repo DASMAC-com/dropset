@@ -1,6 +1,6 @@
 // Server-only: the query checks the route handlers under app/api/ run before
 // lib/server/apiProxy.ts attaches a key. Each route accepts exactly the
-// parameters the app's own callers send (lib/hooks/useUsdQuote.ts for Jupiter;
+// parameters the app's own callers send (lib/hooks/useTokenInfo.ts for Jupiter;
 // the SDK's fetchDflowQuote and lib/dflow/dflowSwap.ts for DFlow), with each
 // value checked, and the query sent upstream is rebuilt from those alone. An
 // unknown or repeated parameter is refused rather than dropped, so a caller
@@ -30,7 +30,7 @@ import { clientLimiter } from "./clientLimit";
 
 const refuse = (msg: string): QueryCheck => ({ ok: false, msg });
 
-// Jupiter's Tokens API caps a search at 100 mints, and useUsdQuote.ts chunks
+// Jupiter's Tokens API caps a search at 100 mints, and useTokenInfo.ts chunks
 // at the same 100.
 export const JUPITER_SEARCH_MAX_MINTS = 100;
 

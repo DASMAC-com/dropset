@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { X } from "@/components/icons";
-import { useLiquidityLookup } from "@/lib/hooks/useUsdQuote";
+import { useLiquidityLookup } from "@/lib/hooks/useTokenInfo";
 import type { QuoteState } from "@/lib/quote";
 
 // Inline, dismissible message shown under the swap panel when a quote fails —

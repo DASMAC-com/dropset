@@ -37,7 +37,7 @@ import {
   useCatalogueInfoRefresh,
   useInfoLookup,
   useTokenInfo,
-} from "@/lib/hooks/useUsdQuote";
+} from "@/lib/hooks/useTokenInfo";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useFlagColor } from "@/lib/ui/flagColor";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
