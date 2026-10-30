@@ -93,7 +93,8 @@ releases its name and its lock on its own.
 - **The quit warns that a kept writer still holds lamports.** A publish's
   handoff failed and only this session holds the writer's key: Enter retries
   the sweep ("Close stranded buffers", now selected); `q` again exits anyway
-  and abandons the writer's balance.
+  and abandons the writer's balance. Mid-retry it warns too: let the retry
+  land before quitting.
 - **No transaction lands at all.** Each level's lifetime runs from the
   last reference-price write, so quotes go stale only once nothing refreshes
   it: stop the maker. That is the passive backstop, not a plan.
