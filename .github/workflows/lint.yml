@@ -112,9 +112,11 @@ jobs:
     # hit on a previous image's entry would restore environments built for
     # the old one. `ImageOS` (`ubuntu24`, `ubuntu26`, ...) is a runner
     # environment variable, not a workflow `env` one, so it cannot be read in
-    # an expression and is surfaced as a step output instead.
+    # an expression and is surfaced as a step output instead. The `:?` fails
+    # the step if it is ever unset, rather than quietly dropping the image
+    # from the key.
     - id: 'runner-image'
-      run: 'echo "os=$ImageOS" >> "$GITHUB_OUTPUT"'
+      run: 'echo "os=${ImageOS:?}" >> "$GITHUB_OUTPUT"'
     - id: 'pre-commit-cache'
       uses: 'actions/cache/restore@v5'
       with:
@@ -193,11 +195,12 @@ jobs:
     # read.
     #
     # The key names no image (`runner.os` reads `Linux` on every Ubuntu one),
-    # which is safe only while every job sharing it runs on the same
-    # `runs-on`. Pin this job to a release older than the writers' and it
-    # would restore build-script and proc-macro binaries linked against a
-    # newer glibc, which fail to load with an error that does not point at
-    # the cache.
+    # which is safe only while every job sharing it lands on the same runner
+    # image. A reader on a release older than the writer's would restore
+    # build-script and proc-macro binaries linked against a newer glibc,
+    # which fail to load with an error that does not point at the cache. So
+    # keep every sharer on one `runs-on` label, and know that even one label
+    # can span two images while GitHub rolls `ubuntu-latest` forward.
     #
     # A corollary worth stating, because it has been missed before: while
     # `save-if: false` stands below, every save-side rust-cache input here is
