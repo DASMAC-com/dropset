@@ -31,7 +31,10 @@ sync; the upkeep pass checks only that citations resolve).
 The flow is two user-facing skills: `/init-pr` → `/review-pr`
 (`pr-title-description` is a helper `review-pr` calls, not a stage).
 Skill-to-skill handoffs prompt via `AskUserQuestion` with the
-recommended default **first**. Full detail:
+recommended default **first** — except that an **in-band Todo task**
+enters `review-pr` and the enqueue unasked, its ratification being
+the pre-approval (the abridged-tier opt-down, an out-of-band diff or an
+open design question still asks). Full detail:
 `docs/conventions/commits-and-prs.md`.
 
 ## Linear automation

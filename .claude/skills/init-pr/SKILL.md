@@ -384,23 +384,33 @@ The reminders neither states:
    the shared dev database wedges it.
 
 1. **Hand off to `/review-pr` when the work is ready.** Once the
-   task is complete and every open question is resolved, ask via
-   `AskUserQuestion` whether to run `/review-pr` now. **This question
-   is `review-pr`'s entry gate** — a yes is the invocation, which
-   pre-approves the regular fan-out, and the reduced-tier option is
-   its abridged-tier opt-down (see its "The entry gate" section).
-   Compute the signals from a real diff. The tool diffs from the merge
-   base, so a stale base cannot leak main's commits into `files`; no
-   rebase is needed first:
+   task is complete and every open question is resolved, compute the
+   signals from a real diff. The tool diffs from the merge base, so a
+   stale base cannot leak main's commits into `files`; no rebase is
+   needed first:
 
    ```sh
    python3 .claude/tools/review_diff.py --base main \
      --out <scratchpad>/review-diff.txt
    ```
 
-   Read `files` and per-file `changes`, then offer. A non-zero exit
-   with `base_drift.disjoint: false` still leaves `files` correct; the
-   rebase it asks for is `review-pr` step 2's, so offer anyway:
+   Read `files` and per-file `changes`. A non-zero exit with
+   `base_drift.disjoint: false` still leaves `files` correct; the
+   rebase it asks for is `review-pr` step 2's, so go on anyway.
+
+   **An in-band Todo task enters `/review-pr` unasked** at the regular
+   tier (`docs/conventions/commits-and-prs.md` → "The PR workflow and
+   skill handoffs"): the bootstrap's `linear_state` step moved the
+   issue from `[Todo]`, the diff is over the reduced-tier threshold
+   below and at most 1,000 changed lines, and no design question is
+   open. That ratification is the pre-approval, so say one line ("in
+   band, entering `/review-pr`") and route straight in.
+
+   Otherwise ask via `AskUserQuestion` whether to run `/review-pr`
+   now. **This question is `review-pr`'s entry gate** — a yes is the
+   invocation, which pre-approves the regular fan-out, and the
+   reduced-tier option is its abridged-tier opt-down (see its "The
+   entry gate" section):
 
    - **"Yes — full adversarial suite"** — first, recommended.
    - **"Yes — reduced tier"** — *only* under `review-pr`'s small-diff
