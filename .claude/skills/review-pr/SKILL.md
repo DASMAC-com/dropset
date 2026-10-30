@@ -1340,10 +1340,10 @@ migrations or generation inputs, and whether it spans crates.
    git push --force-with-lease
    ```
 
-   **Push only after every fix commit has returned success — never in
-   the same parallel batch as a `git commit`.** A batched push still
-   runs when its commit fails (a locked signer), and lands the tree
-   without the fix (`commit-changes` → "Push").
+   **Push only once every fix commit succeeded — never in the same
+   parallel batch as a `git commit`.** A batched push still runs when
+   its commit fails (a locked signer), landing the tree without the
+   fix (`commit-changes` → "Push").
 
    **If the branch carries unsigned commits and the signer answers
    now, sign here instead** — the tool pushes with its own pinned
@@ -1589,7 +1589,7 @@ migrations or generation inputs, and whether it spans crates.
    only says nothing conflicts *yet*, and an overlapping PR that lands
    while this one waits in the queue dequeues it with
    `merge_conflict` (`history.md` → "Overlap PR landed in the queue").
-   One read per named PR; free when the probe named none:
+   One read each; free when it named none:
 
    ```sh
    gh pr view <N> --json state,mergedAt,autoMergeRequest
