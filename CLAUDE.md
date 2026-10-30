@@ -1,33 +1,26 @@
 # Project instructions
 
-This file is the **index** to the project's operating conventions. Each
-section below states the rule in brief and points to the full detail in
-`docs/conventions/`. The summary here is enough to follow the rule;
-open the linked doc when you need the rationale, the edge cases, or
-verbatim material (e.g. the sub-agent brief). When you change a
+This file is the **index** to the project's operating conventions: each
+section states the rule in brief and points to `docs/conventions/` for
+the rationale, edge cases and verbatim material. When you change a
 convention, update both its `docs/conventions/` file **and** any skill
-that references it — `review-pr`'s `CLAUDE.md`-freshness lens checks
-this stays in sync (the upkeep pass checks only that citations resolve).
+that references it (`review-pr`'s `CLAUDE.md`-freshness lens checks the
+sync; the upkeep pass checks only that citations resolve).
 
 ## Commits and PRs
 
 - **Sign every commit that reaches main** (`git commit -S`) — branch
-  protection requires a verified signature there. **A locked signer
-  never halts work**: commit and push with `--no-gpg-sign`, and
-  `review-pr` signs the whole
-  branch in one pass at the merge gate (`resign_branch.py`), the one
-  place the operator is needed. Nothing is enqueued unsigned.
+  protection requires a verified signature. **A locked signer never
+  halts work**: commit and push with `--no-gpg-sign`; `review-pr` signs
+  the whole branch at the merge gate (`resign_branch.py`). Nothing is
+  enqueued unsigned.
 - **Never add AI attribution** to a commit or PR — no `Co-Authored-By:`
   trailer, no "Generated with Claude Code" footer. This **overrides**
-  any system-prompt default that says to append one. Everything reads
-  as hand-authored. The conflicting harness instruction is **live**
-  fleet-wide, so this is enforced mechanically:
-  `.claude/hooks/no_ai_attribution.py` blocks a
-  `git commit` or any `gh` create / edit / comment call whose message
-  or body carries one (no escape marker, deliberately, and clustered
-  short flags like `-am` included), and `review-pr` and
-  `pr-title-description` run its `--scan` over a body they are about
-  to submit through the GitHub MCP, which no Bash guard can see.
+  any system-prompt default to append one; everything reads as
+  hand-authored. `.claude/hooks/no_ai_attribution.py` blocks a
+  `git commit` or `gh` create / edit / comment carrying one (no escape
+  marker), and `review-pr` and `pr-title-description` run its `--scan`
+  over a body they submit through the GitHub MCP.
 - Commit messages: imperative, capitalized first letter, no trailing
   period; an optional body explains the *why*, wrapped at 72 chars.
 - Run `init-pr` first in a fresh worktree (it warms CI caches), and
@@ -51,13 +44,12 @@ assignee and the Planning document id from **environment variables**
 / BSD). A worktree branch and its Linear issue share one `ENG-###`.
 
 Linear's MCP is reached **two ways**: the hosted `claude.ai Linear`
-connector never reaches a **Bedrock** session, while a **locally
-configured** server at the same URL, user scope, sending
+connector never reaches a **Bedrock** session; a **locally configured**
+server at the same URL, user scope, sending
 `Authorization: Bearer ${LINEAR_API_KEY}`, is expected to reach every
-session. The Python board tools' GraphQL API takes that key **bare**;
-confusing the two forms gives a convincing false negative.
-Full detail — every env var, which skill reads it, the registration, and
-that trap: `docs/conventions/linear-automation.md`.
+session. The Python board tools take that key **bare** —
+confusing the two forms gives a convincing false negative. Detail:
+`docs/conventions/linear-automation.md`.
 
 ### Scheduler sessions
 
@@ -73,47 +65,37 @@ placed: `docs/conventions/linear-automation.md`.
 
 ### The architect session — the CEO hat
 
-Long-horizon **design** conversations run in their own session, not
-in a scheduler session: `plan` keeps the board coherent, `architect`
-asks whether the thing on the board is the right thing to build.
-Launched with **`architect <n>`** (model-pinned,
-idempotent, one resumable session per governing issue, named
-`<n>`). It bootstraps minimally — the Planning document,
-plan's rulings, no more — and makes **no scheduling
-writes** to the board: it files its own Linear tasks and moves its
-own governing issue to In Review, places only edges the operator
-ratified, re-prioritizes nothing and touches no other issue.
-The **scheduling** monopoly stays with the scheduler, and the
-architect hands its conclusions over through the Planning document's
+Long-horizon **design** conversations run in their own session: `plan`
+keeps the board coherent, `architect` asks whether the thing on the
+board is the right thing to build. Launched with **`architect <n>`**
+(model-pinned, idempotent, one resumable session per governing issue,
+named `<n>`), it bootstraps from the Planning document and plan's
+rulings only, and makes **no scheduling writes**: it files its own
+tasks, moves its own issue to In Review, places only operator-ratified
+edges, re-prioritizes nothing and touches no other issue. It hands
+conclusions to the scheduler through the Planning document's
 `Notes for the next planning session` heading **and** a direct
 message. Detail: the `architect` skill.
 
-**It runs in its own worktree, but that worktree is TEMPORARY
-working state and the session is READ-ONLY toward the repo: no
-commits, no PR.** Durable state is captured in **Linear**; anything
-repo-bound — a ratified spec included — lands later via a
-**follow-up worker task**. **`explore` shares all of this**, audits
-included.
+**Its worktree is TEMPORARY and the session is READ-ONLY toward the
+repo: no commits, no PR.** Durable state goes to **Linear**; anything
+repo-bound — a ratified spec included — lands via a **follow-up worker
+task**. **`explore` shares all of this**, audits included.
 
-**A spec FILE is optional; ratification is not — two stages,
-nothing filed before the operator's yes.** The spec loop is
-write → edits **in place** → read back **once**, ending
-in the task list; then `ratify-staged` files them under
-`Session pending` and moves the set to Todo in one batch on
-the operator's ticks. Say where the design
-lives in plain text. Open
+**A spec FILE is optional; ratification is not — nothing filed before
+the operator's yes.** The spec loop is write → edits **in place** →
+read back **once**, ending in the task list; then `ratify-staged` files
+them under `Session pending` and moves the set to Todo in one batch on
+the operator's ticks. Say where the design lives in plain text. Open
 items carry greppable **`NEEDS-CONFIRM`** / **`NEEDS-FEEDBACK`**
-markers and an index at the top; **settled text carries no marker**,
-since a marker meaning "I changed this" competes with one meaning "I
-need you here".
+markers indexed at the top; **settled text carries no marker**.
 
-State is **In Progress** while the session runs, **In Review** at
-handoff, **Done only on the operator's ratification** — never
-self-marked. That, plus durable state reaching Linear *before* the
-handoff, makes the worktree **expendable**: a spec file must never be
-the only copy of live work. Mechanism and naming rule:
-`docs/conventions/local-integrations.md` → "Architect and explore
-sessions: temporary worktree, no PR".
+State is **In Progress** while running, **In Review** at handoff,
+**Done only on the operator's ratification** — never self-marked. With
+durable state in Linear *before* the handoff, the worktree is
+**expendable**: a spec file must never be the only copy of live work.
+Mechanism and naming rule: `docs/conventions/local-integrations.md` →
+"Architect and explore sessions: temporary worktree, no PR".
 
 ### Three more verbs
 
@@ -128,52 +110,43 @@ three failed hypotheses the architecture is what gets questioned.
 
 ### Structured filing fields
 
-Every filed issue carries one stable machine-readable field the
-automation parses: `**Fingerprint**: <domain-token>:<slug>`, the dedup
-key. Its first token is a **dotless domain token, never a bare
-`name.ext`** — Linear linkifies a hostname-valid basename and corrupts
-the key (`feeds-http:…`, not `http.rs:…`). Two further Linear
+Every filed issue carries `**Fingerprint**: <domain-token>:<slug>`,
+the dedup key. Its first token is a **dotless domain token, never a
+bare `name.ext`** — Linear linkifies a hostname-valid basename and
+corrupts the key (`feeds-http:…`, not `http.rs:…`). Two more
 write-mangle rules bind every filed body: **never let an emphasis span
 wrap a newline**, and **never start a machine-parsed field with a bare
-hostname-valid `name.ext`**.
-A rotation folds coupled findings into the **fewest coherent PRs** —
-one issue per set that would land as one PR (same subsystem / crate /
-language-domain), each finding keeping its `**Fingerprint**:`, never
-across separate apps / languages / deploy units (the coherence floor).
-That floor is no license to grow without bound: **a coherent set larger
-than a short session splits into sequential PRs** of roughly 4–5
-findings (see "Context economy" below). Detail:
-`docs/conventions/linear-automation.md`.
+hostname-valid `name.ext`**. A rotation folds coupled findings into the
+**fewest coherent PRs** — one issue per set that would land as one PR
+(same subsystem / crate / language-domain), each finding keeping its
+fingerprint, never across apps / languages / deploy units — and **a set
+larger than a short session splits into sequential PRs** of roughly 4–5
+findings. Detail: `docs/conventions/linear-automation.md`.
 
 ### The Linear state tracks the session, not the PR
 
-The Linear state is the state machine of the **agentic programming
-session**; the PR's own merged/open state tracks the code. So **In
-Review** covers both PR-under-review *and*
-merged-with-follow-up-outstanding, and **Done** means operator-ratified
-complete — never merely merged. Linear's GitHub integration makes **no
+The Linear state is the state machine of the **session**; the PR's
+merged/open state tracks the code. **In Review** covers PR-under-review
+*and* merged-with-follow-up-outstanding; **Done** means
+operator-ratified complete — never merely merged. Linear makes **no
 state transition on merge** (a team setting), so the In Review state
 `review-pr` writes at the enqueue handoff persists until an explicit
-approval moves it to Done. Before a session, **Backlog** with no
-milestone awaits review and **Todo** is approved.
-Two consequences elsewhere: the upkeep pass prunes a worktree on the
-issue's **status type** (completed / canceled), never on PR-merged; and
-the fleet-resume launcher resumes In Progress **or** In Review. Detail:
+approval. Before a session, **Backlog** with no milestone awaits review
+and **Todo** is approved. Since the state tracks the session, the
+upkeep pass prunes a worktree on the
+issue's **status type** (completed / canceled), never on PR-merged, and
+fleet resume picks up In Progress **or** In Review. Detail:
 `docs/conventions/linear-automation.md`.
 
 ### Claude: meta-work prefix
 
-**Meta-work** issues — those every one of whose edited paths sits under
-`.claude/**`, `CLAUDE.md`, `docs/conventions/**`, or `cfg/**` (the lint
-and dictionary config the agent material drives), plus at most an
-incidental comment fix in product code where it names retired agent
-material — carry
-a leading **`Claude:`** token on their **Linear issue title** (capital
-C, colon, space) so agent-infra work batches apart from product code.
-Filing skills (`linear-task`, `audit-scope`, `plan`)
-emit it at filing time, so the prefix and the touched paths stay
-consistent by construction; a human filters the Linear board by it. It
-is a **Linear-title signal only — never a PR title** (PR titles keep
+**Meta-work** issues — every edited path under `.claude/**`,
+`CLAUDE.md`, `docs/conventions/**`, or `cfg/**`, plus at most an
+incidental product-code comment fix naming retired agent material —
+carry a leading **`Claude:`** token on their **Linear issue title**
+(capital C, colon, space) so agent-infra work batches apart. Filing
+skills (`linear-task`, `audit-scope`, `plan`) emit it at filing time.
+It is a **Linear-title signal only — never a PR title** (PR titles keep
 `type(ENG-###): Subject`). Detail:
 `docs/conventions/linear-automation.md`.
 
@@ -188,36 +161,30 @@ items, and the token never reaches a PR title. Detail: same doc.
 
 ### Keep Linear tags out of PR bodies and comments
 
-**Do not put `ENG-###` tags in PR descriptions or comments** — Linear's
-GitHub integration auto-links and can auto-transition issues merely
-mentioned. Refer to other work by title or a plain GitHub link. The
-two carve-outs (the `type(ENG-###):` title scope, and terminal / TUI
-output) and the rationale: `docs/conventions/linear-automation.md`.
+**Do not put `ENG-###` tags in PR descriptions or comments** — Linear
+auto-links and can auto-transition issues merely mentioned. Refer to
+other work by title or a plain GitHub link. The two carve-outs (the
+`type(ENG-###):` title scope, terminal / TUI output):
+`docs/conventions/linear-automation.md`.
 
 ### Partial edits — use `patch`, don't re-send the body
 
 `save_issue` / `save_document` take a **`patch`** array (`append`,
 `prepend`, `insert_before`, `insert_after`, `replace`, `replace_range`)
-applied in order and atomically — so adding or amending part of a body
-**never** requires re-sending it, and a pure `append` needs no prior
-read at all. Passing `description` / `content` does replace wholesale;
-`patch` is the **update-only** alternative, never passed alongside it
-(and capped at 50 ops). Each op takes its **own** argument names —
-`append` / `prepend` take `text`, `replace` takes
-`old_string` / `new_string` — and guessing wrong costs a full-body echo
-for a rejected call; the table is in the convention doc. `patch` does
-**not** shrink that echo (a fixed cost per call), so for a body
-**append** — which has no anchor and so nothing for an ambiguity abort
-to protect — the zero-echo path is
-`.claude/tools/linear_issue.py append`. **Anchored** one-off edits stay
-on the MCP `patch`, where the abort is worth the echo — checklist ticks
-excepted, via `linear_issue.py tick`; a **fold**'s ops
-file goes through
-`.claude/tools/linear_patch.py patch --ops <path> ENG-###` — same ops,
-same atomic abort, no echo (MCP argument spellings accepted as
-aliases). Non-body field writes go
-through `board_batch.py` (`state` is a single-issue alias). Anchors must
-match the **stored** text exactly once, and Linear rewrites an
+applied in order and atomically, so amending part of a body **never**
+requires re-sending it. `patch` is **update-only**, never passed
+alongside `description` / `content` (which replace wholesale), and
+capped at 50 ops. Each op takes its **own** argument names (`append` /
+`prepend` take `text`; `replace` takes `old_string` / `new_string`);
+the table is in the convention doc. Every `save_issue` call echoes the
+full body, `patch` or not, so a body **append** goes through the zero-echo
+`.claude/tools/linear_issue.py append`, a checklist tick through
+`linear_issue.py tick`, and a **fold**'s ops file through
+`.claude/tools/linear_patch.py patch --ops <path> ENG-###` (same ops,
+same atomic abort, no echo). Other **anchored** one-off edits stay on
+the MCP `patch`, where the abort is worth the echo. Non-body field
+writes go through `board_batch.py` (`state` is a single-issue alias).
+Anchors must match the **stored** text exactly once; Linear rewrites an
 `ENG-###` into a mention node, so never anchor on one. Detail:
 `docs/conventions/linear-automation.md`.
 
@@ -225,88 +192,75 @@ match the **stored** text exactly once, and Linear rewrites an
 
 **Backlog** with no milestone is a spec awaiting the operator's
 review; **Todo** with no milestone is reviewed and dispatchable, body
-frozen. The operator's Backlog → Todo move **is** the approval —
-the scheduler never makes it — and a fold into a Todo body drops it
-back. The dispatch gate is **state Todo plus unblocked**; the Next
-view is the unblocked Todo. An issue carrying a **parking milestone**
-— `Session pending` (and the legacy `Audit findings`, drained and
-retired once empty) — is *parked* in either state, so a filing skill
-sets **`Backlog` plus the milestone, in the creating call**, and
-promotion is **one write, the milestone clear**. `Follow-ups` is
-struck: filers land in Backlog and message the curator. Every
-full bootstrap says each parked count **out loud**; a genuinely urgent
-stray (a broken guard) is promoted on the spot.
+frozen. The operator's Backlog → Todo move **is** the approval — the
+scheduler never makes it — and a fold into a Todo body drops it back.
+The dispatch gate is **state Todo plus unblocked**; the Next view
+shows the unblocked Todo. A
+**parking milestone** — `Session pending` (and the legacy
+`Audit findings`, retired once empty) — parks an issue in either
+state, so a filing skill sets **`Backlog` plus the milestone, in the
+creating call**, and promotion is **one write, the milestone clear**.
+`Follow-ups` is struck: filers land in Backlog and message the
+curator. Every full bootstrap says each parked count **out loud**; a
+genuinely urgent stray (a broken guard) is promoted on the spot.
 
-**The curator owns review** — the `curate` verb, a daily
-advisor-tier base-repo session the launcher dispatches each morning.
-Its pool is the un-parked Backlog, `[Operator]` items included; it
-walks the operator through it four at a time and moves each ticked,
-uncommented task to Todo one at a time, the tick being the operator's
-move. Detail: `docs/conventions/linear-automation.md` → "The curator
-owns review".
+**The curator owns review** — `curate`, a daily advisor-tier base-repo
+session the launcher dispatches. It walks the operator through the
+un-parked Backlog (`[Operator]` items included) four at a time and
+moves each ticked, uncommented task to Todo one at a time, the tick
+being the operator's move. Detail:
+`docs/conventions/linear-automation.md` → "The curator owns review".
 
 ### An audit is a board issue, not a directive
 
-**No upkeep pass runs an audit.** A scheduler session files an
-**audit issue** — a
-Backlog task naming **one** audit-registry target, with scope,
-rationale, and sequencing — and the session that pulls it runs
+**No upkeep pass runs an audit.** A scheduler session files an **audit
+issue** — a Backlog task naming **one** audit-registry target, with
+scope, rationale and sequencing — and the session that pulls it runs
 exactly that as one scoped `audit-scope` run. Findings land **staged**
 (`Backlog` plus `Session pending`) and are ratified in the audit
 session's own tab through `ratify-staged`, never promoted by planning.
 
-Cadence is kept by the **audit heartbeat**: every full planning
-bootstrap reads the Planning document's bounded **audit-state
-table** (one row per registry unit — last audited, finding
-count, outcome pointer) and either files an audit issue or
-**declines with a recorded reason**. An unrecorded
-non-decision is the failure that guard exists to catch. The
-broad random rotation survives only as an explicit ad-hoc
-`audit-scope --rotation N`. And the **adversarial sub-agent fan-out
-is authorized by the invocation itself** — pulling an audit issue *is* the
-authorization: never substitute an inline pass, never silently
-skip it; if the tooling is absent, stop and ask. Detail: the
-`audit-scope` and `plan` skills.
+Cadence is the **audit heartbeat**: every full planning bootstrap reads
+the Planning document's bounded **audit-state table** (one row per
+registry unit) and either files an audit issue or **declines with a
+recorded reason** — never an unrecorded non-decision. The random
+rotation survives only as an explicit `audit-scope --rotation N`. The
+**adversarial sub-agent fan-out is authorized by the invocation
+itself**: never substitute an inline pass or silently skip it; if the
+tooling is absent, stop and ask. Detail: the `audit-scope` and `plan`
+skills.
 
 ### Trims are the analyst's, not a session's
 
-A session files **nothing that is only a trim**: what it kept
-running into goes in its `Session account` block, which the daily
-digest lifts.
-`trim-context`, the **fold analyst**, judges the whole day at once,
-dedups by `**Fingerprint**:` and by Backlog title — folding a
-near-match into the existing issue — and files **small themed
-`Claude:` batches of ~4–5 parts** into Backlog, no milestone. A
-rejection filed Canceled with its reason is permanent.
-
-The **launcher** (`launch`, executor tier, its own tab) runs that
-fold each morning, dispatches the curator on the scheduler's
-`state of play written` and hands it the kill and merge
-candidates, and asks the day's **one destructive
-question**.
-Detail: `docs/conventions/linear-automation.md`, `trim-context`
-and `launch`.
+A session files **nothing that is only a trim**: what it kept running
+into goes in its `Session account` block, which the daily digest
+lifts. `trim-context`, the **fold analyst**, judges the whole day at
+once, dedups by fingerprint and Backlog title (folding a near-match
+into the existing issue), and files **small themed `Claude:` batches
+of ~4–5 parts** into Backlog, no milestone. A rejection filed Canceled
+with its reason is permanent. The **launcher** (`launch`, its own tab)
+runs that fold each morning, dispatches the curator on the scheduler's
+`state of play written` with the kill and merge candidates, and asks
+the day's **one destructive question**. Detail:
+`docs/conventions/linear-automation.md`, `trim-context` and `launch`.
 
 ### Blocking relations
 
 **No automated writer files a blocking edge — ever**, semantic ones
-included; a human places them, in the **scheduler**, by a ticked
+included; a human places them — in the **scheduler**, by a ticked
 curator proposal, or by a seat session's filing yes. The scheduler and
-the curator message each other any change to the other's edge;
-priorities are the scheduler's alone. The
-board's available-vs-blocked view is a scheduling
-instrument the human drives, so a spurious edge (which drops an issue
-out of the available set) costs more than a missing one (which costs a
-rebase). A filer that believes a real dependency exists **proposes** it
-via `AskUserQuestion` with the concrete evidence and writes it only on
-an explicit yes; the default in any autonomous run is **no edge**, with
-the suspicion recorded as prose. Human-placed edges are authoritative
-and never rewritten. **There is no exception**, meta-work included: the
-`Claude:` batch issues carry **no edge at all** and are deliberately
-**not serialized** (contention is paid as a rebase). File overlap is
-**not** a dependency, and nothing records collision links any more, at
-filing time or on a sweep; reconciling overlap is the scheduler's work,
-judged on content. Detail: `docs/conventions/linear-automation.md`.
+curator message each other any change to the other's edge; priorities
+are the scheduler's alone. A spurious edge (dropping an issue out of
+the available set) costs more than a missing one (a rebase). A filer
+that believes a real dependency exists **proposes** it via
+`AskUserQuestion` with the concrete evidence and writes it only on an
+explicit yes; in an autonomous run the default is **no edge**, the
+suspicion recorded as prose. Human-placed edges are authoritative and
+never rewritten. **No exception**: the
+`Claude:` batches carry **no edge** and are **not serialized**. File
+overlap is **not** a dependency and records no collision link;
+reconciling it is the scheduler's work, judged on content. Detail:
+`docs/conventions/linear-automation.md`.
 
 ## GitHub via MCP
 
@@ -317,112 +271,87 @@ CI / PR-state reads `gh api` / `gh pr checks` / `gh pr view --json`), the
 PAT-not-OAuth auth setup, and the read/write permission split all live
 in `docs/conventions/github-mcp.md`.
 
-**Actions configuration lives there too** — the repository-secrets
-inventory, the secret-vs-variable-vs-constant rule (**a secret when the
-value must be masked in logs**, since Actions masks only secrets), the
-nine required status checks and the ruleset they come from, the
-**job-vs-step distinction** that decides whether a workflow change needs
-a ruleset edit at all — and the fact that the **ruleset** is the gate
-while the list recorded in the doc is only a mirror of it — and the
-standing consequence that **a fork `pull_request` run receives no
-secrets**, so any required check with a secret dependency cannot pass
-on a fork PR. Add — or deliberately withhold — the next secret or
-required check against those, rather than per-PR.
+**Actions configuration lives there too**: the secrets inventory; the
+rule that a value is **a secret when it must be masked in logs**
+(Actions masks only secrets), else a variable or constant; the required
+status checks, where the **ruleset** is the gate and the doc's list
+only a mirror; the **job-vs-step distinction** deciding whether a
+workflow change needs a ruleset edit; and that **a fork `pull_request`
+run receives no secrets**, so a required check with a secret dependency
+cannot pass on a fork PR. Judge the next secret or required check
+against those, not per-PR.
 
 ## AWS infrastructure
 
-AWS resources are **CloudFormation YAML** under `infra/aws/` (network,
-IAM, and audit baseline; the market-data warehouse stack builds on
-top). Templates pass **both** `cfn-lint` (scoped hook) and the repo's
-strict `yamllint`, so they are written to fit the latter — alphabetical
-keys, single-quoted strings, block style, folded block scalars for long
-ARNs. Authoring is
-agent-assisted: documentation lookups go to the credential-free
-`aws-docs` MCP server; account actions go to the **AWS CLI** under an
-SSO profile, with the SigV4 `aws-mcp` server a **fallback even when
-healthy** — its one unique capability is `aws___retrieve_skill` (no CLI
-equivalent), and its connection failures are **its own bug, not a
-substrate one**. Search the AWS docs before acting and keep to least
-privilege (deploys via the passed `*-cfn-deployment` role). The
-MCP-gated `*-agent-provisioning` role is **inert by decision**: its
-grants need two AWS-MCP keys the wiring never satisfies, so
-IAM-creating deploys run from the admin login, and wiring the MCP to
-assume it is ruled out. Both servers' wiring is user-local.
+AWS resources are **CloudFormation YAML** under `infra/aws/`. Templates
+pass **both** `cfn-lint` and the repo's strict `yamllint`, so they are
+written to fit the latter — alphabetical keys, single-quoted strings,
+block style, folded block scalars for long ARNs. Documentation lookups
+go to the credential-free `aws-docs` MCP server; account actions go to
+the **AWS CLI** under an SSO profile, with the SigV4 `aws-mcp` server a
+**fallback even when healthy** — its one unique capability is
+`aws___retrieve_skill`, and its connection failures are **its own bug,
+not a substrate one**. Search the AWS docs before acting and keep to
+least privilege (deploys via the passed `*-cfn-deployment` role). The
+`*-agent-provisioning` role is **inert by decision**, so IAM-creating
+deploys run from the admin login; wiring the MCP to assume it is ruled
+out.
 
-**A session cannot log itself in** — `aws login` is interactive — so the
-one verb that reads cost data, `plan`, **gates its own launch** on
+**A session cannot log itself in** (`aws login` is interactive), so
+`plan`, the one verb reading cost data, **gates its own launch** on
 credentials that resolve (probe, log in, re-probe, refuse); `architect`
-deliberately does not. The profile is an **optional**
-`DS_AWS_PROFILE` in the untracked runtime config; unset means the CLI's
-own default. Note the gate's bound: `sts:GetCallerIdentity` is
-authorization-free, so it rules out an **expired** session and not a live
-one lacking `ce:*`. Treat credentials as a launch-time
-precondition, and note that AWS publishes **no** propagation bound for
-an IAM change — verify by retrying the call rather than waiting a folk
-interval. Full detail:
+deliberately does not. The profile is an **optional** `DS_AWS_PROFILE`
+in the untracked runtime config. The gate's `sts:GetCallerIdentity` is
+authorization-free: it rules out an **expired** session, not a live one
+lacking `ce:*`. AWS publishes **no** propagation bound for an IAM
+change — verify by retrying the call. Detail:
 `docs/conventions/aws-infra.md` and
 `docs/conventions/local-integrations.md` → "The AWS login gate".
 
 ## Skill tooling
 
-A skill's deterministic helper (transcript parser, branch check, doc
-renderer) is **Python under `.claude/tools/`** (stdlib,
-`unittest`-covered), **never** a Cargo workspace member — so it doesn't
-compile with the on-chain project. MCP is for prototyping and fallback;
-once a workflow is established and repeated, harden it into a Python
-tool the skill drives — **`/harden` is the verb** that does it, and it
-refuses a shape with no measured recurrence. **Repeated skill *prose*
-gets the same treatment**: one source under `.claude/shared/`, filled
-into marked regions by `make render-skills` and gated by
-`make render-check`, which also fails on a dangling marker. Extract
-only genuinely verbatim repetition; no block is extracted today. Full
-detail: `docs/conventions/skill-tooling.md`.
+A skill's deterministic helper is **Python under `.claude/tools/`**
+(stdlib, `unittest`-covered), **never** a Cargo workspace member. MCP
+is for prototyping and fallback; a repeated workflow is hardened into a
+Python tool — **`/harden` is the verb**. **Repeated skill *prose*** gets
+one source under `.claude/shared/`, filled into marked regions by
+`make render-skills` and gated by `make render-check` (which fails on a
+dangling marker); extract only genuinely verbatim repetition. Detail:
+`docs/conventions/skill-tooling.md`.
 
 ## Context economy
 
-Every tool result is fetched once but **replayed as input on every
-later turn**, whatever its transport, so a fat early payload is paid
-many times over.
-
-**Session length is therefore itself a cost lever, and the largest
-one** — cost is roughly **quadratic in session length**, since a
-payload's price is its size times the turns that follow it. So **stage
+Every tool result is **replayed as input on every later turn**, so a
+fat early payload is paid many times over, and **session length is the
+largest cost lever** — cost is roughly **quadratic** in it. **Stage
 work so a session stays short** (~4–5 levers or findings per PR, target
 **300–800 changed lines**, floor ~150 unless trivially mechanical, split
-at 1,000) and prefer an occasional **rebase** to a serial chain. This
-binds at *breakdown* time, the only place it can. **Smaller is not
-monotonically cheaper** — a per-PR overhead floor means a tiny PR costs
-far more per line — but the upper bound is **absolute**, not per-line.
-Lines are a **proxy** for turns. The metric is **dollars**, and **every
-session states its own cost at close**. **Sonnet-tier task workers are
-rejected.** Measurements, the standing cost rulings, and the
-findings-vs-lines tie-break: `docs/conventions/context-economy.md` →
-"Session length is itself a cost lever".
+at 1,000), preferring an occasional **rebase** to a serial chain; this
+binds at *breakdown* time. **Smaller is not monotonically cheaper** (a
+per-PR overhead floor), but the upper bound is **absolute**. Lines
+proxy turns; the metric is **dollars**, and **every session states its
+own cost at close**. **Sonnet-tier task workers are rejected.** Detail:
+`docs/conventions/context-economy.md` → "Session length is itself a
+cost lever".
 
 **Resident size is capped**: the `skill-size` lint hook caps skill entry
 files and this file at 32,000 bytes, descriptions at 1,024. Over-cap
 files are frozen in `cfg/skill-size-baseline.json`; never raise a
 ceiling by hand. Same doc → "Resident size has a hard cap".
 
-Per call, request the narrowest thing that
-answers the question, read large files by slice (Grep then `Read` with
-`offset`/`limit`), route verbose logs away from context — through
-`run_quiet.py`, for **any** repeated verbose-on-success runner, `pnpm`
-included — and never re-fetch what's already in context. Reading a file
-whole is licensed by any **one** of four conditions (edit-plus-brief,
-a planned multi-region read, an exemplar you will imitate N times, or
-proving an absence that is itself the answer),
-not by all of them together — and **citing a file is not one of them**.
-The test is **reuse, not size**: name who else will use the content, and
-if the answer is "only this edit", slice however small the file.
-A harness-persisted tool result is sliced
-with `.claude/tools/read_result.py`, never `Read` whole; a file at
-another git ref is sliced with `.claude/tools/show_at_ref.py`, never a
-whole-blob `git show`. A **script you write is a tool-result
-generator** — default it to a ranked summary and gate the full series
-behind a flag. Track wasteful
-payloads as you go for `/session-metrics`. Full detail:
-`docs/conventions/context-economy.md`.
+Per call, request the narrowest thing that answers the question, read
+large files by slice (Grep, then `Read` with `offset`/`limit`), route
+verbose logs through `run_quiet.py` (**any** repeated
+verbose-on-success runner, `pnpm` included), and never re-fetch what's
+in context. A whole-file read needs any **one** of four licenses
+(edit-plus-brief, a planned multi-region read, an exemplar imitated N
+times, proving an absence that is the answer); **citing a file is not
+one**. The test is **reuse, not size**. Slice a harness-persisted
+result with `.claude/tools/read_result.py` and a file at another ref
+with `.claude/tools/show_at_ref.py`, never whole. A **script you write
+is a tool-result generator** — default it to a ranked summary, the full
+series behind a flag. Track wasteful payloads for `/session-metrics`.
+Detail: `docs/conventions/context-economy.md`.
 
 ## Shell commands
 
@@ -430,109 +359,86 @@ payloads as you go for `/session-metrics`. Full detail:
 (`Bash(prefix:*)`). One bare command per call — no `&&` / `;` / pipes,
 no `$(…)` / backticks, no redirects or heredocs, no `cd`. Prefer the
 Read / Grep / Glob tools over `cat` / `grep` / `find`; never
-`git grep` — and when the Grep tool is absent (it isn't always
-present), the fallback is
-`python3 .claude/tools/search_source.py '<pattern>'`, which already
-prunes the generated families and the never-search trees, or failing
-that a bare, single `grep`, on the **main-loop** path too, not only in
-the sub-agent brief, and a recursive one is **scoped to source
-directories** (it doesn't honor gitignore). Ask for a search's
-narrowest form — `-l` for existence, never a recursive `-c` — since
-hoisting a verbose sweep only relocates the sink; narrow the **scope**
-too (`--dir` / `--glob`), an independent axis, and remember
-`--context` scales with match *density*, so clustered matches want
-`--files-only` plus a slice-read instead. Keep a
-stable command + subcommand prefix and let only the args vary.
-Never sweep `.claude/` bare — the worktrees live under it, so a
-recursive grep there walks every checkout's `target/` (one such pass
-timed out at 120s); scope to `skills` / `tools` / `hooks`. And a
-multi-URL `curl` status probe must repeat `-o /dev/null` **per URL**
-(the flag binds to one) or use `-I`.
-This holds for shell you **author** in skills, scripts, and Makefile
-targets too, and for work you hand a sub-agent. Three opt-in
-`PreToolUse` guard hooks mechanically enforce these rules:
-`.claude/hooks/no_compound_bash.py` blocks compounds (escape marker
-`#compound-ok`), `.claude/hooks/no_git_grep.py` blocks `git grep`
-(no escape hatch, deliberately — use the Grep tool), and
-`.claude/hooks/no_destructive_bash.py` blocks destructive commands in
-two tiers (an overridable ask via `#destructive-ok`, and a small
-catastrophic deny no marker lifts). Their wiring is user-local (see
-"Local integrations and guard hooks" below). The rules and the
-always-re-prompt patterns: `docs/conventions/shell-commands.md`.
+`git grep`. When the Grep tool is absent, the fallback — main loop
+included — is `python3 .claude/tools/search_source.py '<pattern>'`
+(it prunes generated and never-search trees), else a bare, single
+`grep` **scoped to source directories** (it ignores gitignore). Ask
+for a search's narrowest form (`-l` for existence, never a recursive
+`-c`) and narrow its **scope** (`--dir` / `--glob`); `--context`
+scales with match *density*, so clustered matches want `--files-only`
+plus a slice-read. Keep a stable command + subcommand prefix. Never
+sweep `.claude/` bare — it holds the worktrees and their `target/`;
+scope to `skills` / `tools` / `hooks`. A multi-URL `curl` status probe
+must repeat `-o /dev/null` **per URL** or use `-I`. This holds for shell
+you **author** in skills, scripts and Makefile targets, and for work
+you hand a sub-agent. Three opt-in `PreToolUse` guards enforce it:
+`.claude/hooks/no_compound_bash.py` (escape marker `#compound-ok`),
+`.claude/hooks/no_git_grep.py` (no escape hatch), and
+`.claude/hooks/no_destructive_bash.py` (an overridable ask via
+`#destructive-ok`, plus a catastrophic deny no marker lifts). Detail:
+`docs/conventions/shell-commands.md`.
 
-**Firming has three homes and no per-session sweep.** `allowlist.py add`
+**Firming has three homes and no per-session sweep**: `allowlist.py add`
 ad hoc (the dominant path), `fewer-permission-prompts` on demand, and
-the upkeep pass's refresh gate on a roughly **monthly** clock — the only
-periodic adder, because the auto permission-mode classifier that made a
-per-session sweep unnecessary is also what makes the remaining churn
-invisible. It proposes; the launcher's one ask approves. The same pass
-reports cruft to prune. Do not reinstate a per-session pass;
-the bar is net-negative instruction cost.
+the upkeep pass's roughly **monthly** refresh gate — the only periodic
+adder, which proposes for the launcher's one ask and reports cruft to
+prune. Do not reinstate a per-session pass.
 
 ## Local integrations and guard hooks
 
 The **user-local Claude Code configuration** the repo documents but
 does **not** commit: the compound-shell, **git-grep** (absolute;
-revision-scoped search is served by `show_at_ref.py`), destructive-command
+revision-scoped search is `show_at_ref.py`), destructive-command
 (best-effort advisory, not a policy boundary) and AI-attribution
-(inspects only message/body *values*, so searching for those strings
-stays legal) guards described above; the **worktree edit-path guard**
-(blocks a file-mutating tool targeting a base-repo absolute path from a
-worktree session — a recurring, expensive slip); and the **private-key
-guard** with its `permissions.deny` rules (no agent session or
-sub-agent touches the mainnet keys or runs a mainnet operation; no
-escape marker). Also the iTerm2
-tab-color integration and the shell setup they lean on — including the
-**session secrets**, resolved from 1Password at session launch, never
-written into a config file, the CLI signed out right after the reads.
-A 1Password SSH prompt for a private key from anything but the cockpit
+(inspects only message/body *values*) guards above; the **worktree
+edit-path guard** (blocks a file-mutating tool targeting a base-repo
+absolute path from a worktree session); and the **private-key guard**
+with its `permissions.deny` rules (no agent session or sub-agent
+touches the mainnet keys or runs a mainnet operation; no escape
+marker). Also the iTerm2 tab-color integration and the shell setup,
+including the **session secrets**, resolved from 1Password at launch,
+never written to a config file, the CLI signed out after the reads. A
+1Password SSH prompt for a private key from anything but the cockpit
 (the deploy ceremony's key commands) is refused, commit signing
-excepted. Both settings files are git-ignored, so all
-of it is opt-in. `settings.local.json` is **one shared file resolved
-through worktrees to the main checkout**, so wiring it once makes it
-live everywhere. A committed guard is **inert until wired**:
-`make hook-wiring` (its tool also runs in the daily upkeep pass) names every
-guard that
-cannot fire — unwired, under a `matcher` that never selects its tools,
-or pointed at a missing path — and writes nothing. The **session
-helpers** (`cdds`, `task`, `explore`, `chore`, `plan`, `curate`,
-`launch`, `architect`, `fleet`) are the exception that *is* committed,
-at `.claude/shell/init.zsh`, sourced by one guarded shell-profile
-line; only the runtime config (model ids, 1Password coordinates,
-Linear ids, fleet knobs and the like) stays untracked, in the shell
-profile — its shape is the committed
+excepted. Both settings files are git-ignored, so all of it is opt-in;
+`settings.local.json` is **one shared file resolved through worktrees
+to the main checkout**. A committed guard is **inert until wired**:
+`make hook-wiring` (also run by the daily upkeep pass) names every
+guard that cannot fire and writes nothing. The **session helpers**
+(`cdds`, `fleet` and the session verbs) *are* committed, at
+`.claude/shell/init.zsh`, sourced by one guarded shell-profile line;
+only the runtime config (model ids, 1Password coordinates, Linear ids,
+fleet knobs and the like) stays untracked, in the shell profile, its
+shape the committed
 `.claude/shell/runtime-config.manifest.json`, held to the code by
-`runtime_config_check.py`. Full detail — every hook's
-wiring, the helper family, and the iTerm setup:
+`runtime_config_check.py`. Detail:
 `docs/conventions/local-integrations.md`.
 
 ### Session substrate: capability, not attendance
 
 A session runs on **Bedrock** unless it needs something Bedrock lacks —
 web search or deep research (web fetch works there) — or it is a **seat
-session by role** (`architect`). Sub-agents are not a differentiator.
-`task`, `chore`, `explore`, `plan` and `curate` are Bedrock, with
-`anthropic` the escape (`plan anthropic` puts planning back on the seat).
-
-Models are named by **role tier** — advisor (`plan`, `curate`,
-`architect`, `explore`), executor (`task`), helper
-(`chore`), background — each set in
-the untracked runtime config (`DS_MODEL_<TIER>[_SUBSTRATE]`). Each verb
+session by role** (`architect`); sub-agents are not a differentiator.
+Every other verb defaults to Bedrock, with `anthropic` the escape
+(`plan anthropic` puts planning back on the seat). Models are named by
+**role tier** — advisor, executor, helper, background — each set in the
+untracked runtime config (`DS_MODEL_<TIER>[_SUBSTRATE]`); each verb
 pins its tier at launch and refuses an unresolved one, so no skill
-checks its own model.
+checks its own model. The verb table in
+`docs/conventions/local-integrations.md` maps each verb to its tier
+and default substrate.
 
 A launch **records its substrate** in an untracked marker that resume
 verbs re-export (re-pinning the tier); an absent marker reads as
 **anthropic**, and an anthropic launch **clears** inherited Bedrock
-exports. Detail and the verb table:
-`docs/conventions/local-integrations.md`.
+exports.
 
 A scheduler session may **dispatch** a ready task — `session_dispatch.py`
 opens a **tab in the dispatching session's own window** (never a new
-window) and types the verb, authorized by the operator's yes as
-`fleet go` is; several verbs go in one call, separated by a bare `+`.
-iTerm is driven only via `.claude/tools/iterm_api.py` (its Python API);
-**AppleScript is retired**.
+window) and types the
+verb, authorized by the operator's yes as `fleet go` is; several verbs
+go in one call, separated by a bare `+`. iTerm is driven only via
+`.claude/tools/iterm_api.py`; **AppleScript is retired**.
 
 ## What a skill may decide alone
 
