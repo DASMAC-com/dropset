@@ -209,11 +209,11 @@ The reminders neither states:
   read (a rebase, a hook autofix, a sibling session), and take
   `--stat` first when the question is which files moved.
 
-- **Cap a build or test log's error grep at the first few blocks.**
+- **Cap a build or test log's error grep at the first few matches.**
   A compiler log is a cascade — one root cause, dozens of identical
   blocks — so take
   `run_quiet.py inspect <log> --grep '<re>' --max 3`, then slice one
-  region; never `grep -A` / `-B` for error blocks
+  region; never a shell `grep`, least of all `-A` / `-B`
   (`docs/conventions/context-economy.md` → "The levers").
 
 - **Write the issue body on the zero-echo path.** The bootstrap read

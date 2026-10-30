@@ -537,6 +537,11 @@ class ParseInspectArgs(unittest.TestCase):
                 with self.assertRaises(rq.UsageError):
                     rq.parse_inspect_args(["inspect", "/tmp/x.log", "--max", value])
 
+    def test_max_without_a_value_is_refused(self):
+        with self.assertRaises(rq.UsageError) as caught:
+            rq.parse_inspect_args(["inspect", "/tmp/x.log", "--max"])
+        self.assertIn("--max needs a value", str(caught.exception))
+
 
 class InspectLog(unittest.TestCase):
     def setUp(self):
@@ -614,7 +619,8 @@ class InspectLog(unittest.TestCase):
         self.assertEqual(len(emitted), 3)
         self.assertIn("m2", out)
         self.assertNotIn("m3", out)
-        self.assertIn("3 match(es)+ (capped at 3", out)
+        self.assertIn("3 match(es)+ (capped at 3 by --max)", out)
+        self.assertNotIn("narrow the pattern", out)
 
     def test_grep_takes_precedence_over_failing(self):
         # Documented precedence rather than silent behavior: given both, the

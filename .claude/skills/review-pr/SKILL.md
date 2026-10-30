@@ -353,10 +353,10 @@ migrations or generation inputs, and whether it spans crates.
    the hooks").
 
    **Reading lint output and config**: filter a captured log with
-   `python3 .claude/tools/run_quiet.py inspect <log> --grep 'Failed|error\['`
-   with `--max 3`, never a whole `Read`, a shell `tail` or a `grep -A`
-   over error blocks (a compiler log is a cascade; the first few
-   blocks answer it); grep
+   `python3 .claude/tools/run_quiet.py inspect <log> --grep 'Failed|error\['`,
+   never a whole `Read`, a shell `tail` or a `grep -A`. The `Failed`
+   lines are one per hook, so leave that grep uncapped; a compiler or
+   test log is a cascade, so its error grep takes `--max 3`. Grep
    `cfg/pre-commit-lint.yml` and the workflow as indexes, never read
    whole (`history.md` → "Log filtering", "Config-index reads"). Never
    hand-verify what the gate owns — an `awk` width check counts bytes.

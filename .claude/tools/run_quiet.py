@@ -803,7 +803,12 @@ def inspect(args):
             sys.stdout.write(line + "\n")
         note = ""
         if truncated:
-            note = "+ (capped at %d — narrow the pattern)" % args.max
+            # A cap the caller asked for is the answer, not a sign the
+            # pattern was too broad.
+            if args.max < MAX_GREP_MATCHES:
+                note = "+ (capped at %d by --max)" % args.max
+            else:
+                note = "+ (capped at %d — narrow the pattern)" % args.max
         sys.stdout.write(
             "run-quiet inspect | %d match(es)%s of %d line(s)\n"
             % (matches, note, summary.lines)
