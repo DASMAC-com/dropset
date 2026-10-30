@@ -587,10 +587,24 @@ class TickBoxes(unittest.TestCase):
 
     def test_a_box_opening_with_a_code_span_matches_without_the_backticks(self):
         body = "- [ ] `linear_issue.py tick` matches **stripped** text\n"
-        new, ticked, _ = li.tick_boxes(body, ["linear_issue.py tick matches"])
+        new, ticked, _ = li.tick_boxes(body, ["linear_issue.py tick matches stripped"])
         self.assertEqual(ticked, 1)
         # The stored markup is kept as is.
         self.assertIn("- [x] `linear_issue.py tick` matches **stripped**", new)
+
+    def test_an_edge_underscore_is_emphasis_but_an_inner_one_is_kept(self):
+        _, ticked, _ = li.tick_boxes("- [ ] _Fold_ the levers\n", ["Fold the levers"])
+        self.assertEqual(ticked, 1)
+        with self.assertRaisesRegex(li.LinearIssueError, "no checklist box"):
+            li.tick_boxes("- [ ] rename foo_bar\n", ["rename foobar"])
+
+    def test_a_markup_only_text_refuses_as_blank(self):
+        with self.assertRaisesRegex(li.LinearIssueError, "blank box text"):
+            li.tick_boxes(self.BODY, ["``"])
+
+    def test_a_substring_of_a_ticked_box_counts_as_already_ticked(self):
+        body, ticked, already = li.tick_boxes(self.BODY, ["landed"])
+        self.assertEqual((body, ticked, already), (self.BODY, 0, 1))
 
     def test_a_unique_substring_matches_past_the_prefix(self):
         _, ticked, _ = li.tick_boxes(self.BODY, ["re-run block"])
