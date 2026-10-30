@@ -348,6 +348,15 @@ class ParentRunTests(_RunBase):
             self._run(fake, ["approve", "--parent", "ENG-9", "--cancel", "ENG-7"])
         self.assertEqual(fake.writes, [])
 
+    def test_ask_with_neither_ids_parent_nor_operator_is_refused(self):
+        with self.assertRaisesRegex(RatifyError, "nothing to ask"):
+            self._run(self._set(), ["ask"])
+
+    def test_ask_refuses_an_operator_item_beside_a_parent(self):
+        # --operator rides the inbox; --parent names a staged set.
+        with self.assertRaisesRegex(RatifyError, "--pool inbox"):
+            self._run(self._set(), ["ask", "--parent", "ENG-9", "--operator", "ENG-5"])
+
     def test_approve_refuses_a_title_beside_a_parent(self):
         fake = self._set()
         with self.assertRaisesRegex(RatifyError, "--title retitles"):
