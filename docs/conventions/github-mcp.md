@@ -503,7 +503,7 @@ credential out of every build step that has no business seeing it.
 
 ### Required status checks
 
-Eleven contexts gate `main`, via a repository **ruleset** (not classic
+These contexts gate `main`, via a repository **ruleset** (not classic
 branch protection — the branch-protection REST endpoint returns 404, so
 read them with `gh api repos/{owner}/{repo}/rulesets/{id}`):
 
@@ -515,9 +515,9 @@ read them with `gh api repos/{owner}/{repo}/rulesets/{id}`):
 `lint-rust` matrix job, split out of `Lint` so the cargo-backed hooks
 run beside the rest instead of after them. Until the ruleset adds those
 two (held until every open PR is rebased past the split, since a PR
-not yet rebased never emits them), only the other nine are enforced: this
-list leads the ruleset by two, and a clippy or rustdoc failure does not
-yet gate. Drop these two sentences when the ruleset edit lands.
+not yet rebased never emits them), only the rest are enforced: this
+list leads the ruleset by those two, and a clippy or rustdoc failure
+does not yet gate. Drop these two sentences when the ruleset edit lands.
 
 Note these are **job** names, not step names. A workflow can therefore
 add or remove a *step* inside a required job with no ruleset change at
