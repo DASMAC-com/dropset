@@ -117,8 +117,53 @@ class ProbeTests(unittest.TestCase):
 
         with mock.patch.object(tl, "_post", side_effect=fake):
             tl.probe("k", "proj", "a:b")
-        self.assertEqual(seen[0]["filter"]["description"], {"contains": "a:b"})
-        self.assertEqual(seen[0]["filter"]["project"], {"id": {"eq": "proj"}})
+        # The project constraint rides inside every branch, so the read stays
+        # project-scoped however Linear combines a sibling `or`.
+        self.assertEqual(
+            seen[0]["filter"],
+            {
+                "or": [
+                    {
+                        "project": {"id": {"eq": "proj"}},
+                        "description": {"contains": "a:b"},
+                    }
+                ]
+            },
+        )
+
+    def test_many_keys_share_one_read_and_split_their_matches(self):
+        nodes = [
+            _node("ENG-1", fingerprint="a:b"),
+            _node("ENG-2", description="**Fingerprint**: a:c\n**Fingerprint**: a:b\n"),
+        ]
+        seen = []
+
+        def fake(api_key, query, variables):
+            seen.append(variables["filter"])
+            return _page(nodes)
+
+        with mock.patch.object(tl, "_post", side_effect=fake):
+            got = tl.probe_many("k", "proj", ["a:b", "a:c", "a:d", "a:b"])
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(len(seen[0]["or"]), 3)
+        self.assertEqual(
+            {k: [n["identifier"] for n in v] for k, v in got.items()},
+            {"a:b": ["ENG-1", "ENG-2"], "a:c": ["ENG-2"], "a:d": []},
+        )
+
+    def test_keys_past_one_chunk_take_another_read(self):
+        keys = [f"a:k{i}" for i in range(tl.PROBE_CHUNK + 1)]
+        seen = []
+
+        def fake(api_key, query, variables):
+            seen.append(len(variables["filter"]["or"]))
+            # The same issue in both chunks' reads is counted once.
+            return _page([_node("ENG-5", fingerprint="a:k0")])
+
+        with mock.patch.object(tl, "_post", side_effect=fake):
+            got = tl.probe_many("k", "proj", keys)
+        self.assertEqual(seen, [tl.PROBE_CHUNK, 1])
+        self.assertEqual([n["identifier"] for n in got["a:k0"]], ["ENG-5"])
 
     def test_resolved_and_archived_issues_are_searched_too(self):
         # A rejection is a canceled issue, and it must stay permanent.
@@ -177,8 +222,52 @@ class ProbeCliTests(unittest.TestCase):
         ):
             code, out, _ = _run(["probe", "--fingerprint", "a:b"])
         self.assertEqual(code, 0)
-        self.assertIn("MATCH ENG-7 [Canceled:canceled] [-]", out)
+        self.assertIn("MATCH a:b ENG-7 [Canceled:canceled] [-]", out)
         self.assertNotIn("SECRET BODY", out)
+
+    def test_a_keys_file_prints_one_verdict_per_key_and_exits_one_on_any_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            keys = os.path.join(tmp, "keys.txt")
+            with open(keys, "w", encoding="utf-8") as fh:
+                fh.write("a:b\n\n a:c \n")
+            with (
+                mock.patch.dict(os.environ, ENV),
+                mock.patch.object(tl, "_post", return_value=_page([_node()])),
+            ):
+                code, out, _ = _run(
+                    ["probe", "--fingerprints-file", keys, "--fingerprint", "a:b"]
+                )
+        lines = out.strip().splitlines()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("MATCH a:b ENG-1 "))
+        self.assertEqual(lines[1], "NONE a:c")
+
+    def test_one_bad_key_refuses_the_whole_set_before_any_request(self):
+        with mock.patch.dict(os.environ, ENV), mock.patch.object(tl, "_post") as post:
+            code, _, _ = _run(
+                ["probe", "--fingerprint", "a:b", "--fingerprint", "http.rs:x"]
+            )
+        self.assertEqual(code, 2)
+        post.assert_not_called()
+
+    def test_an_empty_keys_file_is_refused_not_read_as_all_matched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            keys = os.path.join(tmp, "keys.txt")
+            with open(keys, "w", encoding="utf-8") as fh:
+                fh.write("\n  \n")
+            with (
+                mock.patch.dict(os.environ, ENV),
+                mock.patch.object(tl, "_post") as post,
+            ):
+                code, out, err = _run(["probe", "--fingerprints-file", keys])
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("empty", err)
+        post.assert_not_called()
+
+    def test_probe_with_no_key_is_refused(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            tl._parse_args(["trim_levers.py", "probe"])
 
     def test_a_dotted_domain_is_refused_before_any_request(self):
         with mock.patch.dict(os.environ, ENV), mock.patch.object(tl, "_post") as post:
