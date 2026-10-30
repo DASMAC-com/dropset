@@ -840,6 +840,21 @@ table it reads against, with each verb's default substrate, is in
   operator's Done, or a chore when a session can do the surrounding
   work, which runs to In Review like any chore. There is no third
   path — nothing recites an operator-actions list.
+- **A close never recites a captured operator action.** An operator
+  action already held by an `[Operator]` task, a chore, or a ticked
+  ask is never restated at close; one not yet captured is filed first
+  (Urgent, Backlog, the curator messaged) and then named with its
+  number as a smell — `uncaptured operator action, filed as N`. A
+  session that cannot file names the action in full and says so;
+  silence is the only wrong answer.
+- **The close question is the last word.** Nothing operator-facing
+  follows the close yes: everything a session would have said there
+  is filed or asked **before** the close question, and the only text
+  after a yes is the close tool's own result (an exit-2 removal note
+  included, since it is a result, not a reminder). A to-do that
+  surfaces after the yes is a defect of the session's ordering. The
+  operator reads Linear for what they must do, never a block of
+  closing prose.
 - **A Linear-title signal only** — never a PR title, branch or worktree
   name, which keep their own forms.
 - **The title is the authority.** The operator re-routes an issue by

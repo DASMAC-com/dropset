@@ -1881,10 +1881,12 @@ migrations or generation inputs, and whether it spans crates.
    - [ ] **Session metrics** — step 21, unprompted.
 
    - [ ] **Close** — the follow-up ledger, then the one question.
-     Name every operator-facing item as addressed, handed to a
-     scheduler session, or filed as a task — each filing messaged to
-     the curator (`curate-<day>`, via `ListAgents`; with none live,
-     the scheduler). Then ask via
+     Each follow-up is addressed, handed to the scheduler, or filed
+     as N — each filing messaged to the curator (`curate-<day>`, via
+     `ListAgents`; with none live, the scheduler). A captured
+     operator action is never restated, and the close question is
+     the last word (`docs/conventions/linear-automation.md` → "A
+     close never recites a captured operator action"). Then ask via
      `AskUserQuestion` — *"all follow-up complete: metrics captured,
      feedback forwarded — mark Done?"* — offering **"Mark Done and
      remove the worktree (Recommended)"** first and **"Mark Done, keep

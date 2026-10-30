@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a scheduler session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), runs the audit heartbeat (file an audit issue or decline with a recorded reason), and messages the launcher once the state of play is written, so it starts the curator on the Backlog review inbox. Then keeps the board coherent: Todo dispatched as standing authorization, blocking edges curated by a human, file collisions reconciled by reading, the inbox kept stocked with staged specs, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
+description: Run a scheduler session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), runs the audit heartbeat (file an audit issue or decline with a recorded reason), and messages the launcher once the state of play is written, before its one ask, so it starts the curator on the Backlog review inbox. Holds the fleet resume and first wave for the operator's start trigger in that ask. Then keeps the board coherent: Todo dispatched as standing authorization once the day is started, blocking edges curated by a human, file collisions reconciled by reading, the inbox kept stocked with staged specs, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
 user-invocable: true
 model: fable
 ---
@@ -165,9 +165,12 @@ likely still folding: say that, not "no fold". The new batches
 reach the inbox, where the curator reviews them.
 
 **The bootstrap runs unattended until its one ask.** Do every duty
-that asks nothing — `fleet resume`, the overnight landing check,
-the board read, the Queue's honesty — then stop at step 8's
-consolidated ask. A Discuss item or duty needing the operator's
+that asks nothing — the overnight landing check, the board read,
+Next, the collision clusters, the audit heartbeat, the Queue's
+honesty — write the state of play back, message the launcher
+(below), then stop at step 8's consolidated ask. **`fleet resume`
+and every dispatch wait for that ask's start trigger** (ruling:
+fleet doctrine 1). A Discuss item or duty needing the operator's
 word joins that ask.
 
 Then read the board. **Which tier an issue sits in is the whole
@@ -205,14 +208,14 @@ In Progress spec; a fold into an approved (Todo) body moves it
 back to Backlog, priority and edges unchanged.
 
 **The curator reviews the inbox; the launcher dispatches it.**
-After step 8's answer (or straight away when it has nothing to
-ask) and the bootstrap's write-back of the state of play, run
-`ListAgents` and message the live `launch-<day>` exactly
-`state of play written`, once — its cue to dispatch the curator
-with the fold's hand-off. No launcher live: say
-`launcher: not live`, tell the operator to type `launch` in a new
-tab, and dispatch no curator from here. Todo is
-dispatched as ever, by step 5 after the Next read below. The scheduler
+Once the bootstrap's write-back of the state of play lands, and
+**before** step 8's ask, run `ListAgents` and message the live
+`launch-<day>` exactly `state of play written`, once — its cue to
+dispatch the curator with the fold's hand-off, so neither the fold
+nor the curator waits on the scheduler's question. No launcher
+live: say `launcher: not live`, tell the operator to type `launch`
+in a new tab, and dispatch no curator from here. Todo is
+dispatched by step 5, after the start trigger. The scheduler
 still keeps the inbox stocked: when it runs thin, stage more
 specs before anything else.
 
@@ -431,7 +434,16 @@ scheduler's write, never the worker's; message the curator the
 filing.
 
 **Dispatching is the other half; Todo is its standing
-authorization.** The gate is two checks: state Todo
+authorization, once the day is started.** The start is the
+operator's: `fleet resume` and the first wave wait for step 8's
+start trigger, then `fleet resume` runs first and the wave after
+it. On "start now and dispatch at will" the day runs with no
+per-wave ask; on "this wave only" each later wave is one ask; on
+"not yet" nothing is dispatched and the curator runs regardless.
+A curator tick moving an issue to Todo before the trigger joins
+the first wave. A warm bootstrap of a day already started asks no
+trigger; a machine restart mid-day asks it again, since the fleet
+is down. The gate is two checks: state Todo
 (`linear_gate.py approvals ENG-<n>…`, exit 1 if any is not; In
 Progress or In Review is a resume) and unblocked (Next, no
 pending hold: step 2). An open
@@ -574,7 +586,14 @@ the decision context does not — the analyst rejects those.
 
 **8. Drain the legacy findings, and ask once.** **At bootstrap,
 say each count, never a listing.** **The consolidated ask**
-carries only what needs the operator's word — the
+carries only what needs the operator's word, **led by the start
+trigger** (a cold bootstrap only — a started day skips it): "ready
+to resume the fleet (N sessions) and dispatch the first wave
+(the file-disjoint set, named)?", answered **"Start now and dispatch at
+will today (Recommended)"**, **"Start now, this wave only; ask
+before later waves"** or **"Not yet"**, the question naming the
+count of Todo `[Operator]` items so the operator can send the
+curator to them first (step 5 runs each answer). Then the
 `Audit findings` kill list, the holds' edges and Discuss items.
 
 **`Audit findings` is a legacy pool, drained one finding at a

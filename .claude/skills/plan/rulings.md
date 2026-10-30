@@ -302,8 +302,16 @@ the document's state sections.
    `state of play written` arrives (2026-10-28), as new tabs in
    the dispatcher's window, with one consolidated ask; the fleet
    bound lives in the tool. Ratification and gate approvals are
-   per-tab. Run `fleet resume` **before** dispatching new tasks. A
-   session resumed outside its verb has no secrets.
+   per-tab. **Todo is the dispatch authorization** (confirmed
+   2026-10-28): a pre-authorized wave needs no ask, and once the
+   day is started the scheduler dispatches at will on the
+   priorities as they stand — **save the start of the day**
+   (2026-10-29), when `fleet resume` and the first wave wait for
+   the operator's start trigger in the bootstrap ask, the launcher
+   messaged before that ask. A warm bootstrap of a started day asks
+   no trigger; a machine restart asks it again. On the operator's
+   start trigger, run `fleet resume` **before** dispatching new
+   tasks. A session resumed outside its verb has no secrets.
 1. **The antichain practice**: dispatch file-disjoint sets, and
    publish the dispatchable antichain at every bootstrap; every
    hold is a visible edge.
