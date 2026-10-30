@@ -399,10 +399,12 @@ marker). Also the iTerm2 tab-color integration and the shell setup,
 including the **session secrets**, resolved from 1Password at launch,
 never written to a config file, the CLI signed out after the reads. A
 1Password SSH prompt for a private key from anything but the cockpit
-(the deploy ceremony's key commands) is refused, commit signing
-excepted. Both settings files are git-ignored, so all of it is opt-in;
-`settings.local.json` is **one shared file resolved through worktrees
-to the main checkout**. A committed guard is **inert until wired**:
+(the mainnet cockpit TUI, its prompts biometric-approved; defined
+under the private-key guard in the detail doc below) is refused,
+commit signing excepted. Both settings files are git-ignored, so all
+of it is opt-in; `settings.local.json` is **one shared file resolved
+through worktrees to the main checkout**. A committed guard is **inert
+until wired**:
 `make hook-wiring` (also run by the daily upkeep pass) names every
 guard that cannot fire and writes nothing. The **session helpers**
 (`cdds`, `fleet` and the session verbs) *are* committed, at
