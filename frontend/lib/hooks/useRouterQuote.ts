@@ -128,9 +128,9 @@ export const useRouterQuote = (
         // that gates it, and no clock to supply when there is no book.
         let gatedEclob: GatedEclobLeg | null = null;
         if (eclobLeg) {
-          const clocks = await readGateClocks(rpc);
+          const { nowSlot, nowUnix } = await readGateClocks(rpc);
           if (!isLive()) return "stop";
-          gatedEclob = { leg: eclobLeg, ...clocks };
+          gatedEclob = { leg: eclobLeg, nowSlot, nowUnix };
         }
 
         const { best, aggregator } = await quoteBestRoute(rpc, {

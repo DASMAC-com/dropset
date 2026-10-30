@@ -114,6 +114,41 @@ describe("poll chain", () => {
     expect(fire).toHaveBeenCalledTimes(3);
   });
 
+  // What every hook's state guard leans on: a tick still awaiting when its
+  // effect is torn down must read as dead, or it writes into the next one.
+  it("marks an in-flight tick dead once stopped", async () => {
+    let release: (() => void) | undefined;
+    const seenLive: boolean[] = [];
+    const fire = vi.fn(async (isLive: () => boolean): Promise<PollNext> => {
+      await new Promise<void>((r) => {
+        release = r;
+      });
+      seenLive.push(isLive());
+      return "again";
+    });
+    const chain = start(fire);
+
+    await vi.advanceTimersByTimeAsync(50);
+    chain.stop();
+    release?.();
+    await vi.advanceTimersByTimeAsync(10 * INTERVAL);
+    expect(seenLive).toEqual([false]);
+    expect(fire).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("pauses a running chain when the tab is hidden", async () => {
+    const fire = vi.fn(async (): Promise<PollNext> => "again");
+    start(fire);
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(fire).toHaveBeenCalledTimes(1);
+    doc.setVisibility("hidden");
+    await vi.advanceTimersByTimeAsync(10 * INTERVAL);
+    expect(fire).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
   it("goes quiet on stop, and a later restart is a no-op", async () => {
     const fire = vi.fn(async (): Promise<PollNext> => "again");
     const chain = start(fire);

@@ -1,8 +1,7 @@
-// The poll loop behind every visibility-paused poller in the app (the eCLOB
-// and router quotes, the order book, the vaults table): one timer, paused
-// while the tab is hidden, restarted the moment it is shown again, and torn
-// down with the effect that started it. Each poller supplies only its tick
-// body, so a fix to the lifecycle lands once instead of in four copies.
+// The poll loop behind every visibility-paused poller in the app: one timer,
+// paused while the tab is hidden, restarted the moment it is shown again, and
+// torn down with the effect that started it. Each poller supplies only its
+// tick body, so the lifecycle has one copy to fix.
 
 // What a tick asks for next: another tick after `intervalMs`, no further tick
 // (until a restart, or the effect re-runs on an input change), or another

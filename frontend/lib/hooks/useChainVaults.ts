@@ -30,9 +30,9 @@ const INITIAL: ChainVaultsState = {
 };
 
 // Poll the live vaults and, with a wallet connected, its positions in them.
-// The shared poll chain (lib/hooks/pollChain.ts), so paused while the tab is
-// hidden and guarded so a refocus cannot leave two chains running; it
-// self-heals through a transient RPC error.
+// The loop is the shared poll chain (lib/hooks/pollChain.ts): paused while
+// the tab is hidden, and guarded so a refocus cannot leave two chains
+// running. It self-heals through a transient RPC error.
 export function useChainVaults(): ChainVaultsState {
   const client = useSolanaClient();
   const wallet = useWallet();
