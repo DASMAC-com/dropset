@@ -738,7 +738,18 @@ def create_many(
     failure part-way stops the run and names what already landed, since a
     filing cannot be rolled back and a re-run would file those twice. The
     curator reminder, when any filing earns it, is emitted once at the end.
+
+    Every distinct parent — the ``--parent`` default and any ``parent:``
+    override — is resolved **before** the first write, so a bad one in the
+    last file refuses the run with nothing filed, as single-file
+    ``create --parent`` does.
     """
+    for parent in dict.fromkeys(
+        p
+        for p in ({**defaults, **fields}.get("parent") for _, fields, _ in entries)
+        if p
+    ):
+        resolve_parent(api_key, parent)
     filed = 0
     remind = False
     for name, fields, body in entries:
@@ -746,8 +757,8 @@ def create_many(
         try:
             line = create_issue(api_key, body=body, **merged)
         except LinearIssueError as exc:
-            if merged.get("dry_run"):
-                raise LinearIssueError(f"{name}: {exc} — a dry run, nothing filed")
+            if merged.get("dry_run") or not filed:
+                raise LinearIssueError(f"{name}: {exc} — nothing filed") from exc
             raise LinearIssueError(
                 f"{name}: {exc} — {filed} of {len(entries)} filed before it; "
                 "remove those files before re-running"

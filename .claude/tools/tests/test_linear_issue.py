@@ -995,6 +995,21 @@ class BodyDir(_Stubbed):
         self.assertEqual(entries[1][1]["parent"], "ENG-9")
         self.assertNotIn("parent", entries[0][1])
 
+    def test_a_bad_parent_override_in_a_later_file_files_nothing(self):
+        tmp = self.write_dir(
+            {
+                "1.md": "title: A\n\nb",
+                "2.md": "title: B\nparent: not-an-id\n\nb",
+                "3.md": "title: C\n\nb",
+            }
+        )
+        rec = self.install([])
+        with self.assertRaisesRegex(li.LinearIssueError, "ENG-###"):
+            li.create_many(
+                "k", li.load_body_dir(tmp), defaults=self.DEFAULTS, emit=lambda _l: None
+            )
+        self.assertEqual(rec.calls, [], "nothing may be filed before the refusal")
+
     def test_the_cli_refuses_a_mixed_title_and_body_form(self):
         tmp = self.write_dir({"a.md": "title: A\n\nb"})
         with self.assertRaisesRegex(li.LinearIssueError, "header"):
