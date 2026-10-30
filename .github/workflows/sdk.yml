@@ -2,6 +2,11 @@
 jobs:
   sdk:
     name: 'SDK'
+    # Every GITHUB_TOKEN use here is a read (checkout, and the setup and
+    # install actions' public release lookups); pin that rather than inherit
+    # the repository default, since pnpm and cargo run third-party scripts.
+    permissions:
+      contents: 'read'
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'

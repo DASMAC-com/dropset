@@ -88,7 +88,10 @@ jobs:
           - '!pnpm-lock.yaml'
           - '!pnpm-workspace.yaml'
           - '!cfg/**'
-          - '!infra/**'
+          # Only the CloudFormation tree: Rust tests in db-schema, market-data
+          # and feeds read the localnet compose file and the secrets template,
+          # so infra/localnet/ stays relevant.
+          - '!infra/aws/**'
           # Grafana dashboard JSON, its provisioning, and the generated SQL
           # mirror under market-data/grafana/sql/. No Rust target reads any of
           # it (verified: no .rs file in db-schema/ or market-data/ references
@@ -199,7 +202,7 @@ jobs:
     # recompiled from scratch every run. The key is content-addressed over
     # every input that determines the binary (program + math-core sources, the
     # lockfile, the workspace/build config — the Makefile included, since it
-    # pins the CLI that picks the sBPF version — and the pinned
+    # holds the `anchor build` recipes and their feature flags — and the pinned
     # toolchain), so an exact hit means the cached .so is valid and the build
     # step below is skipped; any program change misses and rebuilds. Restored
     # after rust-cache so it lands on top of the restored target/.
@@ -545,6 +548,11 @@ jobs:
   test-postgres:
     name: 'Tests (Postgres)'
     needs: 'changes'
+    # Every GITHUB_TOKEN use here is a read (checkout, and the setup and
+    # install actions' public release lookups); pin that rather than inherit
+    # the repository default, since this job runs third-party build scripts.
+    permissions:
+      contents: 'read'
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'

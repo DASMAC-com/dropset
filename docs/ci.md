@@ -131,8 +131,12 @@ nor the Solana-toolchain layer:
   onto the nextest steps. This is what covers the workspace crates and test
   binaries that rust-cache prunes.
 - **The SBF `.so` cache**, one entry per feature set — content-addressed over
-  the program sources and the build config, the Makefile included (it picks
-  the sBPF version), so any Makefile edit misses it. An exact hit skips
+  the program sources and the build config, the Makefile included (it holds
+  the `anchor build` recipes and their feature flags: `program`,
+  `program-no-teardown`, `program-parity`), so any Makefile edit misses it.
+  No recipe pins the sBPF version; the toolchain default picks it, and
+  `SOLANA_VERSION` and `ANCHOR_VERSION` are literal components of every
+  `sbf-*` key. An exact hit skips
   `cargo build-sbf` entirely.
 - **The Solana toolchain cache**, one entry — keyed on the pinned Solana,
   anchor-cli and platform-tools versions.

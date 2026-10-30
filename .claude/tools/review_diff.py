@@ -276,7 +276,7 @@ CODE_FILTER_EXCLUDES = (
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
     "cfg/**",
-    "infra/**",
+    "infra/aws/**",
     "market-data/grafana/**",
 )
 
@@ -647,10 +647,12 @@ def rust_test_fixtures(
     :data:`RUST_REACHABLE` does not match, and they split into two failure classes
     rather than one:
 
-    * ``infra/localnet/docker-compose.yml`` is CI-**excluded** and pulled in by
-      three Rust files, two of them tests. This is the dequeue class exactly: a
-      diff confined to it makes every Tests job a no-op while the merge queue
-      compiles it into the full suite.
+    * ``infra/localnet/docker-compose.yml`` was then CI-**excluded** (the filter
+      dropped all of ``infra/**``) and pulled in by three Rust files at the
+      time, two of them tests. This is the dequeue class exactly: a diff confined to it made
+      every Tests job a no-op while the merge queue compiled it into the full
+      suite. The filter now excludes only ``infra/aws/**``; the scan still
+      guards the next excluded tree a test starts reading.
     * The other thirty are CI-*visible* but still unmatched — every
       ``*/queries/*.sql`` a store module compiles in, ``sdk/idl/dropset.json``,
       and the ``Makefile``. For these ``runs_rust_suites`` is true while

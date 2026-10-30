@@ -7,6 +7,11 @@ jobs:
     env:
       CONFIG_PATH: 'cfg/pre-commit-lint.yml'
     name: 'Lint'
+    # Every GITHUB_TOKEN use here is a read (checkout, and the setup actions'
+    # public release lookups); pin that rather than inherit the repository
+    # default, since pnpm, pip and pre-commit run third-party install scripts.
+    permissions:
+      contents: 'read'
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
