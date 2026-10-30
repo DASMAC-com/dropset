@@ -55,7 +55,8 @@ exactly these headings, in this order, and nothing else:
    other sessions write under. The upkeep tool's machine-written
    report is its level-2 subsection, carried verbatim.
 
-Above them, a header of one line plus the `Bootstrap stamp`.
+Above them, a header of one line plus the `Bootstrap stamp` and,
+once the day is started, the `Fleet start:` line (step 5).
 
 **A new ruling is a reviewed change**, never a document edit:
 file a `Claude:` issue carrying its text, which a worker lands as
@@ -108,8 +109,12 @@ operator lever, never this mechanism.
   the audit heartbeat, the parked counts, the upkeep report, the
   launcher's message, step 8) — **save the start trigger**,
   asked alone when the document carries no `Fleet start:` line
-  for today or `ListAgents` shows no fleet session live (a
-  machine restart; step 5). No stamp means a full bootstrap.
+  for today or `ListAgents` shows no worker session (`task`,
+  `chore`, `explore`) live (a machine restart; step 5). That
+  `ListAgents` read finding no `curate-<day>` while the board
+  holds `Curator pending` issues means the curator stopped
+  mid-day: say it needs relaunching. No stamp means a full
+  bootstrap.
 
 ## Steps
 
@@ -142,16 +147,14 @@ The pre-launch ran `.claude/tools/upkeep.py` before this
 session started and spliced its report under the document's
 machine-written `Upkeep report` heading, so the fetch above holds
 it; never re-run the pass here. Say its `parked` line — each
-pool's count and direction (ruling 23) — and the `Curator pending`
-count beside it with whether `curate-<day>` is live: a non-zero
-count with no live curator means it stopped mid-day and needs
-relaunching (its leftover is the curator's to clear, never
-promoted here — it is still inbox) — what was pruned and dismissed
+pool's count and direction (ruling 23) — what was pruned and dismissed
 (or would have been, unarmed), each refusal (a live session
 lock, an open PR — reported, never retried) and each pruned
 name's ahead count, and any inert guard,
 dangling reference or file near its size cap. Say the
-`fleet-cost` day lines too, any flagged day first. A run stamp
+`Curator pending` count beside the parked line once upkeep
+reports it: still inbox, the curator's to clear, never promoted
+here. Say the `fleet-cost` day lines too, any flagged day first. A run stamp
 older than today means the pass did not reach the document —
 say so. Its **destructive items** (the prune, the transcript
 purge, allowlist cruft, refresh candidates, stale memories) are
@@ -453,7 +456,7 @@ close-out rewrite, so a cycled session knows the day is started
 and in which mode. A curator tick moving an issue to Todo before
 the trigger is dispatchable at the trigger like any Todo. A warm
 bootstrap finding today's line, with the fleet live, asks no
-trigger; one finding no line, or no fleet session live (a machine
+trigger; one finding no line, or no worker session live (a machine
 restart mid-day), asks it again. The gate is two checks: state Todo
 (`linear_gate.py approvals ENG-<n>…`, exit 1 if any is not; In
 Progress or In Review is a resume) and unblocked (Next, no
