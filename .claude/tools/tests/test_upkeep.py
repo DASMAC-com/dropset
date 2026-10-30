@@ -1497,7 +1497,10 @@ class PreflightTests(unittest.TestCase):
         self.assertIn("LINEAR_API_KEY is unset", auth["linear"])
         self.assertIn("expired", auth["aws"])
         # AWS gates no whole step: the reconcile is skipped inside `step_cost`.
-        self.assertEqual(set(upkeep.preflight_skips(auth)), {"board", "parked"})
+        # The prune reads status from Linear, so it skips too, fail closed.
+        self.assertEqual(
+            set(upkeep.preflight_skips(auth)), {"board", "prune", "parked"}
+        )
 
     def test_an_expired_aws_session_skips_the_reconcile_but_keeps_the_local_day(self):
         run, calls = self.fake(aws_rc=255)

@@ -1131,7 +1131,9 @@ PRUNE_STEPS = ("prs", "board", "prune", "notifications")
 # `board` judges the PR set `prs` reads, so a gh failure skips it with gh's
 # reason rather than letting it report a second, misleading failure.
 GH_STEPS = ("prs", "board", "notifications", "deps")
-LINEAR_STEPS = ("board", "parked")
+# `prune` decides on the issue's status type read from Linear, so without the
+# key it skips outright, fail closed, rather than reporting nothing to clean.
+LINEAR_STEPS = ("board", "prune", "parked")
 REAUTH = {
     "gh": "gh auth login",
     "linear": "export LINEAR_API_KEY",
