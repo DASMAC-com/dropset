@@ -3,11 +3,11 @@
 """Unit tests for the private-key guard hook.
 
 One class per rule group, each pinning the shapes it must block **and** the
-neighboring shapes it must let through: a guard that blocks `grep Quote` or
+neighboring shapes it must let through: a guard that blocks `grep Admin` or
 `cat frontend/.env.local` is the false-positive class that gets a guard
 turned off, and for this one that would leave only the deny rules standing.
-The vault name used here is a placeholder; the real one lives only in the
-operator's runtime init.
+The vault name and key titles used here are placeholders; the real ones live
+only in the operator's runtime init.
 """
 
 from __future__ import annotations
@@ -27,7 +27,13 @@ sys.path.insert(0, HOOKS)
 
 import no_private_key_access as guard  # noqa: E402
 
-ENV = {guard.VAULT_ENV: "Example Keys Vault,abc123-vault-id"}
+# Placeholder titles, one per key role; the real ones live only in the
+# operator's runtime init.
+TITLES = ("Example Leader", "Example Quote Signer", "Example Admin", "Example Program")
+ENV = {
+    guard.VAULT_ENV: "Example Keys Vault,abc123-vault-id",
+    guard.KEY_ITEMS_ENV: " , ".join(TITLES) + ",",
+}
 CWD = "/Users/x/repos/dropset/.claude/worktrees/eng-1"
 
 
@@ -70,16 +76,64 @@ class NameTests(Base):
             "python3 x.py --vault 'example keys vault'",
         )
 
-    def test_an_op_reference_to_a_key_item(self):
-        self.assertBlocked(
-            "echo op://Anything/eBook/private",
-            "echo 'op://x/Admin signing/key'",
-            "echo op://x/Lead/key",
-            "echo op://x/quote-ssh/key",
+    def test_each_configured_key_item(self):
+        """Each title, quoted, in its `(SSH)` duplicate and in any case."""
+        for title in TITLES:
+            self.assertBlocked(
+                "echo 'op://Anything/%s/private key'" % title,
+                "echo 'op://x/%s (SSH)/public key'" % title,
+                'echo "op://x/%s (SSH)/k"' % title.upper(),
+            )
+
+    def test_a_shared_leading_word_alone_is_no_key_item(self):
+        self.assertAllowed(
+            "echo op://Dev/Example/credential",
+            "echo 'op://Dev/Example Feed/credential'",
+            "echo 'op://Dev/Example Quotes feed/credential'",
         )
 
+    def test_a_title_only_matches_at_the_start_of_the_item(self):
+        self.assertAllowed("echo 'op://x/Old Example Admin/k'")
+
+    def test_an_earlier_reference_does_not_swallow_a_key_item(self):
+        self.assertBlocked(
+            "echo op://Dev/x op://Other/Example Admin/k",
+            "echo op://Dev/x' 'op://Other/Example Admin/k",
+        )
+
+    def test_quoting_escaping_and_percent_encoding_inside_a_title(self):
+        self.assertBlocked(
+            "echo op://x/Example' 'Admin/k",
+            "echo op://x/'Example Admin'/k",
+            'echo op://x/"Example Admin (SSH)"/k',
+            "echo op://x/Example\\ Admin/k",
+            "echo op://x/Example%20Admin/k",
+            "echo 'op://Example%20Keys%20Vault/other/field'",
+        )
+
+    def test_titles_separate_on_comma_semicolon_or_newline(self):
+        env = {guard.KEY_ITEMS_ENV: "Example One; Example Two\nExample Three"}
+        for title in ("Example One", "Example Two", "Example Three"):
+            with self.subTest(title=title):
+                self.assertEqual(_bash("echo 'op://x/%s/k'" % title, env=env)[0], 2)
+        self.assertEqual(
+            guard._key_titles(env),
+            [
+                ("example", "one"),
+                ("example", "two"),
+                ("example", "three"),
+            ],
+        )
+
+    def test_unset_items_env_matches_no_item(self):
+        env = {guard.VAULT_ENV: ENV[guard.VAULT_ENV]}
+        self.assertEqual(_bash("echo 'op://x/Example Admin/k'", env=env)[0], 0)
+
     def test_an_op_reference_into_the_vault(self):
-        self.assertBlocked("echo op://abc123-vault-id/other/field")
+        self.assertBlocked(
+            "echo op://abc123-vault-id/other/field",
+            "echo 'op://Example Keys Vault/other/field'",
+        )
 
     def test_the_agent_socket(self):
         self.assertBlocked(
@@ -89,8 +143,8 @@ class NameTests(Base):
 
     def test_bare_titles_are_ordinary_words(self):
         self.assertAllowed(
-            "grep -rn Quote programs/",
-            "rg 'Admin|Lead' sdk/",
+            "grep -rn 'Example Quote Signer' programs/",
+            "rg 'Example Admin|Example Program' sdk/",
             "echo op://Dev/feeds-api/credential",
             "echo op://Dev/Leader-board/credential",
         )

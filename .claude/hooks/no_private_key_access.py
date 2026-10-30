@@ -11,13 +11,18 @@ that reaches toward them:
 1. **Names.** Any Bash command naming the private-keys vault (its name or id,
    read from ``DS_OP_PRIVATE_KEYS_VAULT`` in the session environment, comma
    separated for both; unset, the vault check is off), an ``op://``
-   reference to one of the key items (``eBook``, ``Admin``, ``Lead``,
-   ``Quote`` and their signing duplicates — matched on the item's first
-   word), or the 1Password agent socket. The committed script carries no real
-   vault name. The bare titles are matched only inside an ``op://``
-   reference: ``Admin`` and ``Quote`` are ordinary words in this codebase,
-   and a guard that blocks ``grep Quote`` gets turned off. Fetching an item
-   by its bare title needs ``op``, which rule 2 blocks anyway.
+   reference to one of the key items (their titles read from
+   ``DS_OP_PRIVATE_KEY_ITEMS``, separated by commas, semicolons or newlines,
+   each matched case-insensitively on the item's leading words, so a wallet
+   record's ``(SSH)`` signing duplicate matches too; unset, the item check is
+   off), or the 1Password agent socket. References are read with quotes and
+   backslashes removed and percent escapes decoded. The committed script
+   carries no real vault name or item title. The titles are matched only
+   inside an ``op://`` reference: their words may be ordinary in this
+   codebase, and a guard that blocks ``grep signer`` gets turned off.
+   Fetching an item by its bare title needs ``op``, which rule 2 blocks
+   anyway. ``make hook-wiring`` reports how many entries each variable
+   parses to, never their values.
 2. **``op`` at any command position**, including after ``env``, ``sudo``,
    ``xargs``, ``watch``, ``find -exec``, a control operator (glued or
    spaced), inside a ``-c`` payload, ``eval``, a command substitution, or a
@@ -85,6 +90,7 @@ import os
 import re
 import shlex
 import sys
+import urllib.parse
 
 try:
     import _shell_tokens as sh
@@ -97,12 +103,25 @@ VAULT_ENV = "DS_OP_PRIVATE_KEYS_VAULT"
 # a substring of every command — a mis-set `a` must not wedge the session.
 MIN_VAULT_LEN = 3
 
-# The key items, matched case-insensitively on the first word of an
-# `op://<vault>/<item>/…` reference's item segment, so `Admin signing` and
-# `Quote-ssh` match too.
-KEY_ITEMS = frozenset({"ebook", "admin", "lead", "quote"})
+# The key items' titles, comma separated, read from the session environment
+# like the vault: the committed script carries no real title. Each is matched
+# case-insensitively as a prefix of the words in an `op://<vault>/<item>/…`
+# reference's item segment, so a wallet record and its `(SSH)` signing
+# duplicate both match. An extra title over-blocks; a missing one
+# under-blocks.
+KEY_ITEMS_ENV = "DS_OP_PRIVATE_KEY_ITEMS"
 
-OP_REF_RE = re.compile(r"op://([^/\s'\"]+)/([^/\s'\"]+)")
+# Titles separate on a comma, a semicolon or a newline.
+TITLE_SEP_RE = re.compile(r"[,;\n]")
+
+# A segment may hold spaces, as a multi-word title does, but never runs into a
+# following reference (`op://a/b op://v/Key title/k` is two references). The
+# references are read from text with quotes and backslashes removed and percent
+# escapes decoded, so `'Key'' title'`, `Key\ title` and `Key%20title` all read
+# as `Key title`. The vault segment never starts with whitespace, so a bare
+# `op://` (`grep -rn 'op://' dir/ other/`) reads as no reference at all.
+OP_REF_RE = re.compile(r"op://([^/\s](?:(?!op://)[^/\n])*)/((?:(?!op://)[^/\n])+)")
+UNQUOTE_RE = re.compile(r"[\\'\"]")
 ITEM_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 
 # The agent socket is `agent.sock` under 1Password's macOS group container,
@@ -167,18 +186,29 @@ def _vaults(env):
     ]
 
 
-def _name_reason(text, vaults):
+def _key_titles(env):
+    """The configured key-item titles as lowercased word tuples."""
+    raw = env.get(KEY_ITEMS_ENV) or ""
+    if not isinstance(raw, str):
+        return []
+    titles = (
+        tuple(w.lower() for w in ITEM_WORD_RE.findall(t))
+        for t in TITLE_SEP_RE.split(raw)
+    )
+    return [t for t in titles if t]
+
+
+def _name_reason(text, vaults, titles):
     """Rule 1 on raw text: the vault, a key item reference, the agent socket."""
     low = text.lower()
+    plain = urllib.parse.unquote(UNQUOTE_RE.sub("", text))
     for vault in vaults:
-        if vault in low:
+        if vault in low or vault in plain.lower():
             return "the command names the private-keys vault"
-    for vault_seg, item_seg in OP_REF_RE.findall(text):
-        if vault_seg.lower() in vaults:
-            return "the command names the private-keys vault"
-        words = ITEM_WORD_RE.findall(item_seg)
-        if words and words[0].lower() in KEY_ITEMS:
-            return "the command references a private-key item (%s)" % item_seg
+    for _vault_seg, item_seg in OP_REF_RE.findall(plain):
+        words = tuple(w.lower() for w in ITEM_WORD_RE.findall(item_seg))
+        if any(words[: len(title)] == title for title in titles):
+            return "the command references a private-key item (%s)" % item_seg.strip()
     if SOCKET_FILE in low and any(m in low for m in SOCKET_MARKERS):
         return "the command names the 1Password SSH agent socket"
     return None
@@ -478,7 +508,9 @@ def _evaluate(payload, env, cwd):
     elif tool == "Bash":
         cmd = tool_input.get("command", "")
         if isinstance(cmd, str) and cmd.strip():
-            reason = _name_reason(cmd, _vaults(env)) or _scan(cmd, cwd)
+            reason = _name_reason(cmd, _vaults(env), _key_titles(env)) or _scan(
+                cmd, cwd
+            )
     if reason:
         return 2, DENY_MESSAGE.format(reason=reason)
     return 0, ""
@@ -497,26 +529,35 @@ def evaluate(payload, env=None, cwd=None):
         return 0, ""
 
 
-# (command, should_block). The self-test's vault is a placeholder: the real
-# name lives only in the operator's runtime init.
+# (command, should_block). The self-test's vault and key titles are
+# placeholders: the real ones live only in the operator's runtime init.
 TEST_VAULT = "Example Keys Vault,abc123-vault-id"
+TEST_ITEMS = "Example Signer,Example Upgrade Key"
 TEST_CWD = "/Users/x/repos/dropset/.claude/worktrees/eng-1"
 BASH_CASES = [
     # Rule 1: names.
     ("grep -r 'Example Keys Vault' .", True),
     ("echo ABC123-VAULT-ID", True),
-    ("cat notes | grep 'op://Some/Admin/private key'", True),
-    ("echo op://Other/Quote-signing/key", True),
+    ("cat notes | grep 'op://Some/Example Signer/private key'", True),
+    ("echo 'op://Other/example upgrade key (SSH)/key'", True),
     ("ls ~/Library/Group\\ Containers/2BUA8C4S2C.com.1password/t/agent.sock", True),
     ("ls ~/.1password/agent.sock", True),
     (
         "ssh -o IdentityAgent=~/Library/Group\\ Containers/2BUA8C4S2C*/t/agent.sock x",
         True,
     ),
-    ("echo op://X/Admin/k 'unterminated", True),
-    ("grep -rn Quote programs/", False),
-    ("rg 'Admin' sdk/", False),
+    ("echo 'op://X/Example Signer/k 'unterminated", True),
+    ("grep -rn 'Example Signer' programs/", False),
+    ("rg 'Example Upgrade Key' sdk/", False),
     ("echo op://Dev/feeds-api/credential", False),
+    ("echo 'op://Dev/Example Feed/credential'", False),
+    ("echo op://Dev/x op://Other/Example Signer/k", True),
+    ("echo op://Other/Example' 'Signer/k", True),
+    ('echo op://Other/"Example Signer"/k', True),
+    ("echo op://Other/Example\\ Signer/k", True),
+    ("echo op://Other/Example%20Signer/k", True),
+    ("echo 'op://Other/Old Example Signer/k'", False),
+    ("grep -rn 'op://' docs/ Example\\ Signer/", False),
     # Rule 2: op at any command position.
     ("op read op://x/y/z", True),
     ("op item list", True),
@@ -696,7 +737,7 @@ EDIT_CASES = [
 
 def _self_test():
     """Built-in cases, run with `--self-test` so it needs no piped stdin."""
-    env = {VAULT_ENV: TEST_VAULT}
+    env = {VAULT_ENV: TEST_VAULT, KEY_ITEMS_ENV: TEST_ITEMS}
     failures = []
     for cmd, should_block in BASH_CASES:
         payload = {"tool_name": "Bash", "tool_input": {"command": cmd}}

@@ -607,6 +607,29 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
     }
 
 
+def guard_env(env) -> dict | None:
+    """How many entries each private-key guard variable parses to, in ``env``.
+
+    Counts only, never values: the vault name and the key titles stay out of
+    every report. It parses with the guard's own functions, so a value the
+    guard would read as nothing is reported as nothing. ``None`` when the guard
+    cannot be imported. Informational, never a gap: an unset variable turns one
+    check off, and the operator may run without it on purpose.
+    """
+    hooks = str(Path(__file__).resolve().parent.parent / "hooks")
+    if hooks not in sys.path:
+        sys.path.insert(0, hooks)
+    try:
+        import no_private_key_access as guard
+
+        return {
+            guard.VAULT_ENV: len(guard._vaults(env)),
+            guard.KEY_ITEMS_ENV: len(guard._key_titles(env)),
+        }
+    except Exception:
+        return None
+
+
 def inert_count(result: dict) -> int:
     """How many committed guards cannot fire, for any of the three reasons."""
     return (
@@ -686,6 +709,21 @@ def render(result: dict) -> str:
     else:
         lines.append("deny-rules | every private-key deny rule is in force")
 
+    counts = result.get("guard_env")
+    if counts is not None:
+        lines.append("")
+        for name, count in counts.items():
+            state = f"{count} set" if count else "UNSET"
+            lines.append(f"  {state:<10} {name}")
+        off = [name for name, count in counts.items() if not count]
+        lines.append(
+            f"guard-env | {len(off)} private-key guard variable(s) parse to "
+            "nothing in this session, so the name check each feeds is off; "
+            "set them in the runtime init"
+            if off
+            else "guard-env | every private-key guard variable is set"
+        )
+
     iterm = result["iterm"]
     lines.append("")
     if iterm["drift"]:
@@ -730,6 +768,7 @@ def run(argv: list[str]) -> int:
         raise HookWiringError(f"--repo is not a directory: {repo}")
 
     result = scan(repo)
+    result["guard_env"] = guard_env(os.environ)
 
     # Finding nothing is not a clean bill of health. Point `--repo` at a typo'd
     # path, a checkout predating `.claude/hooks/`, or a future rename, and the
