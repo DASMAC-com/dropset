@@ -1141,7 +1141,7 @@ LINEAR_STEPS = ("board", "prune", "parked")
 REAUTH = {
     "gh": "gh auth login",
     "linear": "export LINEAR_API_KEY",
-    "aws": "aws login --remote",
+    "aws": "aws sso login --use-device-code --no-browser",
 }
 
 

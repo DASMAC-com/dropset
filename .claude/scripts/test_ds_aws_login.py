@@ -7,7 +7,7 @@ interactive browser login. That is the whole reason this suite exists in this
 shape: the behavior under test is *when* the helper decides to log in and *when
 it refuses to launch*, and both are unobservable if the real CLI is in the loop.
 
-The load-bearing assertion is `PostLoginProbeDecides` — `aws login` can exit 0
+The load-bearing assertion is `PostLoginProbeDecides` — a login can exit 0
 having left a profile that still cannot call STS, so the gate re-probes and
 trusts only that. The invariant defended is "this session's credentials
 RESOLVE", never "a login ran" — and deliberately not "this session can read cost
@@ -66,18 +66,34 @@ _NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
 #
 # A `default)` branch returns 42 so an unexpected subcommand fails loudly rather
 # than reading as a success.
-# `login help` is the subcommand-EXISTS probe and must be distinguished from a
-# real `login`, or the probe itself would trip the repair side-effect below and
-# every expired case would silently self-heal before logging in.
+# `sso login help` is the flag-EXISTS probe and must be distinguished from a
+# real `sso login`, or the probe itself would trip the repair side-effect below
+# and every expired case would silently self-heal before logging in. It prints
+# `HELP_TEXT` (the bare flag by default) only when `LOGIN_HELP_RC` is 0, since
+# the gate reads the TEXT.
+# `configure get` models the SSO-shape check the way the real CLI answers it:
+# the value and exit 0 when the key is set, nothing and exit 1 when it is not.
+# `SSO_SESSION` / `SSO_START_URL` hold the profile's values; empty means unset.
 _STUB = (
-    'aws() { print -r -- "$#|${(j:|:)@}" >> "$CALLS"; '
-    '[[ "$1" == login && "$2" == help ]] && return $LOGIN_HELP_RC; '
+    'aws() { local v; print -r -- "$#|${(j:|:)@}" >> "$CALLS"; '
+    'if [[ "$1" == configure ]]; then '
+    '[[ "$3" == sso_session ]] && v="$SSO_SESSION"; '
+    '[[ "$3" == sso_start_url ]] && v="$SSO_START_URL"; '
+    '[[ -n "$v" ]] && { print -r -- "$v"; return 0 }; return 1; fi; '
+    'if [[ "$1" == sso && "$2" == login && "$3" == help ]]; then '
+    '(( LOGIN_HELP_RC == 0 )) && print -r -- "$HELP_TEXT"; '
+    "return $LOGIN_HELP_RC; fi; "
     'case "$1" in '
     "sts) return $STS_RC ;; "
-    "login) STS_RC=$POST_LOGIN_STS_RC; return $LOGIN_RC ;; "
+    "sso) STS_RC=$POST_LOGIN_STS_RC; return $LOGIN_RC ;; "
     "*) return 42 ;; "
     "esac }; "
 )
+
+
+def _logins(recorded):
+    """The real `sso login` calls, the flag-exists `help` probe excluded."""
+    return [args for _, args in recorded if args[0] == "sso" and "help" not in args]
 
 
 @unittest.skipUnless(shutil.which("zsh"), _NEEDS_ZSH)
@@ -95,6 +111,9 @@ class GateHarness(unittest.TestCase):
         login_rc=0,
         post_login_sts_rc=0,
         login_help_rc=0,
+        help_text="--use-device-code",
+        sso_session="dasmac",
+        sso_start_url="",
         env=None,
         stub=True,
     ):
@@ -109,6 +128,9 @@ class GateHarness(unittest.TestCase):
                 "LOGIN_RC": str(login_rc),
                 "POST_LOGIN_STS_RC": str(post_login_sts_rc),
                 "LOGIN_HELP_RC": str(login_help_rc),
+                "HELP_TEXT": help_text,
+                "SSO_SESSION": sso_session,
+                "SSO_START_URL": sso_start_url,
                 **(env or {}),
             },
         )
@@ -139,7 +161,7 @@ class ValidSessionCostsNothing(GateHarness):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_valid_credentials_never_run_a_login(self):
-        # The probe-before-login shape is the point: `aws login` stops for the
+        # The probe-before-login shape is the point: the login stops for the
         # operator, so a still-valid session that re-logs in has made the gate a tax on
         # every launch rather than a guard on a broken one.
         _, recorded = self._gate(sts_rc=0)
@@ -156,22 +178,20 @@ class ExpiredSessionLogsInOnce(GateHarness):
 
     def test_expired_then_repaired_logs_in_exactly_once(self):
         _, recorded = self._gate(sts_rc=1, login_rc=0, post_login_sts_rc=0)
-        # `help not in args` excludes the subcommand-exists probe, which is also
-        # spelled `login`. Counting it would read as two logins.
-        logins = [
-            args for _, args in recorded if args[0] == "login" and "help" not in args
-        ]
-        self.assertEqual(len(logins), 1, recorded)
+        # `_logins` excludes the flag-exists probe, which is also spelled
+        # `sso login`. Counting it would read as two logins.
+        self.assertEqual(len(_logins(recorded)), 1, recorded)
 
-    def test_the_login_is_remote_so_the_operator_picks_the_identity(self):
+    def test_the_login_is_device_code_so_the_operator_picks_the_identity(self):
         # The plain flow reuses whichever identity the default browser holds;
-        # `--remote` prints the URL and takes the code back by paste.
+        # the device code is typed in a browser the operator chooses, and
+        # `--no-browser` keeps the CLI from opening the default one itself.
         _, recorded = self._gate(sts_rc=1, login_rc=0, post_login_sts_rc=0)
-        logins = [
-            args for _, args in recorded if args[0] == "login" and "help" not in args
-        ]
+        logins = _logins(recorded)
         self.assertEqual(len(logins), 1, recorded)
-        self.assertIn("--remote", logins[0], recorded)
+        self.assertEqual(logins[0][:2], ["sso", "login"], recorded)
+        self.assertIn("--use-device-code", logins[0], recorded)
+        self.assertIn("--no-browser", logins[0], recorded)
 
     def test_the_probe_runs_again_after_the_login(self):
         # Two `sts` calls, not one: the second is what actually clears the gate.
@@ -195,6 +215,50 @@ class PostLoginProbeDecides(GateHarness):
         result, _ = self._gate(sts_rc=1, login_rc=0, post_login_sts_rc=1)
         self.assertIn("NOT launching", result.stderr)
         self.assertIn("DS_AWS_PROFILE", result.stderr)
+
+
+class NonSsoProfileRefuses(GateHarness):
+    """`aws sso login` refreshes only an SSO-shaped profile; a `login_session`
+    profile written by `aws login` fails it outright. The gate refuses with the
+    fix rather than falling back to a second login path."""
+
+    def _non_sso(self, **kw):
+        return self._gate(sts_rc=1, sso_session="", sso_start_url="", **kw)
+
+    def test_a_non_sso_profile_refuses_the_launch(self):
+        result, _ = self._non_sso()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
+    def test_a_non_sso_profile_never_attempts_a_login(self):
+        _, recorded = self._non_sso()
+        self.assertEqual(_logins(recorded), [], recorded)
+        self.assertNotIn("login", [args[0] for _, args in recorded], recorded)
+
+    def test_the_refusal_names_the_fix(self):
+        result, _ = self._non_sso()
+        self.assertIn("NOT launching", result.stderr)
+        self.assertIn("aws configure sso", result.stderr)
+        self.assertIn("DS_AWS_PROFILE", result.stderr)
+
+    def test_a_legacy_inline_sso_profile_still_logs_in(self):
+        # `sso_start_url` directly in the profile stanza predates `sso_session`
+        # and is still SSO-shaped.
+        result, recorded = self._gate(
+            sts_rc=1,
+            post_login_sts_rc=0,
+            sso_session="",
+            sso_start_url="https://example.awsapps.com/start",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(_logins(recorded)), 1, recorded)
+
+    def test_a_valid_non_sso_session_still_launches(self):
+        # The shape check sits after the probe: a live session of any shape
+        # costs nothing, so a `login_session` profile keeps working until it
+        # expires.
+        result, recorded = self._gate(sts_rc=0, sso_session="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([args[0] for _, args in recorded], ["sts"], recorded)
 
 
 class FailedLoginRefuses(GateHarness):
@@ -227,48 +291,69 @@ class AbsentCliWarnsRatherThanBlocking(GateHarness):
 
 
 class AnOldCliWarnsRatherThanBlocking(GateHarness):
-    """An `aws` too old for a top-level `login` is the same "AWS is not set up
-    here" shape as no `aws` at all, so it must take the same warn-and-launch
-    branch. Before this, it was strictly WORSE than having no CLI: the login
-    failed with `Invalid choice: 'login'`, the re-probe failed, and the verb
-    refused to start — while a machine with no `aws` launched fine.
+    """An `aws` too old for `sso login --use-device-code` is the same "AWS is
+    not set up here" shape as no `aws` at all, so it must take the same
+    warn-and-launch branch. Without it, it would be strictly WORSE than having
+    no CLI: the login fails on the unknown option, the re-probe fails, and the
+    verb refuses to start — while a machine with no `aws` launches fine.
 
-    The subcommand-exists probe deliberately runs AFTER the failed re-probe, so
-    an old CLI is modelled as: probe fails, login is attempted and achieves
-    nothing, re-probe fails, and only then does the gate ask whether `login`
-    exists at all.
+    The flag-exists probe deliberately runs AFTER the failed re-probe, so an
+    old CLI is modelled as: probe fails, login is attempted and achieves
+    nothing, re-probe fails, and only then does the gate ask whether the flag
+    exists at all. The escape is reachable only for an SSO-shaped profile
+    (the harness default); a non-SSO one is refused by the shape check first.
     """
 
     def _old_cli(self):
         # `post_login_sts_rc=1` because on a real old CLI the attempted login
-        # cannot repair anything — it fails with `Invalid choice`.
+        # cannot repair anything — it fails on the unknown option.
         return self._gate(sts_rc=1, post_login_sts_rc=1, login_help_rc=1)
 
     def test_an_old_cli_still_allows_the_launch(self):
         result, _ = self._old_cli()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_an_old_cli_asks_about_the_subcommand_only_after_the_reprobe(self):
+    def test_an_old_cli_asks_about_the_flag_only_after_the_reprobe(self):
         # The ordering IS the safety property: `help` renders through groff and a
-        # pager and so can fail for reasons unrelated to the subcommand existing.
+        # pager and so can fail for reasons unrelated to the flag existing.
         # On the hot path that would warn-and-launch every expired session on a
         # CURRENT CLI; here it can only widen an already-failing outcome.
         _, recorded = self._old_cli()
         kinds = ["help" if "help" in args else args[0] for _, args in recorded]
-        self.assertEqual(kinds, ["sts", "login", "sts", "help"], recorded)
+        self.assertEqual(kinds, ["sts", "configure", "sso", "sts", "help"], recorded)
 
-    def test_an_old_cli_says_what_is_wrong_and_names_the_older_spelling(self):
+    def test_an_old_cli_says_what_is_wrong(self):
         result, _ = self._old_cli()
-        self.assertIn("no top-level", result.stderr)
-        self.assertIn("aws sso login", result.stderr)
+        self.assertIn("--use-device-code", result.stderr)
+        self.assertIn("WITHOUT cost-read", result.stderr)
 
     def test_an_old_cli_tells_the_operator_to_ignore_the_stray_error(self):
-        # The price of the later placement is one `Invalid choice` reaching the
-        # terminal, so the warning has to account for it or it reads as a defect.
+        # The price of the later placement is one unknown-option error reaching
+        # the terminal, so the warning has to account for it or it reads as a
+        # defect.
         result, _ = self._old_cli()
-        self.assertIn("Invalid choice", result.stderr)
+        self.assertIn("unknown-option", result.stderr)
 
-    def test_a_current_cli_never_reaches_the_subcommand_probe(self):
+    def test_an_old_cli_on_a_non_sso_profile_is_refused_not_escaped(self):
+        # The shape check runs first, so no old-CLI escape is reached for a
+        # profile no login could refresh anyway.
+        result, recorded = self._gate(
+            sts_rc=1, post_login_sts_rc=1, login_help_rc=1, sso_session=""
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("aws configure sso", result.stderr)
+        self.assertEqual(_logins(recorded), [], recorded)
+
+    def test_bolded_help_on_a_current_cli_still_refuses(self):
+        # A renderer that bolds by backspace overstrike splits the flag into
+        # `-\b--\b-u\bu…`. Unstripped, a current CLI whose login failed would
+        # read as an old one and warn-and-launch instead of refusing.
+        bolded = "".join(f"{c}\b{c}" for c in "--use-device-code")
+        result, _ = self._gate(sts_rc=1, post_login_sts_rc=1, help_text=bolded)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("NOT launching", result.stderr)
+
+    def test_a_current_cli_never_reaches_the_flag_probe(self):
         # The complement, and the one that pins the hot path: a session that
         # repairs normally must not pay for `help` at all.
         _, recorded = self._gate(sts_rc=1, post_login_sts_rc=0)
@@ -284,10 +369,16 @@ class ConfiguredProfileIsPassedThrough(GateHarness):
             sts_rc=1, login_rc=0, post_login_sts_rc=0, env={"DS_AWS_PROFILE": "ds-dev"}
         )
         self.assertTrue(recorded, "the stub recorded no calls at all")
-        # The `login help` subcommand-exists probe is excluded deliberately: it
-        # asks whether a subcommand exists, which no profile is relevant to.
+        # The `sso login help` flag-exists probe is excluded deliberately: it
+        # asks whether a flag exists, which no profile is relevant to. The
+        # `configure get` shape check is included — it must read the SAME
+        # profile the probe and the login use.
         credentialed = [(argc, args) for argc, args in recorded if "help" not in args]
-        self.assertEqual(len(credentialed), 3, recorded)
+        self.assertEqual(
+            [args[0] for _, args in credentialed],
+            ["sts", "configure", "sso", "sts"],
+            recorded,
+        )
         for argc, args in credentialed:
             # Two SEPARATE adjacent words. A single `--profile ds-dev` word — what
             # `"${profile[*]}"` produces — fails here, and is what the old
@@ -354,9 +445,13 @@ class TheGateActuallyGates(unittest.TestCase):
                 # reached, so a placeholder tier keeps the case on the gate.
                 "DS_MODEL_ADVISOR": "judge-model[1m]",
                 "DS_MODEL_EXECUTOR": "work-model[1m]",
-                # The verb-level cases never exercise the old-CLI branch, so the
-                # subcommand-exists probe always succeeds here.
+                # The verb-level cases never exercise the old-CLI or non-SSO
+                # branches, so the flag-exists probe always succeeds and the
+                # profile is SSO-shaped here.
                 "LOGIN_HELP_RC": "0",
+                "HELP_TEXT": "--use-device-code",
+                "SSO_SESSION": "dasmac",
+                "SSO_START_URL": "",
             },
         )
         result = subprocess.run(

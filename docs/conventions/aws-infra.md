@@ -158,7 +158,7 @@ through the credentialed server. The rules:
   cost is visible and free.
 
   **Where the SSO session comes from.** A session cannot log in for
-  itself — `aws login` is interactive — so the one verb that reads
+  itself — `aws sso login` is interactive — so the one verb that reads
   cost data, `plan`, **gates its own launch** on credentials that
   resolve: it probes, logs in if the probe fails, re-probes, and
   refuses to launch if that still fails (the retired `housekeeping`
@@ -192,7 +192,7 @@ never the repo — the same not-committed-settings convention as
 tracked file.
 
 The **`aws-docs`** documentation server is credential-free and runs
-local over stdio — no `aws login`, no signing:
+local over stdio — no login, no signing:
 
 ```sh
 claude mcp add aws-docs --scope user -- \
@@ -204,18 +204,24 @@ The **`aws-mcp`** account-action server authenticates with **SigV4**
 which reuses the AWS CLI credentials the templates are deployed with:
 
 ```sh
-aws login --remote
+aws sso login --use-device-code --no-browser
 claude mcp add aws-mcp --scope user -- uvx mcp-proxy-for-aws==1.6.3 \
   https://aws-mcp.us-east-1.api.aws/mcp --metadata AWS_REGION=us-west-2
 ```
 
-**Always log in with `--remote`** (or `--use-device-code` on the older
-`aws sso login`), for every profile. The plain flow reuses whichever
-identity the default browser is signed into, so an admin login can
-complete as the PowerUser and then fail at role-credential fetch;
-`--remote` lets the operator pick the browser, and so the identity.
+**Always log in with `--use-device-code --no-browser`**, for every
+profile — the same flags the `plan` login gate runs, against an SSO
+profile (one carrying `sso_session`, or the legacy inline
+`sso_start_url`; convert one with `aws configure sso`). The plain flow
+reuses whichever identity the default browser is signed into, so an
+admin login can complete as the PowerUser and then fail at
+role-credential fetch; the device-code flow with no auto-opened browser
+lets the operator pick the browser, and so the identity, and the
+operator types a short code on the AWS page instead of pasting a long
+one back.
 
-`aws login` writes short-lived, auto-rotating credentials; the proxy
+`aws sso login` caches a short-lived SSO token from which the CLI
+derives role credentials; the proxy
 signs each MCP request with them. As with the other user-scope MCP
 servers, a newly added server loads on the **next** Claude Code
 session, not mid-session. Credentials are never committed: no access
