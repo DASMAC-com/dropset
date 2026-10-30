@@ -316,9 +316,9 @@ def compose(
             raise LensPreambleError(f"cannot read {extra}: {e}") from e
         if extra == lens_file:
             body = fill_cap(body, cap, str(extra))
-            # Directly above the lens's own task, the last thing read before
-            # acting: buried in the brief, the rule lost every lens of one
-            # fan-out its first call to the compound guard.
+            # The section right before the lens's own task: buried in the
+            # brief, the rule lost every lens of one fan-out its first call
+            # to the compound guard.
             parts.extend(["", FIRST_CALL])
         parts.extend(["", body.rstrip()])
 

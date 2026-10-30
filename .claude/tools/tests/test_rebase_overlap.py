@@ -250,6 +250,12 @@ class RerunVerdictTests(unittest.TestCase):
         v = self._rerun([ro.WASM_BINARY], overlap=[ro.WASM_BINARY], gen=False)
         self.assertTrue(v["artifact_gates"]["run"])
         self.assertIn("make wasm", v["artifact_gates"]["reason"])
+        self.assertNotIn("generation input", v["artifact_gates"]["reason"])
+
+    def test_a_wasm_overlap_keeps_the_generation_input_reason(self):
+        v = self._rerun([ro.WASM_BINARY], overlap=[ro.WASM_BINARY], gen=True)
+        self.assertIn("make wasm", v["artifact_gates"]["reason"])
+        self.assertIn("generation input", v["artifact_gates"]["reason"])
 
     def test_an_empty_overlap_asserts_lint(self):
         self.assertFalse(self._rerun(["frontend/a.ts"])["lint"]["run"])

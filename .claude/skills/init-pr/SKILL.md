@@ -229,8 +229,9 @@ Seven reminders neither states:
 - **A Makefile edit is verified by `make -n` on every target that
   expands the changed variable or recipe, re-run after each edit.**
   Lint (the Makefile linter included), the suites and CI all pass a
-  lazily expanded `=` variable that fails to parse (a bare `#` inside
-  `$(shell …)` starts a comment); only the recipes that expand it fail
+  lazily expanded `=` variable that fails to parse (before GNU make
+  4.3, macOS's 3.81 included, a bare `#` inside `$(shell …)` starts a
+  comment); only the recipes that expand it fail
   ([`history.md`](history.md) → "Makefile dry-run").
 
 ## Steps

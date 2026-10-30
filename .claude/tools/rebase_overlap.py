@@ -296,11 +296,13 @@ def rerun_verdicts(result: dict) -> dict:
         # Git cannot merge it and `wasm-opt` is not reproducible, so the only
         # correct content is a rebuild from the merged tree ("WASM binary
         # overlap").
-        gates = _verdict(
-            True,
+        reason = (
             f"{WASM_BINARY} overlaps — drop its `Rebuild WASM bindings` "
-            "commit, rebase, then `make wasm` and recommit",
+            "commit, rebase, then `make wasm` and recommit"
         )
+        if result["runs_artifact_gates"]:
+            reason += "; base delta also touched a generation input"
+        gates = _verdict(True, reason)
     elif result["runs_artifact_gates"]:
         gates = _verdict(True, "base delta touched a generation input")
     else:

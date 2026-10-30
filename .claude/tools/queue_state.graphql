@@ -1,0 +1,14 @@
+# One PR's landed / queued state, for review-pr step 20's overlap re-check:
+#   gh api graphql -F n=<N> -F query=@.claude/tools/queue_state.graphql
+# `gh pr view --json` has no queue field, and a queued PR on a merge-queue
+# repo reports `autoMergeRequest: null`, so `mergeQueueEntry` is the signal.
+query ($n: Int!) {
+  repository(owner: "DASMAC-com", name: "dropset") {
+    pullRequest(number: $n) {
+      state
+      mergeQueueEntry {
+        state
+      }
+    }
+  }
+}
