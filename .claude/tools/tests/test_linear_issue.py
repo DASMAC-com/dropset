@@ -585,6 +585,22 @@ class TickBoxes(unittest.TestCase):
             _, ticked, _ = li.tick_boxes(self.BODY, [pasted])
             self.assertEqual(ticked, 1, pasted)
 
+    def test_a_box_opening_with_a_code_span_matches_without_the_backticks(self):
+        body = "- [ ] `linear_issue.py tick` matches **stripped** text\n"
+        new, ticked, _ = li.tick_boxes(body, ["linear_issue.py tick matches"])
+        self.assertEqual(ticked, 1)
+        # The stored markup is kept as is.
+        self.assertIn("- [x] `linear_issue.py tick` matches **stripped**", new)
+
+    def test_a_unique_substring_matches_past_the_prefix(self):
+        _, ticked, _ = li.tick_boxes(self.BODY, ["re-run block"])
+        self.assertEqual(ticked, 1)
+
+    def test_an_ambiguous_substring_refuses(self):
+        body = "- [ ] Wire the probe\n- [ ] Rewire the probe\n"
+        with self.assertRaisesRegex(li.LinearIssueError, "2 box"):
+            li.tick_boxes(body, ["the probe"])
+
     def test_a_refusal_ticks_nothing(self):
         # Every box resolves before any is ticked: no half-applied body.
         with self.assertRaises(li.LinearIssueError):

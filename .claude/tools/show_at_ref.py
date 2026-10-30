@@ -163,7 +163,9 @@ def run(argv: list[str]) -> int:
     if args.out:
         try:
             # 0o600 for the same reason the review diff is: whatever the file
-            # held at that ref lands in a shared temp tree.
+            # held at that ref lands in a shared temp tree. A scratch directory
+            # that does not exist yet is created rather than costing a re-run.
+            os.makedirs(os.path.dirname(args.out) or ".", mode=0o700, exist_ok=True)
             fd = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(text)

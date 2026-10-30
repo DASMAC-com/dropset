@@ -412,7 +412,11 @@ budgets, not token budgets at an assumed ratio**: a session's measured
 bytes per token feeds `session_metrics.py`'s token figures and is never
 grounds for moving a cap.
 `make skill-size ARGS=--report` ranks the skills with their siblings,
-which are reported but never capped.
+which are reported but never capped. **A size question at another ref
+takes the narrow form**: `wc -c` on the worktree file, or
+`show_at_ref.py <ref> <path> --count` for the base. Never
+`git show <ref>:<path>`, which prints the whole blob whatever `--stat`
+or `--no-patch` says.
 
 Files already over a cap are **frozen** in `cfg/skill-size-baseline.json`
 at their size on admission, each naming the issue that retires it. A
@@ -1058,9 +1062,10 @@ Two rules keep the cap from turning into deletion:
   so these slipped past it.
 
   - **`git show <ref>:<path>` prints the whole blob** (~3.8k) for what
-    was meant as a metadata peek. `--no-patch` does not help — it
-    suppresses a *diff*, not a blob dump. Grep at the ref, or use
-    `--stat`.
+    was meant as a metadata peek. Neither `--no-patch` nor `--stat`
+    helps — each suppresses a *diff*, never a blob dump. Take a size
+    from `show_at_ref.py --count` (or `wc -c` on the worktree file),
+    and a region from its `--grep` / `--section` / `--slice`.
   - **`git ls-files '*.json' -- sdk idl target`** returned ~2.2k to
     locate one known file. `git ls-files sdk/idl` was the question.
   - **`gh cache list --limit 30`** cost ~1.1k and answered nothing;

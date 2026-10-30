@@ -237,11 +237,17 @@ _BOX = re.compile(r"^(\s*[-*] \[)([ xX])(\] )(.*)$")
 _BOX_PREFIX = re.compile(r"^\s*[-*] \[[ xX]\] ")
 _MENTION_LINK = re.compile(r"\[([A-Z]+-\d+)\]\([^)]*\)")
 _MENTION_URL = re.compile(r"https://linear\.app/[^/\s]+/issue/([A-Z]+-\d+)[^\s)]*")
+# Code-span and emphasis markers, folded out of both sides so a box that opens
+# with a backtick matches a text typed without one (a quoted backtick trips the
+# compound-shell guard). An underscore counts only at a word edge, so
+# `snake_case` keeps its own.
+_MARKUP = re.compile(r"[`*]|(?<!\w)_+|_+(?!\w)")
 
 
 def _normalize(text: str) -> str:
     text = _MENTION_LINK.sub(r"\1", text)
     text = _MENTION_URL.sub(r"\1", text)
+    text = _MARKUP.sub("", text)
     return " ".join(text.split())
 
 
@@ -249,8 +255,9 @@ def tick_boxes(body: str, boxes: list[str]) -> tuple[str, int, int]:
     """Tick each named checklist box in ``body``.
 
     Returns ``(new body, ticked, already ticked)``. Matching is per line on the
-    box's text, mention markup folded and whitespace collapsed — an exact match
-    first, else a prefix. A text names as many boxes as it is passed times, and
+    box's text, mention, code-span and emphasis markup folded and whitespace
+    collapsed — an exact match first, else a prefix, else a substring. A text
+    names as many boxes as it is passed times, and
     must match exactly that many: more matches is ambiguous, fewer is a box
     that is not there, and two texts may not claim one box. A prefix counts
     ticked boxes too, so ``Part 1`` never lands on ``Part 12`` because the
@@ -275,6 +282,8 @@ def tick_boxes(body: str, boxes: list[str]) -> tuple[str, int, int]:
         hits = [(i, m) for i, m in found if _normalize(m.group(4)) == key]
         if not hits:
             hits = [(i, m) for i, m in found if _normalize(m.group(4)).startswith(key)]
+        if not hits:
+            hits = [(i, m) for i, m in found if key in _normalize(m.group(4))]
         if not hits:
             raise LinearIssueError(f"no checklist box reads {key!r}")
         if len(hits) != count:
@@ -648,7 +657,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--box-file",
         default=None,
         help="read box texts from this file, one per line (blank lines skipped) "
-        "— for a box carrying a backtick the shell guard refuses inline",
+        "— for text the shell guard refuses inline (a backtick needs no file: "
+        "the match ignores code-span and emphasis markers)",
     )
     tick_cmd.add_argument(
         "--state",
