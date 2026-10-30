@@ -588,7 +588,7 @@ def create_issue(
     construction, as the ``Claude:`` prefix does.
 
     ``parent`` files the issue as a sub-issue of its governing issue, the
-    ``parentId`` riding the one ``issueCreate`` so a seat session's filing
+    ``parentId`` riding the one ``issueCreate`` so a subscription session's filing
     costs no second write. It is resolved even on a dry run (`resolve_parent`).
     """
     if not title.strip():
