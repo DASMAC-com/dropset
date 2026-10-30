@@ -40,7 +40,10 @@ WIRING = 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py"'
 
 def fail_open(path):
     """The documented fail-open spelling of a guard's command."""
-    return f'test -f "{path}" || exit 0 ; python3 "{path}"'
+    return (
+        f"test -f \"{path}\" || {{ echo 'guard script missing: failing open' "
+        f'>&2 ; exit 0 ; }} ; python3 "{path}"'
+    )
 
 
 OPEN_WIRING = [
@@ -518,6 +521,23 @@ class CliTests(RepoFixture):
         self.assertIn("FAIL-CLOSED no_compound_bash.py", out)
         self.assertNotIn("FAIL-CLOSED no_git_grep.py", out)
 
+    def test_a_good_reference_does_not_mask_a_fail_closed_one(self):
+        """A bare duplicate pointed at a gone path blocks every call now;
+        the open reference beside it keeps the guard `wired`, so only the
+        fail-closed check can name it."""
+        self._write(
+            "settings.local.json",
+            _settings(
+                [*OPEN_WIRING, "python3 /gone/checkout/no_git_grep.py"],
+                deny=hw.REQUIRED_DENY_RULES,
+            ),
+        )
+        result = hw.scan(self.repo, self.no_user)
+        self.assertIn("no_git_grep.py", result["wired"])
+        self.assertEqual(
+            result["fail_closed"], {"no_git_grep.py": [".claude/settings.local.json"]}
+        )
+
     def test_the_report_names_the_script_not_a_settings_diff(self):
         code, out, _ = self._capture(["hook_wiring.py", "--repo", str(self.repo)])
         self.assertIn("no_compound_bash.py", out)
@@ -682,7 +702,11 @@ class FailOpenTests(unittest.TestCase):
     def test_spellings(self):
         cases = {
             fail_open(self.P): True,
+            f'test -f "{self.P}" || exit 0 ; python3 "{self.P}"': True,
             f'[ -f "{self.P}" ] || exit 0 ; python3 "{self.P}"': True,
+            # A message naming the path stops the read before `exit 0`.
+            f'test -f "{self.P}" || {{ echo "{self.P}" >&2 ; exit 0 ; }} ; '
+            f'python3 "{self.P}"': False,
             f'test -f "{self.P}" || {{ echo "guard gone" >&2 ; exit 0 ; }} ; '
             f'python3 "{self.P}"': True,
             f'test -f "{self.P}" || exit 0; python3 "{self.P}"': True,

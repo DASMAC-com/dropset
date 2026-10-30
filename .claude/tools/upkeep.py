@@ -1150,6 +1150,7 @@ LIST_KEYS = (
     "unmatched",
     "dangling",
     "inert",
+    "closed",
     "cruft",
     "candidates",
     "findings",

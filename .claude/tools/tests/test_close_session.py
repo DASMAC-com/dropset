@@ -400,9 +400,11 @@ class LeftoverTests(unittest.TestCase):
                 {"item": "c", "disposition": "dropped"},
                 {"disposition": "filed", "ref": "ENG-1"},
                 "d",
+                {"item": "e", "disposition": "handed", "ref": "Operator"},
             ]
         )
-        self.assertEqual(len(gaps), 5, gaps)
+        self.assertEqual(len(gaps), 6, gaps)
+        self.assertIn("not a live session", gaps[5])
         self.assertIn("'noted in the PR body'", gaps[0])
         self.assertIn("no ENG-###", gaps[1])
         self.assertIn("no ref", gaps[2])

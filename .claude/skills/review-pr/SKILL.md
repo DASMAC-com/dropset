@@ -1937,7 +1937,7 @@ migrations or generation inputs, and whether it spans crates.
      and the close question is the last word (same doc → "A close
      never recites a captured operator action"). Run the tool below
      with `--dry-run`; ask only once it passes, via `AskUserQuestion`
-     — *"N leftovers filed, metrics captured — mark Done? Removing
+     — *"N leftovers disposed, metrics captured — mark Done? Removing
      the worktree ends shell, file writes and memory saves here."* —
      **"Mark Done and remove the worktree (Recommended)"** first,
      **"Mark Done, keep the worktree"** second. Only this approval
@@ -1952,9 +1952,9 @@ migrations or generation inputs, and whether it spans crates.
      (`--keep-worktree` for the second option; the id appends the
      cost line). It refuses with nothing changed when it cannot prove
      the close safe — an undisposed leftover, a dirty tree, an
-     unpushed commit, an open PR, a foreign lock, a failed state
-     write — naming it in `refused`. Exit 2 means Done landed and the
-     removal did not; relay its note.
+     unpushed commit, an open or unreadable PR, a foreign lock, a
+     failed state write — naming it in `refused`. Exit 2 means Done
+     landed and the removal did not; relay its note.
 
    If you want the landed content anyway — a merge resolution, say —
    slice it with `python3 .claude/tools/show_at_ref.py <ref> <path>`;

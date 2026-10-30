@@ -66,9 +66,9 @@ Usage::
 Exit status is grep-shaped, so a caller can branch on it without parsing:
 ``0`` when every committed guard hook can fire and no iTerm file has drifted,
 ``1`` when at least one guard cannot (unwired, mismatched, or misdirected), a
-wired guard fails closed (see :func:`fails_open`), a private-key ``permissions.deny`` rule is in no settings file, or an iTerm file
-has drifted, and ``2`` when the scan itself could
-not run (no main checkout, unreadable settings). A clean scan and a broken
+wired guard fails closed (see :func:`fails_open`), a private-key
+``permissions.deny`` rule is in no settings file, or an iTerm file has
+drifted, and ``2`` when the scan itself could not run (no main checkout, unreadable settings). A clean scan and a broken
 scan must never look alike — that is the failure this tool exists to prevent,
 and it would be ironic to reproduce it.
 
@@ -313,10 +313,10 @@ def fails_open(command: str, token: str) -> bool:
     ``python3 <missing path>`` exits 2, and 2 is the code a ``PreToolUse`` hook
     blocks with — so a bare ``python3 "$CLAUDE_PROJECT_DIR/…"`` wiring blocks
     **every** call once ``$CLAUDE_PROJECT_DIR`` is a removed worktree, ``Write``
-    and a bare ``printenv`` included. The fail-open spelling probes first:
-    ``test -f "<path>" || exit 0 ; python3 "<path>"`` (``[ -f … ]`` and a braced
-    ``|| { echo … >&2 ; exit 0 ; }`` count too), the probe naming the same
-    path token as the execution.
+    and a bare ``printenv`` included. The documented spelling probes first,
+    ``test -f "<path>" || { echo '…' >&2 ; exit 0 ; } ; python3 "<path>"``
+    (a bare ``|| exit 0`` and ``[ -f … ]`` count too), the probe naming the
+    same path token as the execution and the message not naming it.
     """
     try:
         tokens = shlex.split(command, comments=False)
@@ -555,6 +555,10 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
                 token = script_reference(command, script)
                 if token is None:
                     continue
+                # Any reference that runs can block, whatever else is wrong
+                # with it — so a good one elsewhere never masks it.
+                if not fails_open(command, token):
+                    closed.append(source)
                 if not matcher_selects(matcher, expected):
                     bad_matcher.append(source)
                 elif path_status(token, repo) == "missing":
@@ -562,10 +566,8 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
                 else:
                     ok.append(source)
                     covered.update(t for t in expected if matcher_selects(matcher, [t]))
-                    if not fails_open(command, token):
-                        closed.append(source)
-        # A guard that fires is still a hazard when any of its references
-        # would block every call once its script path is gone.
+        # A guard is a hazard when any of its references would block every
+        # call once its script path is gone.
         if closed:
             fail_closed[script] = sorted(set(closed))
         partial = script in REQUIRE_ALL_TOOLS and bool(ok) and covered != expected

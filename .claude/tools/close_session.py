@@ -57,7 +57,7 @@ close requires it: a JSON array with one ``{"item", "disposition", "ref"}``
 object per warning, nit or "left for human review" item the session surfaced
 and did not do — ``[]`` when there were none. Each disposition is ``filed``
 (``ref`` the follow-up's ``ENG-###``), ``handed`` (``ref`` the live session it
-was messaged to) or ``dropped`` (``ref`` the reason). Anything else refuses
+was messaged to, never the operator) or ``dropped`` (``ref`` the reason). Anything else refuses
 before any write — "noted in the PR body" above all, which is a record, not a
 disposition: once the worktree goes the session has no shell left to file
 with. The gate is mechanical so the close question can run it first, as a
@@ -127,6 +127,8 @@ REMOVABLE_STATES = ("done", "canceled", "cancelled")
 # A leftover's disposition, and what its `ref` must be: a filed follow-up's
 # number, the session it was handed to, or the reason it was dropped.
 DISPOSITIONS = ("filed", "handed", "dropped")
+# Handing a leftover to the operator is the ending the ledger exists to stop.
+NOT_A_SESSION = ("operator", "human", "user", "you")
 
 Runner = Callable[[list[str], "str | None"], "tuple[int, str, str]"]
 
@@ -250,6 +252,8 @@ def leftover_gaps(ledger: object) -> list[str]:
             gaps.append(f"{label} is filed but its ref {ref!r} is no ENG-###")
         elif not ref:
             gaps.append(f"{label} is {disposition} with no ref")
+        elif disposition == "handed" and ref.lower() in NOT_A_SESSION:
+            gaps.append(f"{label} is handed to {ref!r}, not a live session")
     return gaps
 
 
@@ -267,7 +271,7 @@ def read_leftovers(path: str | None, state: str) -> int | None:
         return None
     try:
         ledger = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         raise Refusal(f"unreadable --leftovers-file {path}: {e}") from e
     gaps = leftover_gaps(ledger)
     if gaps:

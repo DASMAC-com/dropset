@@ -107,20 +107,24 @@ call the moment `$CLAUDE_PROJECT_DIR` names a removed worktree — Bash
 (a bare `printenv` included), `Write` and `Edit`, memory saves with
 them — leaving the session only Read and MCP. That happened after a
 close removed its worktree and the operator then asked for follow-ups
-to be filed. The guards are advisory (see "The destructive-command
-guard hook" below), so a missing script must not brick a session.
+to be filed. The script layer catches slips (see "The
+destructive-command guard hook" below) and the private-key guard's
+boundary is its deny rules, so a missing script must not brick a
+session.
 Every paste block below therefore probes the path first:
 
 <!-- markdownlint-disable MD013 -->
 
 ```sh
-test -f "$CLAUDE_PROJECT_DIR/.claude/hooks/<guard>.py" || exit 0 ; python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/<guard>.py"
+test -f "$CLAUDE_PROJECT_DIR/.claude/hooks/<guard>.py" || { echo 'guard script missing: failing open' >&2 ; exit 0 ; } ; python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/<guard>.py"
 ```
 
 <!-- markdownlint-enable MD013 -->
 
-`[ -f … ]` and a braced `|| { echo … >&2 ; exit 0 ; }` are accepted
-too, so long as the probe names the same path the command runs. A
+The `echo` to stderr is the message saying why the guard stood down; a
+bare `|| exit 0` and `[ -f … ]` are accepted too, so long as the probe
+names the same path the command runs and the message does not (the
+check reads up to that path for the `exit 0`). A
 wired guard whose reference lacks it reports `FAIL-CLOSED` and exits
 1 — it fires today, but it is the brick waiting for a removal. The
 private-key guard's `permissions.deny` rules hold with no script
@@ -179,7 +183,7 @@ but its `PreToolUse` **wiring** is not. To turn the guard on, add this
         "hooks": [
           {
             "type": "command",
-            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py\" || exit 0 ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py\"",
+            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py\" || { echo 'guard script missing: failing open' >&2 ; exit 0 ; } ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py\"",
             "statusMessage": "Checking for compound shell",
             "timeout": 10
           }
@@ -379,13 +383,13 @@ the same matcher (matching `PreToolUse` hooks all run, order-independent):
         "hooks": [
           {
             "type": "command",
-            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py\" || exit 0 ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py\"",
+            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py\" || { echo 'guard script missing: failing open' >&2 ; exit 0 ; } ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_compound_bash.py\"",
             "statusMessage": "Checking for compound shell",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_git_grep.py\" || exit 0 ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_git_grep.py\"",
+            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_git_grep.py\" || { echo 'guard script missing: failing open' >&2 ; exit 0 ; } ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_git_grep.py\"",
             "statusMessage": "Checking for git grep",
             "timeout": 10
           }
@@ -535,7 +539,7 @@ Wire it under the same `Bash` matcher as the two above:
 ```json
 {
   "type": "command",
-  "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_destructive_bash.py\" || exit 0 ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_destructive_bash.py\"",
+  "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_destructive_bash.py\" || { echo 'guard script missing: failing open' >&2 ; exit 0 ; } ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_destructive_bash.py\"",
   "statusMessage": "Checking for destructive commands",
   "timeout": 10
 }
@@ -597,7 +601,7 @@ self-test —
         "hooks": [
           {
             "type": "command",
-            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_edit_guard.py\" || exit 0 ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_edit_guard.py\"",
+            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_edit_guard.py\" || { echo 'guard script missing: failing open' >&2 ; exit 0 ; } ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_edit_guard.py\"",
             "statusMessage": "Checking edit target",
             "timeout": 10
           }
@@ -684,7 +688,7 @@ alongside theirs under the same matcher:
         "hooks": [
           {
             "type": "command",
-            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_ai_attribution.py\" || exit 0 ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_ai_attribution.py\"",
+            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_ai_attribution.py\" || { echo 'guard script missing: failing open' >&2 ; exit 0 ; } ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_ai_attribution.py\"",
             "statusMessage": "Checking for AI attribution",
             "timeout": 10
           }
@@ -802,7 +806,7 @@ matcher selects:
         "hooks": [
           {
             "type": "command",
-            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_private_key_access.py\" || exit 0 ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_private_key_access.py\"",
+            "command": "test -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_private_key_access.py\" || { echo 'guard script missing: failing open' >&2 ; exit 0 ; } ; python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/no_private_key_access.py\"",
             "statusMessage": "Checking for private-key access",
             "timeout": 10
           }
