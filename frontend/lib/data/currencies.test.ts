@@ -1,9 +1,46 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_STABLECOINS,
+  CURRENCIES,
+  SUPPORTED,
+  stablecoinMatchesQuery,
   tokenIconFallbackUrl,
   tokenIconUrl,
 } from "./currencies";
+
+// The swap picker and /currencies share this predicate. The swap picker's copy
+// once dropped the issuer clause, so a token found by issuer on /currencies
+// was missing from the picker for the same query; pin that clause here.
+describe("stablecoin search", () => {
+  const rows = SUPPORTED.flatMap((code) =>
+    CURRENCIES[code].stablecoins.map((s) => ({ code, s })),
+  );
+
+  it("matches every stablecoin on an empty query", () => {
+    expect(rows.length).toBeGreaterThan(0);
+    for (const { code, s } of rows) {
+      expect(stablecoinMatchesQuery(s, code, "")).toBe(true);
+    }
+  });
+
+  it("matches every stablecoin by each of its issuer names", () => {
+    const issuers = rows.flatMap(({ code, s }) =>
+      s.issuer.name.map((n) => ({ code, s, q: n.toLowerCase() })),
+    );
+    expect(issuers.length).toBeGreaterThan(0);
+    for (const { code, s, q } of issuers) {
+      expect(stablecoinMatchesQuery(s, code, q), `${s.symbol} by ${q}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("matches nothing on a query no field contains", () => {
+    for (const { code, s } of rows) {
+      expect(stablecoinMatchesQuery(s, code, "zzzz-no-such-token")).toBe(false);
+    }
+  });
+});
 
 // Pins the two-source icon resolution: the build-time mirror is preferred, and
 // the issuer's canonical URL stays reachable behind it so a render-side error

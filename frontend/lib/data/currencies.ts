@@ -169,6 +169,23 @@ export const defaultStablecoin = (code: IsoCurrencyCode): string => {
 export const currencyName = (code: IsoCurrencyCode): string =>
   NAME_BY_CODE[code] ?? code;
 
+// The stablecoin search both the swap picker and /currencies run, so a token
+// found by a query on one is found by it on the other: a substring match on
+// symbol, name, mint, currency code and name, or any issuer name. `q` is
+// already trimmed and lower-cased; an empty query matches everything.
+export const stablecoinMatchesQuery = (
+  s: Stablecoin,
+  code: IsoCurrencyCode,
+  q: string,
+): boolean =>
+  !q ||
+  s.symbol.toLowerCase().includes(q) ||
+  s.name.toLowerCase().includes(q) ||
+  s.mint.toLowerCase().includes(q) ||
+  code.toLowerCase().includes(q) ||
+  currencyName(code).toLowerCase().includes(q) ||
+  s.issuer.name.some((n) => n.toLowerCase().includes(q));
+
 // Path to a Twemoji flag SVG mirrored into public/flag-icons by
 // scripts/copy-flags.mjs (1:1 viewBox, rounded-square glyph). Twemoji has
 // distinct artwork for territories whose ISO-official flag is just the

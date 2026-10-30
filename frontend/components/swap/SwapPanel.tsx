@@ -42,7 +42,8 @@ export function SwapPanel() {
   const goToVaults = useGoToVaultsForPair();
   // The vault roster's pair for this swap, if it lists one — independent of
   // swap direction (a vault's base/quote are fixed by the market). Drives the
-  // "view vaults" link, which only shows for a pair vaults can trade.
+  // "view vaults" link; it does not check that a live vault exists, so the
+  // link can land on a vaults page with none on chain yet.
   const vaultPair = findVaultPair(fromStablecoin, toStablecoin);
   const fromMint = stablecoinMint(fromStablecoin);
   const toMint = stablecoinMint(toStablecoin);
@@ -349,11 +350,11 @@ export function SwapPanel() {
         ) : null}
       </div>
       {/* Jump to the Vaults tab pre-filtered to this pair (in the market's own
-          base/quote order), shown only when a vault lists the pair. A plain
-          sibling so the page's gap-3 spaces it evenly above (card) and below
-          (globe). Hidden below `sm` — real mobile devices redirect /vaults
-          back to /swap (see MobileSwapRedirect), so the link would be a
-          no-op at phone widths. */}
+          base/quote order), shown only when the vault roster lists the pair. A
+          plain sibling so the page's gap-3 spaces it evenly above (card) and
+          below (globe). Hidden below `sm` — real mobile devices redirect
+          /vaults back to /swap (see MobileSwapRedirect), so the link would be
+          a no-op at phone widths. */}
       {vaultPair && (
         <div className="hidden justify-center sm:flex">
           <button

@@ -6,10 +6,10 @@ import { ChevronDown, Search, X } from "@/components/icons";
 import { TokenIcon } from "@/components/ui/TokenIcon";
 import {
   CURRENCIES,
-  currencyName,
   type IsoCurrencyCode,
   type Stablecoin,
   SUPPORTED,
+  stablecoinMatchesQuery,
 } from "@/lib/data/currencies";
 import { useAppEvent } from "@/lib/events";
 import { sortByVolumeDesc, useInfoLookup } from "@/lib/hooks/useUsdQuote";
@@ -67,19 +67,13 @@ export function TokenPicker({ side }: { side: Side }) {
     );
 
   const q = query.trim().toLowerCase();
-  const matches = (s: Stablecoin, code: IsoCurrencyCode): boolean =>
-    !q ||
-    s.symbol.toLowerCase().includes(q) ||
-    s.name.toLowerCase().includes(q) ||
-    s.mint.toLowerCase().includes(q) ||
-    code.toLowerCase().includes(q) ||
-    currencyName(code).toLowerCase().includes(q);
-
   const lookup = useInfoLookup();
   const grouped = SUPPORTED.map((code) => ({
     code,
     stables: sortByVolumeDesc(
-      CURRENCIES[code].stablecoins.filter((s) => matches(s, code)),
+      CURRENCIES[code].stablecoins.filter((s) =>
+        stablecoinMatchesQuery(s, code, q),
+      ),
       lookup,
     ),
   })).filter((g) => g.stables.length > 0);
@@ -179,7 +173,7 @@ export function TokenPicker({ side }: { side: Side }) {
     (s) => s.symbol === stablecoin,
   );
   const activeStable =
-    activeStableRaw && matches(activeStableRaw, currency)
+    activeStableRaw && stablecoinMatchesQuery(activeStableRaw, currency, q)
       ? activeStableRaw
       : null;
 
