@@ -202,10 +202,10 @@ WORKTREE_SEGMENT = "/.claude/worktrees/"
 
 SUBSTRATE_BEDROCK = "bedrock"
 SUBSTRATE_SUBSCRIPTION = "subscription"
-# What a launch now writes for the subscription substrate, and the retired
-# spelling still on disk in older markers; both read as the subscription.
-RETIRED_SEAT = "seat"
+# A launch writes `anthropic` for the subscription substrate; `seat` is the
+# retired spelling still on disk in older markers. Both read as the subscription.
 SUBSTRATE_ANTHROPIC = "anthropic"
+RETIRED_SEAT = "seat"
 
 # How every surface labels a subscription session's dollar figure (this report, the
 # digest, `fleet_cost.py`): priced at the Bedrock rates, never charged.
