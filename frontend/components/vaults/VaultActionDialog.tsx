@@ -34,7 +34,7 @@ import {
   type DepositLeg as DepositLegKind,
   type DepositSizing,
   depositSizingError,
-  realizedTotalShares,
+  realizedVault,
   sharesForFraction,
   sizeDeposit,
   sizeWithdraw,
@@ -195,9 +195,11 @@ function PositionDetail({
   // Quote→USD rate for the ≈ readouts; the base leg is valued at refNow into
   // quote first, so every USD figure here shares one basis as Current value.
   const quoteUsd = vault.quoteUsd;
-  const { baseOut, quoteOut } = positionBasket(position, vault);
-  const pnl = positionPnl(position, vault, refNow);
-  const at = allTimePnl(position, vault, refNow);
+  // Valued against the fee-realized share count, as the withdraw below pays.
+  const realized = realizedVault(vault);
+  const { baseOut, quoteOut } = positionBasket(position, realized);
+  const pnl = positionPnl(position, realized, refNow);
+  const at = allTimePnl(position, realized, refNow);
   // grossDeposited only exceeds netDeposits once there's been a withdrawal —
   // until then the two deposit figures are identical, so collapse them.
   const hasWithdrawn = position.grossDeposited > position.netDeposits;
@@ -365,13 +367,9 @@ function WithdrawSection({
     : Math.round(fraction * Number(BPS_SCALE));
   // The float model sees the fee-realized share count, so the value and PnL
   // figures dilute by the leader's fee just as the legs below do.
-  const realizedVault = {
-    ...vault,
-    totalShares: Number(realizedTotalShares(vault.chain)),
-  };
   const floatPreview = withdrawalPreview(
     position,
-    realizedVault,
+    realizedVault(vault),
     refNow,
     fraction,
   );
@@ -931,8 +929,8 @@ export function VaultActionDialog({
                     usdValue={quoteUsdValue}
                     disabled={depositBlocked}
                   />
-                  {/* Total of both legs, quote-denominated — the headline
-                      figure from the attached deposit card. */}
+                  {/* Total of both legs in USD (depositUsd), display only;
+                      the cap check uses the quote-denominated depositValue. */}
                   <div className="flex items-center justify-between gap-2 border-border border-t pt-2">
                     <span className="font-medium text-foreground text-sm">
                       Total Deposit

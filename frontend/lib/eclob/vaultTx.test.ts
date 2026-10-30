@@ -5,11 +5,13 @@ import {
   realizePerfFee,
 } from "@dropset/sdk";
 import { describe, expect, it } from "vitest";
+import type { Vault } from "../data/vaults";
 import { applySlippage } from "./eclobSwap";
 import {
   depositSizingError,
   leaderFloorHolds,
   realizedTotalShares,
+  realizedVault,
   sharesForFraction,
   sizeDeposit,
   sizeWithdraw,
@@ -169,6 +171,20 @@ describe("sizeWithdraw", () => {
 
     const belowHwm = { ...ACCRUED, hwm: VPS * 2n };
     expect(realizedTotalShares(belowHwm)).toBe(ACCRUED.totalShares);
+  });
+});
+
+describe("realizedVault", () => {
+  it("values positions against the share count a withdraw slices", () => {
+    const vault = {
+      totalShares: Number(ACCRUED.totalShares),
+      chain: { ...ACCRUED, index: 2, seq: 5n },
+    } as Vault;
+    const realized = realizedVault(vault);
+    expect(realized.totalShares).toBe(Number(realizedTotalShares(ACCRUED)));
+    expect(realized.totalShares).toBeGreaterThan(vault.totalShares);
+    // The stored counts stay put: only the float model's divisor moves.
+    expect(realized.chain).toBe(vault.chain);
   });
 });
 

@@ -99,19 +99,55 @@ export const depositClosedReason = (
   return null;
 };
 
-// Whether not even one more share fits under the leader's min_leader_share
-// floor: the program's own integer check (as leaderFloorHolds does at send
-// time), so a vault exactly at its floor reads full.
-const atLeaderFloor = (v: Vault): boolean =>
-  v.chain.leaderShares * BigInt(PPM) <
-  BigInt(v.minLeaderSharePpm) * (v.chain.totalShares + 1n);
+// Parts-per-million is how the protocol stores share fractions (1_000_000 =
+// 100%); see Ppm32 in docs/architecture.md.
+export const PPM = 1_000_000n;
+
+// Whether a deposit of `sharesOut` keeps the leader at or above their
+// min_leader_share floor — the program's own integer check, so it decides
+// exactly where the dialog's float warning only estimates. The table's "Full"
+// state and the send-time gate both read it, so the two always agree.
+export function leaderFloorHolds(
+  vault: {
+    leaderShares: bigint;
+    totalShares: bigint;
+    minLeaderSharePpm: number;
+  },
+  sharesOut: bigint,
+): boolean {
+  const totalAfter = vault.totalShares + sharesOut;
+  return (
+    vault.leaderShares * PPM >= BigInt(vault.minLeaderSharePpm) * totalAfter
+  );
+}
+
+// The smallest room, in USD, the contribute surface treats as open. Below it
+// the vault reads full: any real deposit would breach the leader floor at send
+// time, so offering the form would only invite a rejection.
+export const MIN_CONTRIBUTE_ROOM_USD = 1;
+
+// Whether the vault has less than one real deposit of room under the leader's
+// min_leader_share floor: not even one more share fits (the program's own
+// integer check, so a vault exactly at its floor reads full), or the room left
+// is worth under MIN_CONTRIBUTE_ROOM_USD.
+const atLeaderFloor = (v: Vault): boolean => {
+  if (
+    !leaderFloorHolds(
+      { ...v.chain, minLeaderSharePpm: v.minLeaderSharePpm },
+      1n,
+    )
+  )
+    return true;
+  const room = maxOutsideDepositValue(v);
+  return room !== null && room * v.quoteUsd < MIN_CONTRIBUTE_ROOM_USD;
+};
 
 // Why the contribute surface takes no deposit into `v`, or null when it does,
 // in words: the program's gates first (depositClosedReason), then an empty
 // or one-sided vault, which the program would size but the surface holds
 // closed (a one-sided vault would only take the leg it holds, so it waits for
-// the book to rebalance), then a vault at its leader floor, where the program
-// would reject any outside deposit.
+// the book to rebalance), then a vault at (or a sliver short of) its leader
+// floor, where the program would reject any real outside deposit.
 export const contributeClosedReason = (
   market: Pick<VaultMarket, "base" | "quote">,
   v: Vault,
@@ -315,13 +351,9 @@ export const vaultReserveRatio = (v: Vault): number | null =>
 export const vaultRefPrice = (v: Vault): number | null =>
   v.refPrice ?? vaultReserveRatio(v);
 
-// Parts-per-million is how the protocol stores share fractions (1_000_000 =
-// 100%); see Ppm32 in docs/architecture.md.
-const PPM = 1_000_000;
-
 // The min_leader_share floor as a fraction.
 export const leaderFloorFraction = (v: Vault): number =>
-  v.minLeaderSharePpm / PPM;
+  v.minLeaderSharePpm / Number(PPM);
 
 // The leader's current stake as a fraction of all shares — their live
 // skin-in-the-game ratio. null for an empty vault (no shares yet).
