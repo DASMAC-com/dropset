@@ -68,6 +68,7 @@ class FakeRun:
         self.gh_rc = 0
         self.gh_out = None
         self.parents = {1000: 999, 999: SESSION_PID, SESSION_PID: 1}
+        self.comms = {SESSION_PID: "/Users/x/.local/bin/claude", 999: "zsh"}
         self.remove_rc = 0
         self.unlock_rc = 0
         self.lock_rc = 0
@@ -77,6 +78,9 @@ class FakeRun:
 
     def __call__(self, cmd, cwd=None):
         self.calls.append(cmd)
+        if cmd[:3] == ["ps", "-o", "comm="]:
+            name = self.comms.get(int(cmd[-1]))
+            return (0, f"{name}\n", "") if name else (1, "", "")
         if cmd[:2] == ["ps", "-o"]:
             parent = self.parents.get(int(cmd[-1]))
             return (0, f"{parent}\n", "") if parent else (1, "", "")
@@ -551,6 +555,310 @@ class CostLineTests(unittest.TestCase):
         )
         self.assertEqual(rc, 1)
         self.assertEqual(order, [])
+
+
+class ParkTests(unittest.TestCase):
+    OPEN = [{"number": 715, "state": "OPEN", "headRefOid": "abc123"}]
+    BRIEF = (
+        "spec…\n\n**Resume brief**: PR #715 green, held behind #717; owed: enqueue\n"
+    )
+
+    def _park(self, body=BRIEF, session_id=None, dry_run=False, no_exit=False, **fake):
+        fake.setdefault("prs", self.OPEN)
+        runner = FakeRun(**fake)
+        writer = Writer()
+        appended: list[tuple] = []
+        rc, result = close(
+            ns(
+                state=None,
+                park=True,
+                no_exit=no_exit,
+                session_id=session_id,
+                dry_run=dry_run,
+            ),
+            run=runner,
+            writer=writer,
+            pid=1000,
+            alive=lambda _pid: True,
+            coster=lambda sid, _notes: f"cost {sid}\n" if sid else None,
+            appender=lambda issue, line: appended.append((issue, line)),
+            body_reader=lambda _issue: body,
+        )
+        return rc, result, runner, writer, appended
+
+    def assert_untouched(self, runner, writer):
+        self.assertEqual(writer.calls, [])
+        for cmd in runner.calls:
+            self.assertNotIn("remove", cmd)
+            self.assertNotIn("-D", cmd)
+
+    def test_park_succeeds_with_an_open_pr(self):
+        rc, result, runner, writer, appended = self._park(session_id="sid-9")
+        self.assertEqual(rc, 0, result)
+        self.assertIsNone(result["refused"])
+        self.assertTrue(result["park"])
+        self.assertTrue(result["keep_worktree"])
+        self.assertEqual(result["pr"]["number"], 715)
+        self.assertFalse(result["state_written"])
+        self.assertFalse(result["removed"])
+        self.assertEqual(appended, [("ENG-1669", "cost sid-9\n")])
+        self.assertEqual(result["cost_line"], "cost sid-9\n")
+        self.assert_untouched(runner, writer)
+        # The PR is live: no notification thread is touched.
+        self.assertFalse([c for c in runner.calls if c[:2] == ["gh", "api"]])
+
+    def test_park_dry_run_appends_nothing(self):
+        rc, result, _, writer, appended = self._park(session_id="s", dry_run=True)
+        self.assertEqual(rc, 0, result)
+        self.assertEqual(appended, [])
+        self.assertEqual(result["cost_line"], "cost s\n")
+        self.assertEqual(writer.calls, [])
+
+    def test_park_refuses_a_dirty_tree(self):
+        rc, result, runner, writer, appended = self._park(status=" M src/lib.rs\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("uncommitted", result["refused"])
+        self.assertEqual(appended, [])
+        self.assert_untouched(runner, writer)
+
+    def test_park_refuses_an_unpushed_commit(self):
+        rc, result, runner, writer, appended = self._park(unpushed="2")
+        self.assertEqual(rc, 1)
+        self.assertIn("unpushed", result["refused"])
+        self.assertEqual(appended, [])
+        self.assert_untouched(runner, writer)
+
+    def test_park_refuses_without_a_brief(self):
+        rc, result, _, writer, appended = self._park(body="spec only\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("needs a resume brief", result["refused"])
+        self.assertEqual((writer.calls, appended), ([], []))
+
+    def test_park_refuses_a_brief_for_another_pr(self):
+        stale = "**Resume brief**: PR #600 held behind #599\n"
+        rc, result, *_ = self._park(body=stale)
+        self.assertEqual(rc, 1)
+        self.assertIn("does not name PR #715", result["refused"])
+
+    def test_park_refuses_an_unreadable_body(self):
+        def boom(_issue):
+            raise RuntimeError("linear down")
+
+        rc, result = close(
+            ns(state=None, park=True),
+            run=FakeRun(prs=self.OPEN),
+            writer=Writer(),
+            pid=1000,
+            body_reader=boom,
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("could not read the issue body", result["refused"])
+
+    def test_park_refuses_with_no_open_pr(self):
+        rc, result, *_ = self._park(
+            prs=[{"number": 503, "state": "MERGED", "headRefOid": "abc123"}]
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("needs an open PR", result["refused"])
+
+    def test_park_refuses_a_state(self):
+        rc, result, _, writer = run_close(ns(state="In Review", park=True))
+        self.assertEqual(rc, 1)
+        self.assertIn("drop --state", result["refused"])
+        self.assertEqual(writer.calls, [])
+
+    def test_done_and_canceled_with_an_open_pr_still_refuse(self):
+        for state in ("Done", "Canceled"):
+            for keep in (False, True):
+                rc, result, runner, writer = run_close(
+                    ns(state=state, keep_worktree=keep), prs=self.OPEN
+                )
+                self.assertEqual(rc, 1, (state, keep))
+                self.assertIn("#715 is still open", result["refused"])
+                self.assert_untouched(runner, writer)
+
+    def test_no_state_without_park_refuses(self):
+        rc, result, _, writer = run_close(ns(state=None))
+        self.assertEqual(rc, 1)
+        self.assertIn("--state is required", result["refused"])
+        self.assertEqual(writer.calls, [])
+
+    def test_cli_parses_park_without_state(self):
+        args = close_session.parse_args(["close_session.py", "--park"])
+        self.assertTrue(args.park)
+        self.assertFalse(args.no_exit)
+        self.assertIsNone(args.state)
+
+    def test_park_names_its_own_client_from_the_lock(self):
+        rc, result, *_ = self._park()
+        self.assertEqual(rc, 0, result)
+        self.assertEqual(result["client_pid"], SESSION_PID)
+        self.assertTrue(any("ending the client" in n for n in result["notes"]))
+
+    def test_no_exit_leaves_the_client(self):
+        # No lock to read a client from, and none needed.
+        unlocked = PORCELAIN.replace(f"locked {LOCK}\n", "")
+        rc, result, *_ = self._park(no_exit=True, porcelain=unlocked)
+        self.assertEqual(rc, 0, result)
+        self.assertIsNone(result["client_pid"])
+
+    def test_park_refuses_when_the_client_is_unknown(self):
+        unlocked = PORCELAIN.replace(f"locked {LOCK}\n", "")
+        rc, result, _, writer, appended = self._park(session_id="s", porcelain=unlocked)
+        self.assertEqual(rc, 1)
+        self.assertIn("pass --no-exit", result["refused"])
+        self.assertEqual((writer.calls, appended), ([], []))
+
+    def test_park_refuses_another_sessions_lock(self):
+        rc, result, *_ = self._park(parents={1000: 999, 999: 1})
+        self.assertEqual(rc, 1)
+        self.assertIn("another live process", result["refused"])
+
+    def test_park_refuses_a_lock_naming_a_non_client_ancestor(self):
+        # A hand-edited lock naming the shell above the tool: an ancestor, but
+        # not the client, so never the kill target.
+        shell_lock = LOCK.replace(f"pid {SESSION_PID}", "pid 999")
+        rc, result, _, writer, appended = self._park(
+            session_id="s", porcelain=PORCELAIN.replace(LOCK, shell_lock)
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("runs 'zsh', not 'claude'", result["refused"])
+        self.assertEqual((writer.calls, appended), ([], []))
+
+    def test_no_exit_without_park_refuses(self):
+        rc, result, _, writer = run_close(ns(no_exit=True))
+        self.assertEqual(rc, 1)
+        self.assertIn("--no-exit applies only to --park", result["refused"])
+        self.assertEqual(writer.calls, [])
+
+    def test_a_failed_cost_append_keeps_the_client(self):
+        def boom(_issue, _line):
+            raise RuntimeError("linear down")
+
+        rc, result = close(
+            ns(state=None, park=True, session_id="s"),
+            run=FakeRun(prs=self.OPEN),
+            writer=Writer(),
+            pid=1000,
+            coster=lambda *_: "cost\n",
+            appender=boom,
+            body_reader=lambda _issue: self.BRIEF,
+        )
+        # rc 1 is what stops main() from killing the client.
+        self.assertEqual(rc, 1)
+        self.assertIsNone(result["cost_line"])
+        self.assertTrue(any("client left running" in n for n in result["notes"]))
+
+
+class BriefVerdictTests(unittest.TestCase):
+    def test_forms_that_name_the_pr(self):
+        for brief in (
+            "**Resume brief**: PR #715 held behind #717",
+            "Resume brief: [PR 715](https://github.com/o/r/pull/715)",
+            "resume brief — https://github.com/o/r/pull/715 waits on 717",
+        ):
+            close_session.brief_verdict(f"spec\n\n{brief}\n", 715)
+
+    def test_a_longer_number_does_not_match(self):
+        with self.assertRaisesRegex(Refusal, "does not name PR #715"):
+            close_session.brief_verdict("**Resume brief**: PR #7150\n", 715)
+
+    def test_a_later_paragraph_cannot_vouch_for_a_stale_brief(self):
+        body = "**Resume brief**: PR #600 held behind #599\n\n- [ ] reopened as #715\n"
+        with self.assertRaisesRegex(Refusal, "does not name PR #715"):
+            close_session.brief_verdict(body, 715)
+
+    def test_the_last_brief_wins(self):
+        body = "Resume brief: PR #715\n\nResume brief: PR #800\n"
+        close_session.brief_verdict(body, 800)
+        with self.assertRaises(Refusal):
+            close_session.brief_verdict(body, 715)
+
+
+class StillOursTests(unittest.TestCase):
+    def test_a_live_ancestor_client(self):
+        self.assertTrue(close_session.still_ours(SESSION_PID, FakeRun(), 1000))
+
+    def test_a_dead_client_whose_pid_was_reused(self):
+        # The client died and init adopted the tool: its pid is no
+        # longer an ancestor, whatever now runs under it.
+        run = FakeRun(parents={1000: 1})
+        self.assertFalse(close_session.still_ours(SESSION_PID, run, 1000))
+
+    def test_an_ancestor_that_is_not_the_client(self):
+        self.assertFalse(close_session.still_ours(999, FakeRun(), 1000))
+
+
+class EndClientTests(unittest.TestCase):
+    def test_sigterm_then_bounded_wait(self):
+        sent: list[tuple] = []
+        polls = iter([True, True, False])
+        went = close_session.end_client(
+            77,
+            kill=lambda pid, sig: sent.append((pid, sig)),
+            alive=lambda _pid: next(polls),
+            sleep=lambda _s: None,
+        )
+        self.assertTrue(went)
+        self.assertEqual(sent, [(77, close_session.signal.SIGTERM)])
+
+    def test_a_client_that_outlives_the_wait(self):
+        slept: list[float] = []
+        went = close_session.end_client(
+            77, kill=lambda *_: None, alive=lambda _pid: True, sleep=slept.append
+        )
+        self.assertFalse(went)
+        self.assertAlmostEqual(sum(slept), close_session.EXIT_WAIT)
+
+    def test_an_already_gone_client(self):
+        def gone(*_):
+            raise ProcessLookupError
+
+        self.assertTrue(close_session.end_client(77, kill=gone))
+
+    def _main(self, rc, result, went=True, ours=True, want=None):
+        # One parent mock records stdout and the kill in call order.
+        order = mock.MagicMock()
+        order.end.return_value = went
+        err = mock.MagicMock()
+        with (
+            mock.patch.object(close_session, "close", return_value=(rc, result)),
+            mock.patch.object(close_session, "parse_args"),
+            mock.patch.object(close_session, "end_client", order.end),
+            mock.patch.object(close_session, "still_ours", return_value=ours),
+            mock.patch.object(close_session.sys, "stdout", order.out),
+            mock.patch.object(close_session.sys, "stderr", err),
+        ):
+            self.assertEqual(close_session.main(), rc if want is None else want)
+        return order, err
+
+    def test_main_ends_the_client_after_printing(self):
+        order, _ = self._main(0, {"dry_run": False, "client_pid": 4242})
+        names = [c[0] for c in order.mock_calls]
+        self.assertIn("out.flush", names)
+        self.assertEqual(names[-1], "end")
+        self.assertLess(names.index("out.flush"), names.index("end"))
+        order.end.assert_called_once_with(4242)
+
+    def test_main_reports_a_client_that_outlived_the_wait(self):
+        _, err = self._main(
+            0, {"dry_run": False, "client_pid": 4242}, went=False, want=1
+        )
+        self.assertIn("still running after SIGTERM", err.write.call_args[0][0])
+
+    def test_main_spares_a_pid_that_is_no_longer_ours(self):
+        order, err = self._main(
+            0, {"dry_run": False, "client_pid": 4242}, ours=False, want=1
+        )
+        order.end.assert_not_called()
+        self.assertIn("no longer this session's", err.write.call_args[0][0])
+
+    def test_main_never_ends_the_client_on_a_dry_run_or_refusal(self):
+        for rc, dry in ((0, True), (1, False)):
+            order, _ = self._main(rc, {"dry_run": dry, "client_pid": 4242})
+            order.end.assert_not_called()
+        order, _ = self._main(0, {"dry_run": False, "client_pid": None})
+        order.end.assert_not_called()
 
 
 class NotifyingRun(FakeRun):

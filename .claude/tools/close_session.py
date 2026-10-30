@@ -19,15 +19,42 @@ Usage (run from inside the worktree being closed):
     python3 .claude/tools/close_session.py --state 'In Review' --keep-worktree
     python3 .claude/tools/close_session.py --state Done --leftovers-file L.json \
         --dry-run
+    python3 .claude/tools/close_session.py --park --session-id <uuid>
 
-``--state`` is required and never guessed: an implementation session closes to
-Done, an ``architect`` / ``explore`` session hands off at In Review. The issue
+``--state`` is required (unless ``--park``) and never guessed: an
+implementation session closes to Done, an ``architect`` / ``explore`` session hands off at In Review. The issue
 is read from an ``eng-###`` or ``worktree-###`` branch; any other branch (a
 pre-rename ``worktree-ceo-…``) must pass ``--issue``. ``--keep-worktree`` is the report-only ending — the same gates
 and state write, with the removal left to the operator. It is **required** for
 any state other than Done / Canceled: removing a worktree whose issue still
 reads as live is the stranding this tool exists to prevent, and ``upkeep``
 would never collect it.
+
+``--park`` ends a session whose reviewed PR is **held** — behind another PR or
+a CI break (``review-pr``'s park, ``plan``'s hold message) — so its fleet slot
+frees while the PR stays open. It takes no ``--state`` and writes none (the
+issue keeps the state it has), keeps the worktree and branch for the resume,
+dismisses no notification threads (the PR is live), and appends the cost line
+when ``--session-id`` is given. Its gates replace the open-PR one: the tree is
+clean and pushed (the same check as below), the branch has an open PR, and the
+issue body carries a resume brief — the paragraph holding the last
+``resume brief`` mention names that PR after it (``#N``, ``PR N`` or a
+``/pull/N`` link), so a brief left by an earlier park of another PR does not
+count. Each refuses with the missing precondition named. The open-PR refusal
+is unchanged for every other mode, Done and Canceled included.
+
+A park then **ends its own client**, so the slot frees with no operator hand.
+The client is the pid in the harness's worktree lock, proven an ancestor as
+for a removal **and** named ``claude`` (an ancestor alone could be the shell
+or the terminal above it); a missing, foreign or misnamed lock refuses before
+anything is written. It gets SIGTERM with a bounded wait as the tool's
+**last** act, re-proven an ancestor immediately before (a client that died
+meanwhile frees its pid for reuse). The kill follows the cost line because a
+kill any earlier could cut the session off before its durable record is
+written; the printed result is best-effort, since the killed client seldom
+reads it, so a failed cost-line append exits 1 and keeps the client alive to
+see why. A resume works from the transcript and the brief, so the kill is
+reversible. ``--no-exit`` is the human-driven park that keeps the tab.
 
 Every gate runs **before** any write, and each fails closed:
 
@@ -75,8 +102,10 @@ would be. A re-run after an exit 2 appends a second line; remove the tree by
 hand instead.
 
 Prints one JSON object ``{issue, state, worktree, branch, pr, dry_run,
-keep_worktree, refused, leftovers, state_written, notifications, removed,
-cost_line, notes}`` (``leftovers`` the ledger's item count, ``None`` when none
+keep_worktree, park, refused, leftovers, state_written, notifications, removed,
+cost_line, client_pid, notes}`` (``client_pid`` the client a park ends, or
+on a dry run would; ``state`` is ``None`` and ``keep_worktree`` true on a park;
+``leftovers`` the ledger's item count, ``None`` when none
 was read; ``notifications`` the dismissal's one-line summary, ``None`` when no
 PR or no write). Exit 0 on a complete
 close; 1 on a refusal or error before any removal — a gate refusal changes
@@ -98,8 +127,10 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -119,6 +150,12 @@ ISSUE_BRANCH_RE = re.compile(
 )
 ISSUE_RE = re.compile(r"^ENG-\d+$")
 LOCK_PID_RE = re.compile(r"\(pid (\d+)\b")
+BRIEF_RE = re.compile(r"resume brief", re.IGNORECASE)
+# The park's bounded wait for its client to exit after SIGTERM, in seconds.
+EXIT_WAIT = 10.0
+EXIT_POLL = 0.25
+# The harness client's command name, as `ps -o comm=` reports it (basename).
+CLIENT_COMM = "claude"
 NO_UPSTREAM_PREFIX = "no upstream"
 MAX_ANCESTRY = 64
 # Matched by name, lowercased: an unrecognized name fails closed into
@@ -288,6 +325,34 @@ def pr_verdict(prs: list[dict]) -> dict | None:
     if open_prs:
         raise Refusal(f"PR #{open_prs[0].get('number')} is still open")
     return prs[0] if prs else None
+
+
+def park_pr(prs: list[dict]) -> dict:
+    """The open PR a park holds; raises when there is none to hold."""
+    open_prs = [p for p in prs if p.get("state") == "OPEN"]
+    if not open_prs:
+        raise Refusal("--park needs an open PR on the branch; none is open")
+    return open_prs[0]
+
+
+def brief_verdict(body: str, number: int) -> None:
+    """Raises unless the paragraph holding the last ``resume brief`` mention in
+    ``body`` names PR ``number`` after it — as ``#N``, ``PR N`` or a
+    ``/pull/N`` link, so a stored autolink still reads. Bounded at the next
+    blank line, so a later checklist naming the PR cannot vouch for a stale
+    brief."""
+    marks = list(BRIEF_RE.finditer(body))
+    if not marks:
+        raise Refusal(
+            "--park needs a resume brief on the issue (linear_issue.py append "
+            "a '**Resume brief**: PR #N …' naming the PR, the PR waited on, "
+            "gates owed)"
+        )
+    start = marks[-1].start()
+    end = body.find("\n\n", start)
+    brief = body[start : end if end != -1 else len(body)]
+    if not re.search(rf"(?:#|\bPR |/pull/){number}\b", brief):
+        raise Refusal(f"the issue's resume brief does not name PR #{number}")
 
 
 # --- probes ----------------------------------------------------------------
@@ -467,6 +532,12 @@ def append_line(issue: str, line: str) -> None:
     )
 
 
+def read_body(issue: str) -> str:
+    """The issue body, fetched zero-echo, for the park's brief gate."""
+    found = linear_issue.fetch_issue_body(board_batch.env_var("LINEAR_API_KEY"), issue)
+    return found.get("description") or ""
+
+
 def price_session(session_id: str | None, notes: list[str]) -> str | None:
     """The session's cost line, or ``None`` with a note saying why it is
     skipped. Priced before any write, so the close never waits on a
@@ -480,6 +551,106 @@ def price_session(session_id: str | None, notes: list[str]) -> str | None:
         return None
 
 
+def parked(
+    args: argparse.Namespace,
+    result: dict,
+    coster: Callable[[str | None, list[str]], str | None],
+    appender: Callable[[str, str], None],
+) -> tuple[int, dict]:
+    """The park's act, once its gates passed: the cost line and nothing else —
+    no state, no removal, no dismissal of a live PR's threads."""
+    line = coster(args.session_id, result["notes"])
+    if args.dry_run:
+        result["cost_line"] = line
+        result["notes"].append("dry run: park gates passed")
+        return 0, result
+    if line is not None:
+        try:
+            appender(result["issue"], line)
+            result["cost_line"] = line
+        except Exception as e:  # noqa: BLE001 — nothing to undo; keep the client
+            # A killed client never reads this result, so a failed append
+            # must keep it alive to see the note: exit 1, and no kill.
+            result["notes"].append(
+                f"cost line not appended: {e}; client left running so this is "
+                "seen — re-run --park (with --session-id to retry the append, "
+                "without it once the line is in by hand)"
+            )
+            return 1, result
+    result["notes"].append(
+        f"parked: PR #{result['pr'].get('number')} open, state unchanged, "
+        "worktree and branch kept for the resume"
+    )
+    if result["client_pid"] is not None:
+        result["notes"].append(
+            f"ending the client (pid {result['client_pid']}) once this prints; "
+            "resume from the brief in a fresh session"
+        )
+    return 0, result
+
+
+def command_name(run: Runner, pid: int) -> str:
+    """The basename of ``pid``'s command, through ``ps``; ``""`` if unread."""
+    rc, out, _ = run(["ps", "-o", "comm=", "-p", str(pid)], None)
+    return Path(out.strip()).name if rc == 0 else ""
+
+
+def client_pid(
+    reason: str | None,
+    ancestors: set[int],
+    alive: Callable[[int], bool],
+    run: Runner,
+) -> int:
+    """The session's own client, read from the harness's worktree lock,
+    proven an ancestor by :func:`lock_verdict` and named ``CLIENT_COMM`` — an
+    ancestor alone could be a shell or the terminal above the client. Raises
+    when it cannot be."""
+    if reason is None:
+        raise Refusal(
+            "worktree carries no session lock, so the client to end is "
+            "unknown — pass --no-exit and close the tab by hand"
+        )
+    lock_verdict(reason, ancestors, alive)
+    m = LOCK_PID_RE.search(reason)
+    assert m is not None  # lock_verdict refused a pid-less lock
+    pid = int(m.group(1))
+    name = command_name(run, pid)
+    if name != CLIENT_COMM:
+        raise Refusal(
+            f"the lock's pid {pid} runs {name or 'nothing readable'!r}, not "
+            f"{CLIENT_COMM!r}, so it is not ended — pass --no-exit"
+        )
+    return pid
+
+
+def still_ours(pid: int, run: Runner = real_run, start: int | None = None) -> bool:
+    """Re-proves, just before the kill, that ``pid`` is still an ancestor named
+    ``CLIENT_COMM``: a client that died after the gates leaves its pid free for
+    reuse, and the cost-line write between the two can take seconds."""
+    ancestors = ancestor_pids(run, os.getpid() if start is None else start)
+    return pid in ancestors and command_name(run, pid) == CLIENT_COMM
+
+
+def end_client(
+    pid: int,
+    kill: Callable[[int, int], None] = os.kill,
+    alive: Callable[[int], bool] = pid_alive,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """SIGTERM the client, then wait up to ``EXIT_WAIT`` seconds for it to go.
+    Whether it went; this process is its descendant, so a ``True`` is seldom
+    seen."""
+    try:
+        kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    for _ in range(int(EXIT_WAIT / EXIT_POLL)):
+        if not alive(pid):
+            return True
+        sleep(EXIT_POLL)
+    return not alive(pid)
+
+
 def close(
     args: argparse.Namespace,
     run: Runner = real_run,
@@ -488,7 +659,9 @@ def close(
     alive: Callable[[int], bool] = pid_alive,
     coster: Callable[[str | None, list[str]], str | None] = price_session,
     appender: Callable[[str, str], None] = append_line,
+    body_reader: Callable[[str], str] = read_body,
 ) -> tuple[int, dict]:
+    park = getattr(args, "park", False)
     result: dict = {
         "issue": None,
         "state": args.state,
@@ -496,19 +669,45 @@ def close(
         "branch": None,
         "pr": None,
         "dry_run": args.dry_run,
-        "keep_worktree": args.keep_worktree,
+        "keep_worktree": args.keep_worktree or park,
+        "park": park,
         "refused": None,
         "leftovers": None,
         "state_written": False,
         "notifications": None,
         "removed": False,
         "cost_line": None,
+        "client_pid": None,
         "notes": [],
     }
     try:
         worktree, branch, base, porcelain = locate(run)
         result.update(worktree=worktree, branch=branch)
         result["issue"] = issue_for(branch, args.issue)
+        if park:
+            if args.state is not None:
+                raise Refusal("--park writes no state; drop --state")
+        elif getattr(args, "no_exit", False):
+            raise Refusal("--no-exit applies only to --park")
+        if park:
+            prs = read_prs(run, branch)
+            git_safety(run, worktree, branch, prs)
+            result["pr"] = park_pr(prs)
+            try:
+                body = body_reader(result["issue"])
+            except Exception as e:  # noqa: BLE001 — an unread brief is no brief
+                raise Refusal(f"could not read the issue body: {e}") from e
+            brief_verdict(body, int(result["pr"]["number"]))
+            if not getattr(args, "no_exit", False):
+                result["client_pid"] = client_pid(
+                    lock_reasons(porcelain).get(worktree),
+                    ancestor_pids(run, os.getpid() if pid is None else pid),
+                    alive,
+                    run,
+                )
+            return parked(args, result, coster, appender)
+        if args.state is None:
+            raise Refusal("--state is required unless --park")
         if (
             not args.keep_worktree
             and args.state.strip().lower() not in REMOVABLE_STATES
@@ -568,7 +767,17 @@ def close(
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="close_session.py")
     parser.add_argument(
-        "--state", required=True, help="closing state name, e.g. Done or 'In Review'"
+        "--state", default=None, help="closing state name, e.g. Done or 'In Review'"
+    )
+    parser.add_argument(
+        "--park",
+        action="store_true",
+        help="end a held session: PR open, no state write, worktree kept",
+    )
+    parser.add_argument(
+        "--no-exit",
+        action="store_true",
+        help="with --park: leave the client running (a human-driven park)",
     )
     parser.add_argument("--issue", default=None, help="ENG-### when the branch is not")
     parser.add_argument(
@@ -596,7 +805,30 @@ def main() -> int:
     rc, result = close(parse_args(sys.argv))
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
+    sys.stdout.flush()
+    # Last, after every write: a kill any earlier could land before the cost
+    # line, the session's durable record. The printed result is best-effort —
+    # the killed client seldom reads it — which is why a failed append exits 1
+    # above and never reaches here.
+    pid = result["client_pid"]
+    if rc == 0 and not result["dry_run"] and pid is not None:
+        if not still_ours(pid):
+            return _warn(f"client pid {pid} is no longer this session's; not ended")
+        if not end_client(pid):
+            return _warn(
+                f"client pid {pid} still running after SIGTERM and {EXIT_WAIT}s; "
+                "close the tab by hand"
+            )
     return rc
+
+
+def _warn(text: str) -> int:
+    """One stderr line, exit 1; a pipe the dead client took is no error."""
+    try:
+        sys.stderr.write(text + "\n")
+    except BrokenPipeError:
+        pass
+    return 1
 
 
 if __name__ == "__main__":
