@@ -996,10 +996,11 @@ def write_diff(base_ref: str, out_path: Path, only: list[str] | None = None) -> 
     return count_lines(out_path)
 
 
-# The fingerprint's diff form, pinned against user config: no context (so a
-# base edit beside a hunk drops out), renames as delete-plus-add (so a rename
-# moves it), binary payloads (so a binary edit does), one algorithm and fixed
-# prefixes (so `diff.*` settings cannot).
+# The fingerprint's diff form, pinned against user config: one context line
+# (enough to anchor a hunk, so moving an identical block within a file moves
+# it, while a base edit two or more lines away drops out), renames as
+# delete-plus-add (so a rename moves it), binary payloads (so a binary edit
+# does), one algorithm and fixed prefixes (so `diff.*` settings cannot).
 FINGERPRINT_DIFF_ARGS = (
     "--no-renames",
     "--no-ext-diff",
@@ -1007,7 +1008,7 @@ FINGERPRINT_DIFF_ARGS = (
     "--no-color",
     "--no-relative",
     "--binary",
-    "-U0",
+    "-U1",
     "--diff-algorithm=myers",
     "--src-prefix=a/",
     "--dst-prefix=b/",
@@ -1026,9 +1027,10 @@ def diff_fingerprint(base_ref: str) -> str | None:
     taken in :data:`FINGERPRINT_DIFF_ARGS`'s form with each ``index`` line
     dropped (its blob ids move whenever the base edits the same file) and each
     hunk header reduced to ``@@``. So a re-sign keeps it, and so does a rebase
-    whose base changed no line this branch changed; any edit to the branch's
-    own change moves it — whitespace, a rename, a mode change and a binary
-    edit included. Excluded generated families are not in it: step 9
+    whose base changed nothing within a line of this branch's hunks (closer
+    fails closed: a spurious refusal, never a missed edit); any edit to the
+    branch's own change moves it — whitespace, a rename, a mode change, a
+    binary edit and a block moved within its file included. Excluded generated families are not in it: step 9
     regenerates them from inputs that are. Always the full branch: ``--only``
     narrows what a lens reads, never what was reviewed. ``None`` for an empty
     diff.
@@ -2048,7 +2050,7 @@ def gate(
         "diff_path": str(out),
         "diff_lines": diff_lines,
         "diff_empty": diff_empty,
-        # The whole branch's patch id, which `--enqueue` compares (see
+        # The whole branch's normalized-diff hash, which `--enqueue` compares (see
         # `diff_fingerprint`); null on an empty diff or a failed read.
         "fingerprint": fingerprint,
         # The head the fingerprint was taken at: a re-review after a refused

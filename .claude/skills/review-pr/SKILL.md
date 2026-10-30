@@ -1708,10 +1708,10 @@ migrations or generation inputs, and whether it spans crates.
      fingerprint. Otherwise it enqueues the way the base's rules want
      and probes the queue entry, since `--auto` can exit 0 and never
      queue (`history.md` → "Exit 0, never queued"). **`queued`,
-     `merged` and `auto_merge_pending` proceed to step 22's watch;
-     `not_queued` and `probe_failed` re-run it once; `enqueue_failed`
-     reports `attempts` and holds, as does exit 2 (`error:` on stderr,
-     no verdict).**
+     `merged`, `auto_merge_pending` and `probe_failed` (it may have
+     queued) proceed to step 22's watch; `not_queued` re-runs it once;
+     `enqueue_failed` reports `attempts` and holds, as does exit 2
+     (`error:` on stderr, no verdict).**
 
    - **On decline**, leave the PR ready and the issue In Review, and
      note they can merge it (or enable "Merge when ready") themselves.
@@ -1763,10 +1763,11 @@ migrations or generation inputs, and whether it spans crates.
      → the issue **stays In Review**; run the post-merge tail below.
    - **`closed`** → abandoned, not landed; skip the tail. The close is
      `/wrap`'s.
-   - **`not_queued`** → when `not_queued.classification` is present an
-     earlier cycle failed and this watch began too late to see it: branch
-     on its `cause` as the `dequeued` bullet does. Otherwise re-run step 20's
-     `--enqueue`, then the watch — once; a second `not_queued` holds.
+   - **`not_queued`**, acted on once (a second holds) → when
+     `not_queued.classification` is present an earlier cycle failed and
+     this watch began too late to see it: branch on its `cause` as the
+     `dequeued` bullet does, unless you already fixed that failure.
+     Otherwise re-run step 20's `--enqueue`, then the watch.
    - **`conflicting`** (or `dequeue_reason: merge_conflict`) → step 2's
      rebase straight from `dequeue.base_gained`, then re-run; on
      `dequeue.error`, read by hand only what is `null`.

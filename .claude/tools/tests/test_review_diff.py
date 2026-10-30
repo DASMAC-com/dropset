@@ -602,6 +602,16 @@ class GateTests(unittest.TestCase):
         git(self.repo, "commit", "-q", "-m", "Binary edit")
         moved("binary edit")
 
+    def test_an_identical_line_moved_within_a_base_file_moves_the_fingerprint(self):
+        """A guard added before an early return, then moved after it: the
+        added line is the same, only its anchor differs."""
+        self.commit("f.py", "def f():\n    a()\n    return\n    b()\n", "Base f")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.commit("f.py", "def f():\n    a()\n    guard()\n    return\n    b()\n")
+        before = rd.diff_fingerprint("origin/main")
+        self.commit("f.py", "def f():\n    a()\n    return\n    guard()\n    b()\n")
+        self.assertNotEqual(rd.diff_fingerprint("origin/main"), before)
+
     def test_an_empty_diff_has_no_fingerprint(self):
         self.assertIsNone(rd.gate("main", self.out, fetch=False)["fingerprint"])
 
