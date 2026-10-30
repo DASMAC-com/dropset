@@ -66,8 +66,8 @@ marker (or an unrecognized one) is ``unattributed`` and is never priced into
 the Bedrock total — that is the share the bill comparison cannot account for,
 reported rather than guessed. ``explore`` landed here until it wrote a marker;
 an older explore worktree still does. A base-repo session with no record reads
-as ``seat`` — unless its bootstrap prompt names a ``chore`` whose tag marker
-carries the ``helper`` tier, which then decides. A session launched before the
+as ``seat`` — unless its bootstrap prompt names an issue whose tag marker
+carries the ``helper`` tier a ``chore`` launch writes, which then decides. A session launched before the
 record still classifies the old way.
 
 **The bill is matched per service, not by a fixed list of names.** Cost
@@ -184,7 +184,9 @@ def classify(
     A base-checkout session with no record but an ``issue`` from its bootstrap
     prompt reads that issue's tag marker when its tier is ``helper`` — the
     marker a ``chore`` launch writes — so a Bedrock chore is not metered as
-    seat. A task's marker on the same number has no tier and is not read.
+    seat. The prompt's verb is not checked, and the marker holds only the
+    latest chore launch's substrate; both matter only to a record-less
+    session. A task's marker on the same number has no tier and is not read.
     """
     recorded = sm.read_substrate_marker(cwd, session_id)
     if recorded is None and sm.base_repo_from_cwd(cwd) is None:

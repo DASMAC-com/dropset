@@ -1785,7 +1785,9 @@ migrations or generation inputs, and whether it spans crates.
      names a non-required holdout (empty means the hold is elsewhere —
      review or `last.merge_state_status`). Re-run step 20's
      `--enqueue`, whose plain `gh pr merge` goes first under the merge
-     queue, then the watch.
+     queue, then the watch — **once**: with `pending_checks` empty and
+     `merge_state_status` `BLOCKED`, a re-enqueue only re-enables
+     auto-merge, so report the hold and stop instead.
    - **`queued_no_group`** → the entry exists (`last.entry_state`,
      `last.entry_position`) but no merge-group run started within
      `--await-group-seconds`; report it and restart the watch — a
