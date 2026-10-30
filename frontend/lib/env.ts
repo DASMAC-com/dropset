@@ -57,21 +57,45 @@ export const CLUSTER: Cluster =
     : "mainnet";
 export const IS_LOCALNET = CLUSTER === "localnet";
 
-// External APIs. With a server-side key set (DFLOW_API_KEY, JUPITER_API_KEY),
-// next.config.ts sets the matching *_PROXY flag and the browser calls the
-// app's own route handler, which adds the key; without one it calls the
-// keyless public endpoint directly, as before the handlers existed. An
-// explicit URL override wins over both, for a staging server or an
-// alternative provider. A route is relative: resolve it with `absoluteUrl`
-// before handing it to `new URL`.
+// External APIs. next.config.ts sets a *_PROXY flag when the browser should
+// call the app's own route handler, which adds the server-side key: DFlow's
+// when DFLOW_ENDPOINT=production, Jupiter's when JUPITER_API_KEY is set.
+// Without the flag the browser calls the keyless public endpoint directly. An
+// explicit URL override wins over the keyless endpoint, for a staging server
+// or an alternative provider; DFlow's production endpoint refuses one, since
+// it would bypass the key (next.config.ts refuses it first, at build time). A
+// route is relative: resolve it with `absoluteUrl` before handing it to
+// `new URL`.
 const DFLOW_PROXY = process.env.NEXT_PUBLIC_DFLOW_PROXY === "1";
 const JUPITER_PROXY = process.env.NEXT_PUBLIC_JUPITER_PROXY === "1";
-export const DFLOW_QUOTE_URL =
-  process.env.NEXT_PUBLIC_DFLOW_QUOTE_URL?.trim() ||
-  (DFLOW_PROXY ? "/api/dflow/quote" : DFLOW_QUOTE_URLS.keyless);
-export const DFLOW_ORDER_URL =
-  process.env.NEXT_PUBLIC_DFLOW_ORDER_URL?.trim() ||
-  (DFLOW_PROXY ? "/api/dflow/order" : DFLOW_ORDER_URLS.keyless);
+const dflowUrl = (
+  name: string,
+  value: string | undefined,
+  route: string,
+  keyless: string,
+): string => {
+  const override = value?.trim();
+  if (override && DFLOW_PROXY) {
+    throw new Error(
+      `${name} is refused on DFlow's production endpoint; unset it, or build with DFLOW_ENDPOINT=dev`,
+    );
+  }
+  return override || (DFLOW_PROXY ? route : keyless);
+};
+// Each NEXT_PUBLIC_ read stays a literal property access, which Next replaces
+// with its value in the browser bundle.
+export const DFLOW_QUOTE_URL = dflowUrl(
+  "NEXT_PUBLIC_DFLOW_QUOTE_URL",
+  process.env.NEXT_PUBLIC_DFLOW_QUOTE_URL,
+  "/api/dflow/quote",
+  DFLOW_QUOTE_URLS.keyless,
+);
+export const DFLOW_ORDER_URL = dflowUrl(
+  "NEXT_PUBLIC_DFLOW_ORDER_URL",
+  process.env.NEXT_PUBLIC_DFLOW_ORDER_URL,
+  "/api/dflow/order",
+  DFLOW_ORDER_URLS.keyless,
+);
 export const JUPITER_SEARCH_URL =
   process.env.NEXT_PUBLIC_JUPITER_SEARCH_URL?.trim() ||
   (JUPITER_PROXY ? "/api/jupiter/search" : JUPITER_SEARCH_URLS.keyless);

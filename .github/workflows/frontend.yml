@@ -13,6 +13,11 @@ env:
   # step-scoped RPC_URL rather than borrowing from here — so this block stays
   # a placeholder set, and pointing the gate at a dedicated provider later
   # cannot leak that provider's URL into the built bundle.
+  #
+  # `next build` is a mainnet production build, which must name its DFlow
+  # endpoint (lib/server/apiProxy.ts `dflowEndpoint`); the keyless dev one
+  # needs no secret, and a fork PR receives none.
+  DFLOW_ENDPOINT: 'dev'
   NEXT_PUBLIC_GET_MULTIPLE_ACCOUNTS_BATCH_SIZE: '10'
   NEXT_PUBLIC_RPC_URL: 'https://api.mainnet-beta.solana.com'
   NEXT_PUBLIC_WS_URL: 'wss://api.mainnet-beta.solana.com'

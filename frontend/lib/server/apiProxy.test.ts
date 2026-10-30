@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DFLOW_ORDER_UPSTREAM,
   DFLOW_QUOTE_UPSTREAM,
+  dflowEndpoint,
   forward,
   JUPITER_SEARCH_UPSTREAM,
   type KeyedUpstream,
@@ -72,6 +73,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("keeps DFlow's routes keyed-only and Jupiter's keyless-capable", () => {
+  expect(DFLOW_QUOTE_UPSTREAM.keylessUrl).toBeNull();
+  expect(DFLOW_ORDER_UPSTREAM.keylessUrl).toBeNull();
+  expect(JUPITER_SEARCH_UPSTREAM.keylessUrl).not.toBeNull();
+});
+
 const PROXIES: [string, KeyedUpstream][] = [
   ["DFlow quote", DFLOW_QUOTE_UPSTREAM],
   ["DFlow order", DFLOW_ORDER_UPSTREAM],
@@ -98,10 +105,16 @@ describe.each(PROXIES)("%s proxy", (_, upstream) => {
     expect(await visible(res)).not.toContain(KEY);
   });
 
-  it("forwards keyless to the public endpoint when the key is unset", async () => {
+  it("forwards keyless when it may, and refuses when it is keyed-only", async () => {
     const seen = stubUpstream(ok);
     const res = await forward(passThrough(upstream), request("query=M"), {});
 
+    if (upstream.keylessUrl === null) {
+      expect(seen).toHaveLength(0);
+      expect(res.status).toBe(500);
+      expect(await res.text()).toContain(upstream.keyVar);
+      return;
+    }
     expect(seen[0]?.url).toBe(`${upstream.keylessUrl}?query=M`);
     expect(seen[0]?.headers).not.toHaveProperty("x-api-key");
     expect(res.status).toBe(200);
@@ -351,14 +364,124 @@ describe("serverKey", () => {
   });
 });
 
+describe("dflowEndpoint", () => {
+  const PROD_BUILD = { NODE_ENV: "production" };
+
+  it("defaults to dev outside a mainnet production build", () => {
+    expect(dflowEndpoint({})).toBe("dev");
+    expect(dflowEndpoint({ NODE_ENV: "development" })).toBe("dev");
+    expect(
+      dflowEndpoint({ ...PROD_BUILD, NEXT_PUBLIC_CLUSTER: "localnet" }),
+    ).toBe("dev");
+  });
+
+  it("refuses a mainnet production build that names no endpoint", () => {
+    expect(() => dflowEndpoint(PROD_BUILD)).toThrow(/DFLOW_ENDPOINT is unset/);
+    expect(() =>
+      dflowEndpoint({ ...PROD_BUILD, NEXT_PUBLIC_CLUSTER: "mainnet" }),
+    ).toThrow(/DFLOW_ENDPOINT is unset/);
+    // A key alone no longer selects the production endpoint.
+    expect(() => dflowEndpoint({ ...PROD_BUILD, DFLOW_API_KEY: KEY })).toThrow(
+      /DFLOW_ENDPOINT is unset/,
+    );
+  });
+
+  it("keeps dev keyless even with a key set", () => {
+    expect(
+      dflowEndpoint({
+        ...PROD_BUILD,
+        DFLOW_ENDPOINT: "dev",
+        DFLOW_API_KEY: KEY,
+      }),
+    ).toBe("dev");
+  });
+
+  it("requires the key on the production endpoint", () => {
+    expect(() =>
+      dflowEndpoint({ ...PROD_BUILD, DFLOW_ENDPOINT: "production" }),
+    ).toThrow(/requires DFLOW_API_KEY/);
+    expect(() =>
+      dflowEndpoint({ DFLOW_ENDPOINT: "production", DFLOW_API_KEY: " " }),
+    ).toThrow(/requires DFLOW_API_KEY/);
+    expect(
+      dflowEndpoint({
+        ...PROD_BUILD,
+        DFLOW_ENDPOINT: " production ",
+        DFLOW_API_KEY: KEY,
+      }),
+    ).toBe("production");
+  });
+
+  it("refuses a URL override on the production endpoint", () => {
+    const prod = { DFLOW_ENDPOINT: "production", DFLOW_API_KEY: KEY };
+    expect(() =>
+      dflowEndpoint({ ...prod, NEXT_PUBLIC_DFLOW_QUOTE_URL: "https://x.test" }),
+    ).toThrow(/refuses NEXT_PUBLIC_DFLOW_QUOTE_URL/);
+    expect(() =>
+      dflowEndpoint({ ...prod, NEXT_PUBLIC_DFLOW_ORDER_URL: "https://x.test" }),
+    ).toThrow(/refuses NEXT_PUBLIC_DFLOW_ORDER_URL/);
+    expect(
+      dflowEndpoint({
+        DFLOW_ENDPOINT: "dev",
+        NEXT_PUBLIC_DFLOW_QUOTE_URL: "https://x.test",
+      }),
+    ).toBe("dev");
+  });
+
+  it("treats a blank selector as unset", () => {
+    expect(dflowEndpoint({ DFLOW_ENDPOINT: "  " })).toBe("dev");
+    expect(() =>
+      dflowEndpoint({ ...PROD_BUILD, DFLOW_ENDPOINT: "  " }),
+    ).toThrow(/DFLOW_ENDPOINT is unset/);
+  });
+
+  it("refuses an unresolved key reference under every selection", () => {
+    const ref = "op://vault/item/credential";
+    for (const selection of [{}, { DFLOW_ENDPOINT: "dev" }]) {
+      expect(() => dflowEndpoint({ ...selection, DFLOW_API_KEY: ref })).toThrow(
+        /DFLOW_API_KEY holds an unresolved 1Password reference/,
+      );
+    }
+    expect(() =>
+      dflowEndpoint({ DFLOW_ENDPOINT: "production", DFLOW_API_KEY: ref }),
+    ).toThrow(/DFLOW_API_KEY holds an unresolved 1Password reference/);
+  });
+
+  it("names both overrides, and ignores blank ones", () => {
+    const prod = { DFLOW_ENDPOINT: "production", DFLOW_API_KEY: KEY };
+    expect(() =>
+      dflowEndpoint({
+        ...prod,
+        NEXT_PUBLIC_DFLOW_QUOTE_URL: "https://x.test",
+        NEXT_PUBLIC_DFLOW_ORDER_URL: "https://x.test",
+      }),
+    ).toThrow(/NEXT_PUBLIC_DFLOW_QUOTE_URL and NEXT_PUBLIC_DFLOW_ORDER_URL/);
+    expect(dflowEndpoint({ ...prod, NEXT_PUBLIC_DFLOW_QUOTE_URL: " " })).toBe(
+      "production",
+    );
+  });
+
+  it("refuses an unknown endpoint", () => {
+    expect(() => dflowEndpoint({ DFLOW_ENDPOINT: "prod" })).toThrow(
+      /production or dev/,
+    );
+  });
+});
+
 describe("proxyFlags", () => {
-  it("routes the browser through a proxy only when its key is set", () => {
+  it("routes DFlow by its endpoint and Jupiter by its key", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(proxyFlags({})).toEqual({
       NEXT_PUBLIC_DFLOW_PROXY: "",
       NEXT_PUBLIC_JUPITER_PROXY: "",
     });
     expect(proxyFlags({ DFLOW_API_KEY: KEY })).toEqual({
+      NEXT_PUBLIC_DFLOW_PROXY: "",
+      NEXT_PUBLIC_JUPITER_PROXY: "",
+    });
+    expect(
+      proxyFlags({ DFLOW_ENDPOINT: "production", DFLOW_API_KEY: KEY }),
+    ).toEqual({
       NEXT_PUBLIC_DFLOW_PROXY: "1",
       NEXT_PUBLIC_JUPITER_PROXY: "",
     });
@@ -368,9 +491,20 @@ describe("proxyFlags", () => {
     });
   });
 
+  it("fails on a refused DFlow selection", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(() => proxyFlags({ NODE_ENV: "production" })).toThrow(
+      /DFLOW_ENDPOINT/,
+    );
+  });
+
   it("logs hostnames, never the key", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    proxyFlags({ DFLOW_API_KEY: KEY, JUPITER_API_KEY: KEY });
+    proxyFlags({
+      DFLOW_ENDPOINT: "production",
+      DFLOW_API_KEY: KEY,
+      JUPITER_API_KEY: KEY,
+    });
     const lines = log.mock.calls.flat().join("\n");
     expect(lines).toContain(
       "keyed, via the route handler to quote-api.dflow.net",
