@@ -845,8 +845,9 @@ table it reads against, with each verb's default substrate, is in
   ask is never restated at close; one not yet captured is filed first
   (Urgent, Backlog, the curator messaged) and then named with its
   number as a smell — `uncaptured operator action, filed as N`. A
-  session that cannot file names the action in full and says so;
-  silence is the only wrong answer.
+  session that cannot file names the action in full and says so —
+  the one exception to the no-recital rule; silence is the only
+  wrong answer.
 - **The close question is the last word.** Nothing operator-facing
   follows the close yes: everything a session would have said there
   is filed or asked **before** the close question, and the only text

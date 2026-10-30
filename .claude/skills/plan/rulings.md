@@ -305,11 +305,14 @@ the document's state sections.
    per-tab. **Todo is the dispatch authorization** (confirmed
    2026-10-28): a pre-authorized wave needs no ask, and once the
    day is started the scheduler dispatches at will on the
-   priorities as they stand — **save the start of the day**
+   priorities as they stand (per wave, each one ask, when the
+   trigger answered "this wave only") — **save the start of the day**
    (2026-10-29), when `fleet resume` and the first wave wait for
    the operator's start trigger in the bootstrap ask, the launcher
-   messaged before that ask. A warm bootstrap of a started day asks
-   no trigger; a machine restart asks it again. On the operator's
+   messaged before that ask. The answer is recorded as the
+   document's `Fleet start:` line; a warm bootstrap finding it, with
+   the fleet live, asks no trigger, and a machine restart asks it
+   again. On the operator's
    start trigger, run `fleet resume` **before** dispatching new
    tasks. A session resumed outside its verb has no secrets.
 1. **The antichain practice**: dispatch file-disjoint sets, and

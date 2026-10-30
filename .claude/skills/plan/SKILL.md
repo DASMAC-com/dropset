@@ -106,8 +106,10 @@ operator lever, never this mechanism.
   spill and slice), run
   `ListAgents` — and skip the once-a-day duties (the fold line,
   the audit heartbeat, the parked counts, the upkeep report, the
-  launcher's message, step 8). No stamp
-  means a full bootstrap.
+  launcher's message, step 8) — **save the start trigger**,
+  asked alone when the document carries no `Fleet start:` line
+  for today or `ListAgents` shows no fleet session live (a
+  machine restart; step 5). No stamp means a full bootstrap.
 
 ## Steps
 
@@ -439,11 +441,16 @@ operator's: `fleet resume` and the first wave wait for step 8's
 start trigger, then `fleet resume` runs first and the wave after
 it. On "start now and dispatch at will" the day runs with no
 per-wave ask; on "this wave only" each later wave is one ask; on
-"not yet" nothing is dispatched and the curator runs regardless.
-A curator tick moving an issue to Todo before the trigger joins
-the first wave. A warm bootstrap of a day already started asks no
-trigger; a machine restart mid-day asks it again, since the fleet
-is down. The gate is two checks: state Todo
+"not yet" nothing is dispatched and the curator runs regardless,
+until the operator's word in this tab starts the day. **Record the
+answer** as one `Fleet start: <YYYY-MM-DD>, at will` (or
+`, per wave`) line beside the bootstrap stamp, kept by every
+close-out rewrite, so a cycled session knows the day is started
+and in which mode. A curator tick moving an issue to Todo before
+the trigger is dispatchable at the trigger like any Todo. A warm
+bootstrap finding today's line, with the fleet live, asks no
+trigger; one finding no line, or no fleet session live (a machine
+restart mid-day), asks it again. The gate is two checks: state Todo
 (`linear_gate.py approvals ENG-<n>…`, exit 1 if any is not; In
 Progress or In Review is a resume) and unblocked (Next, no
 pending hold: step 2). An open
@@ -587,7 +594,8 @@ the decision context does not — the analyst rejects those.
 **8. Drain the legacy findings, and ask once.** **At bootstrap,
 say each count, never a listing.** **The consolidated ask**
 carries only what needs the operator's word, **led by the start
-trigger** (a cold bootstrap only — a started day skips it): "ready
+trigger** (skipped only when step 5's `Fleet start:` line for
+today is present and the fleet is live): "ready
 to resume the fleet (N sessions) and dispatch the first wave
 (the file-disjoint set, named)?", answered **"Start now and dispatch at
 will today (Recommended)"**, **"Start now, this wave only; ask
