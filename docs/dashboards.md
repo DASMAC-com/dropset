@@ -13,6 +13,11 @@ USDC, our own maker at roughly \$100 top of book. Everything here is
 sized to that. See `docs/data-feeds.md` for the ingestion framework and
 `docs/market-making.md` for the quoting engine.
 
+The operator's surfaces split by direction: **Grafana reads, the TUI
+writes.** Grafana is the read surface, dashboards over the market-data
+store; the TUI is the write and control plane. A new read view lands
+here as a Grafana panel, never as a new TUI pane.
+
 ## 1. The rule that governs every per-pair panel
 
 Every per-pair panel shows **all four MVP FX pairs**, always:
