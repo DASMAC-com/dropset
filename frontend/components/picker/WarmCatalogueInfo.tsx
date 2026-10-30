@@ -1,6 +1,6 @@
 "use client";
 
-import { useCatalogueInfoRefresh } from "@/lib/hooks/useUsdQuote";
+import { useCatalogueInfoRefresh } from "@/lib/hooks/useTokenInfo";
 
 // Warms the catalogue's Jupiter prices and volumes (the rows' volume sort,
 // USD readouts and liquidity badges) while a picker is open. Render it

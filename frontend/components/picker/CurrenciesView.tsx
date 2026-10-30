@@ -24,6 +24,7 @@ import {
   type Stablecoin,
   SUPPORTED,
   shortenMint,
+  stablecoinMatchesQuery,
 } from "@/lib/data/currencies";
 import { useAppEvent } from "@/lib/events";
 import { EXPLORER_NAME, explorerTokenUrl } from "@/lib/explorer";
@@ -36,7 +37,7 @@ import {
   useCatalogueInfoRefresh,
   useInfoLookup,
   useTokenInfo,
-} from "@/lib/hooks/useUsdQuote";
+} from "@/lib/hooks/useTokenInfo";
 import { type Side, useSwapStore, useSwapStoreApi } from "@/lib/store";
 import { useFlagColor } from "@/lib/ui/flagColor";
 import { groupedRowClassName } from "@/lib/ui/groupedRows";
@@ -110,8 +111,7 @@ const xHref = (handle: string) => `https://x.com/${handle}`;
 
 // Strict mode (driven by `?symbol=<SYM>` from the picker's `?` link) matches
 // only on exact symbol equality so EURC doesn't surface EURCV alongside it.
-// Fuzzy mode (the default) keeps the existing substring search across symbol,
-// name, mint, currency code, and issuer.
+// Fuzzy mode (the default) is the swap picker's search, stablecoinMatchesQuery.
 const matches = (
   s: Stablecoin,
   code: IsoCurrencyCode,
@@ -120,14 +120,7 @@ const matches = (
 ): boolean => {
   if (!q) return true;
   if (strict) return s.symbol.toLowerCase() === q;
-  return (
-    s.symbol.toLowerCase().includes(q) ||
-    s.name.toLowerCase().includes(q) ||
-    s.mint.toLowerCase().includes(q) ||
-    code.toLowerCase().includes(q) ||
-    currencyName(code).toLowerCase().includes(q) ||
-    s.issuer.name.some((n) => n.toLowerCase().includes(q))
-  );
+  return stablecoinMatchesQuery(s, code, q);
 };
 
 // Pin the generic shared header to this table's sort keys so literal

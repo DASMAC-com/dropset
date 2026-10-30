@@ -8,7 +8,7 @@ import {
   truncateTokenName,
 } from "@/lib/data/currencies";
 import { EXPLORER_NAME, explorerTokenUrl } from "@/lib/explorer";
-import { useLiquidityLookup } from "@/lib/hooks/useUsdQuote";
+import { useLiquidityLookup } from "@/lib/hooks/useTokenInfo";
 import { TokenInfoLink } from "./TokenInfoLink";
 
 // Shared stablecoin-row identity block used by the dropdown TokenPicker and

@@ -2,7 +2,7 @@
 
 import { formatBalanceDisplay } from "@/lib/format/balance";
 import { useAllBalances } from "@/lib/hooks/useAllBalances";
-import { useInfoLookup } from "@/lib/hooks/useUsdQuote";
+import { useInfoLookup } from "@/lib/hooks/useTokenInfo";
 
 // Right-aligned wallet balance for a stablecoin row inside a token picker.
 // Renders the atomic balance plus the USD equivalent stacked below it

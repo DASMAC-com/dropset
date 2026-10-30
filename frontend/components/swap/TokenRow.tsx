@@ -19,7 +19,7 @@ import {
   type UsdQuote,
   useLiquidityLookup,
   useUsdQuote,
-} from "@/lib/hooks/useUsdQuote";
+} from "@/lib/hooks/useTokenInfo";
 import type { QuoteState } from "@/lib/quote";
 import { type Side, useSwapStore } from "@/lib/store";
 import { FromBalanceButtons } from "./FromBalanceButtons";

@@ -17,7 +17,7 @@ const [FROM = "", TO = ""] = ALL_STABLECOIN_MINTS;
 // The module caches at module scope, so each case imports a fresh copy.
 const load = async () => {
   vi.resetModules();
-  return import("./useUsdQuote");
+  return import("./useTokenInfo");
 };
 
 const queried = (fetchMock: ReturnType<typeof vi.fn>): string[][] =>
