@@ -26,8 +26,8 @@ the lane's own body. Paste the brief verbatim **only** into an agent
 without file access. Pasting it into a 12-agent audit cost about 18k
 output tokens, at the expensive tier, and bought nothing the pointer
 does not. A fold run briefed by pointer worked. review-pr's lens briefs
-already work this way. A skeptic's findings, which earlier lanes
-already wrote out, go the same way, as a path (the file-handoff case
+already work this way. A skeptic's findings, once collected to
+a file, go the same way, as a path (the file-handoff case
 under "Pass the material inline" below).
 
 **Prepend this standing brief to *every* `Agent` prompt:**
@@ -150,8 +150,8 @@ the default, mechanical lanes pass `sonnet`.
 **Pass the material inline.** Whatever the agent must reason over —
 the diff, the commit log, the issue set — goes **in the prompt**, so
 no agent re-fetches it by shelling out. (For content too large or
-special-character-laden to sit inline cleanly, or already written to
-the scratchpad by an earlier lane — a skeptic's findings — use the
+special-character-laden to sit inline cleanly, or already collected to
+the scratchpad from earlier lanes — a skeptic's findings — use the
 file-handoff pattern from the shell rules and pass the path.)
 
 **Do the work yourself — do not spawn sub-agents of your own.** If the

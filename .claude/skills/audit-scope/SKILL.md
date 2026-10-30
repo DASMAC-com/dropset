@@ -424,7 +424,8 @@ Optional (ask on a scoped run if not provided):
      ```
 
      A finding with **any** `MATCH`, in any state, is not
-     refiled: a resolved match was already triaged.
+     refiled: a resolved match was already triaged. Exit 1
+     just means some key is `NONE` (new), not a failure.
 
    - **File** the surviving findings as Linear
      issues **staged under the `Session pending` project
