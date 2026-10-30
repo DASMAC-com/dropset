@@ -1,11 +1,12 @@
 "use client";
 
-import { useSolanaClient } from "@solana/react-hooks";
-import { useEffect, useMemo, useState } from "react";
-import { ORDER_BOOK_REFRESH_MS } from "@/lib/data/timings";
+import { useMemo } from "react";
+import {
+  useClusterStatus,
+  useSubscriptionsVerified,
+} from "@/lib/hooks/useClusterStatus";
 import type { BookToken, OrderBookState } from "@/lib/hooks/useOrderBook";
 import { useOrderBook } from "@/lib/hooks/useOrderBook";
-import { verifyCluster } from "@/lib/rpc";
 import { useSwapStore } from "@/lib/store";
 import { formatAmount, formatPrice, priceFractionDigits } from "./format";
 import { levelsToRows, type Row } from "./ladder";
@@ -198,14 +199,16 @@ function OrderBookView({
 // The trades tape sits directly below the ladder, sharing this panel's
 // market/book gating: it is the same instrument seen live rather than at rest.
 //
-// Nothing renders until the endpoint's genesis hash matches the cluster the
+// Nothing renders until an endpoint's genesis hash matches the cluster the
 // build targets, so a mainnet build never shows a book read off a localnet
 // program (or the reverse).
 export function OrderBookPanel({ className }: { className?: string }) {
   const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
   const toStablecoin = useSwapStore((s) => s.to.stablecoin);
   const sameToken = fromStablecoin === toStablecoin;
-  const verified = useClusterVerified();
+  const verified = useClusterStatus() === "verified";
+  // The tape reads the websocket, which only its own provider's verdict covers.
+  const subscriptionsVerified = useSubscriptionsVerified();
 
   const { status, view, market, base, quote } = useOrderBook(
     fromStablecoin,
@@ -218,35 +221,12 @@ export function OrderBookPanel({ className }: { className?: string }) {
   return (
     <div className={`flex flex-col gap-3 ${className ?? ""}`}>
       <OrderBookView view={view} base={base} quote={quote} />
-      <Trades market={market} base={base} quote={quote} enabled />
+      <Trades
+        market={market}
+        base={base}
+        quote={quote}
+        enabled={subscriptionsVerified}
+      />
     </div>
   );
-}
-
-// True once the endpoint's genesis read matches the build's cluster. A
-// failed read retries on the order book's own cadence rather than pinning the
-// panel hidden.
-function useClusterVerified(): boolean {
-  const client = useSolanaClient();
-  const [verified, setVerified] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-    const check = () =>
-      verifyCluster(client.runtime.rpc).then(
-        (ok) => {
-          if (!cancelled) setVerified(ok);
-        },
-        () => {
-          if (!cancelled)
-            timer = window.setTimeout(check, ORDER_BOOK_REFRESH_MS);
-        },
-      );
-    void check();
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [client]);
-  return verified;
 }

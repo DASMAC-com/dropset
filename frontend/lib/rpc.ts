@@ -6,6 +6,10 @@ import {
   type RpcTransport,
 } from "@solana/kit";
 import {
+  CLUSTER_CHECK_TIMEOUT_MS,
+  CLUSTER_PROBE_RETRY_MS,
+} from "./data/timings";
+import {
   CLUSTER,
   type Cluster,
   FALLBACK_RPC_URL,
@@ -81,16 +85,24 @@ export function createFailoverTransport(
 }
 
 // The app's RPC runtime: the keyed primary when one is configured, with the
-// standing endpoint behind it, else the standing endpoint alone.
+// standing endpoint behind it, else the standing endpoint alone. Each side is
+// behind the cluster gate: a primary serving another chain is refused and the
+// call fails over to the fallback; a fallback serving another chain is
+// refused outright.
 // Subscriptions take the primary's websocket when there is one; they do not
 // fail over, but the one consumer (the trades tape) already re-subscribes
-// after a drop.
+// after a drop. The websocket cannot be asked its genesis, so the tape waits
+// on the verdict of the RPC endpoint from the same provider
+// (`SUBSCRIPTIONS_RPC_URL`).
 export function createAppRuntime(): SolanaClientRuntime {
   const primary = PRIMARY_RPC_URL;
-  const fallback = createDefaultRpcTransport({ url: FALLBACK_RPC_URL });
+  const fallback = clusterGate.guard(
+    FALLBACK_RPC_URL,
+    createDefaultRpcTransport({ url: FALLBACK_RPC_URL }),
+  );
   const transport = primary
     ? createFailoverTransport(
-        createDefaultRpcTransport({ url: primary }),
+        clusterGate.guard(primary, createDefaultRpcTransport({ url: primary })),
         fallback,
         {
           onFailover: (error) =>
@@ -109,6 +121,10 @@ export function createAppRuntime(): SolanaClientRuntime {
   };
 }
 
+// The RPC endpoint whose provider serves the subscriptions' websocket (env.ts
+// requires the primary's RPC and WS URLs together).
+export const SUBSCRIPTIONS_RPC_URL = PRIMARY_RPC_URL ?? FALLBACK_RPC_URL;
+
 // The one-line note naming the live provider, so a post-event deploy still
 // pointed at the paid endpoint is visible in any browser console.
 export function providerNote(): string {
@@ -126,29 +142,147 @@ export const genesisMatchesCluster = (seen: string, cluster: Cluster) =>
     ? seen === MAINNET_GENESIS_HASH
     : seen !== MAINNET_GENESIS_HASH;
 
-// Whether the endpoint really serves the cluster the build targets, asked of
-// the chain itself. Memoized per page load on the first caller's rpc (the
-// endpoints are the same for every client the page builds); a failed read is
-// asked again by the next caller.
-let clusterVerified: Promise<boolean> | null = null;
-export function verifyCluster(
-  rpc: SolanaClientRuntime["rpc"],
-): Promise<boolean> {
-  clusterVerified ??= rpc
-    .getGenesisHash()
-    .send()
-    .then((seen) => {
-      if (genesisMatchesCluster(seen, CLUSTER)) return true;
-      console.error(
-        `[rpc] genesis ${seen} does not match NEXT_PUBLIC_CLUSTER=${CLUSTER}; refusing to render the order book`,
-      );
-      return false;
-    })
-    .catch((error) => {
-      // An unreadable genesis is a transport problem, not a wrong chain; let
-      // the next caller ask again rather than pinning the panel hidden.
-      clusterVerified = null;
-      throw error;
-    });
-  return clusterVerified;
+// Thrown in place of any call to an endpoint whose chain is not the build's
+// cluster. The failover transport treats it like any provider failure, so a
+// mismatched primary is skipped for the fallback.
+export class ClusterMismatchError extends Error {
+  constructor(url: string, cluster: Cluster) {
+    super(
+      `${endpointHost(url)} does not serve NEXT_PUBLIC_CLUSTER=${cluster}; refusing to use it`,
+    );
+    this.name = "ClusterMismatchError";
+  }
 }
+
+// "verified" once some endpoint serves the build's cluster; "mismatch" once
+// every endpoint has answered with another chain; "pending" until either.
+export type ClusterStatus = "pending" | "verified" | "mismatch";
+
+export type ClusterGate = {
+  // Wrap one endpoint's transport so every call first checks that endpoint's
+  // genesis (once per page load) and is refused on another chain.
+  guard: (url: string, transport: RpcTransport) => RpcTransport;
+  // Check every guarded endpoint now, without waiting for app traffic.
+  probe: () => void;
+  status: () => ClusterStatus;
+  // Whether this one endpoint has answered with the build's cluster.
+  verified: (url: string) => boolean;
+  // While anyone is subscribed and the status is pending, the gate probes on
+  // its own every `retryMs`: a panel gated on the status sends no traffic
+  // that would ask again.
+  subscribe: (listener: () => void) => () => void;
+};
+
+// A promise that also rejects once `signal` aborts, so a caller's abort frees
+// it from a genesis check it shares with other calls.
+const untilAborted = <T>(promise: Promise<T>, signal?: AbortSignal) =>
+  signal
+    ? new Promise<T>((resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        if (signal.aborted) {
+          // The shared promise still settles later; nobody else may await it.
+          promise.catch(() => {});
+          return onAbort();
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+        promise
+          .then(resolve, reject)
+          .finally(() => signal.removeEventListener("abort", onAbort));
+      })
+    : promise;
+
+// Each endpoint is checked on its own: a failover pair whose two sides serve
+// different chains would otherwise pass on whichever side answered first.
+// Verdicts are keyed by URL, so the clients a page rebuilds share them. An
+// unreadable genesis (an error, or no answer within `timeoutMs`) is a
+// transport problem, not a wrong chain: the next call asks again rather than
+// pinning the endpoint refused.
+export function createClusterGate(
+  cluster: Cluster,
+  {
+    timeoutMs = CLUSTER_CHECK_TIMEOUT_MS,
+    retryMs = CLUSTER_PROBE_RETRY_MS,
+  }: { timeoutMs?: number; retryMs?: number } = {},
+): ClusterGate {
+  const transports = new Map<string, RpcTransport>();
+  const checks = new Map<string, Promise<boolean>>();
+  const verdicts = new Map<string, boolean>();
+  const listeners = new Set<() => void>();
+  let retry: ReturnType<typeof setInterval> | undefined;
+
+  const check = (url: string, transport: RpcTransport): Promise<boolean> => {
+    let pending = checks.get(url);
+    if (!pending) {
+      const timeout = AbortSignal.timeout(timeoutMs);
+      pending = untilAborted(
+        createSolanaRpcFromTransport(transport)
+          .getGenesisHash()
+          .send({ abortSignal: timeout }),
+        timeout,
+      ).then(
+        (seen) => {
+          const ok = genesisMatchesCluster(seen, cluster);
+          if (!ok)
+            console.error(
+              `[rpc] ${endpointHost(url)} serves genesis ${seen}, not NEXT_PUBLIC_CLUSTER=${cluster}; refusing it`,
+            );
+          verdicts.set(url, ok);
+          if (status() !== "pending") stopRetry();
+          for (const listener of listeners) listener();
+          return ok;
+        },
+        (error) => {
+          checks.delete(url);
+          throw error;
+        },
+      );
+      checks.set(url, pending);
+    }
+    return pending;
+  };
+
+  const status = (): ClusterStatus => {
+    const seen = [...verdicts.values()];
+    if (seen.includes(true)) return "verified";
+    return seen.length > 0 && seen.length === transports.size
+      ? "mismatch"
+      : "pending";
+  };
+
+  const probe = () => {
+    for (const [url, transport] of transports)
+      check(url, transport).catch(() => {});
+  };
+  const stopRetry = () => {
+    clearInterval(retry);
+    retry = undefined;
+  };
+
+  return {
+    guard: (url, transport) => {
+      transports.set(url, transport);
+      return (async (config: Parameters<RpcTransport>[0]) => {
+        if (!(await untilAborted(check(url, transport), config.signal)))
+          throw new ClusterMismatchError(url, cluster);
+        return transport(config);
+      }) as RpcTransport;
+    },
+    probe,
+    status,
+    verified: (url) => verdicts.get(url) === true,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      if (status() === "pending" && retry === undefined) {
+        probe();
+        retry = setInterval(probe, retryMs);
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) stopRetry();
+      };
+    },
+  };
+}
+
+// The page's one gate, shared by every client `createAppRuntime` builds.
+export const clusterGate = createClusterGate(CLUSTER);

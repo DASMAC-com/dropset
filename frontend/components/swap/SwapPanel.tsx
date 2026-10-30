@@ -10,6 +10,7 @@ import { useFeeVaultExists } from "@/lib/dflow/feeVault";
 import { emit, useAppEvent } from "@/lib/events";
 import { parseAmountToBase } from "@/lib/format/balance";
 import { useAllBalances } from "@/lib/hooks/useAllBalances";
+import { useClusterStatus } from "@/lib/hooks/useClusterStatus";
 import { isSwapPending, useDflowSwap } from "@/lib/hooks/useDflowSwap";
 import { useEclobAvailable } from "@/lib/hooks/useEclobAvailable";
 import { useEclobQuote } from "@/lib/hooks/useEclobQuote";
@@ -171,8 +172,17 @@ export function SwapPanel() {
   const awaitingQuote =
     connected && !needsAmount && !insufficient && readyOut === null;
   const dimmed = needsAmount || insufficient || balanceUnknown;
+  // Nothing goes out until an endpoint has proved it serves the build's
+  // cluster: the wallet signs for whichever chain the transaction names.
+  const clusterStatus = useClusterStatus();
+  const clusterUnverified = clusterStatus !== "verified";
   const disabled =
-    sameToken || isConnecting || swapPending || balanceUnknown || awaitingQuote;
+    sameToken ||
+    isConnecting ||
+    swapPending ||
+    balanceUnknown ||
+    awaitingQuote ||
+    (connected && clusterUnverified);
 
   let label: string;
   let onClick: () => void;
@@ -193,6 +203,10 @@ export function SwapPanel() {
     onClick = () => {};
   } else if (swap.status === "unconfirmed") {
     label = "Check the last swap first";
+    onClick = () => {};
+  } else if (clusterUnverified) {
+    label =
+      clusterStatus === "mismatch" ? "Wrong network" : "Checking network…";
     onClick = () => {};
   } else if (balanceUnknown) {
     label = "Balance unavailable";

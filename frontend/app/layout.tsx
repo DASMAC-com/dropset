@@ -7,6 +7,7 @@ import { Header } from "@/components/chrome/Header";
 import { KeyboardShortcuts } from "@/components/chrome/KeyboardShortcuts";
 import { ShortcutsHelp } from "@/components/chrome/ShortcutsHelp";
 import { TermsOfUseGate } from "@/components/chrome/TermsOfUseGate";
+import { WrongNetworkBanner } from "@/components/chrome/WrongNetworkBanner";
 import { Providers } from "@/lib/providers";
 import { SwapStoreProvider } from "@/lib/store";
 import "./globals.css";
@@ -128,6 +129,7 @@ export default function RootLayout({
             <KeyboardShortcuts />
             <ShortcutsHelp />
             <Header />
+            <WrongNetworkBanner />
             <main className="flex-1">{children}</main>
             <Footer />
             <TermsOfUseGate />
