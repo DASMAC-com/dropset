@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   assertEndpointMatchesCluster,
+  ClusterMismatchError,
+  createClusterGate,
   createFailoverTransport,
   endpointHost,
   genesisMatchesCluster,
@@ -113,44 +115,98 @@ describe("endpoint checks", () => {
   });
 });
 
-// The test env leaves NEXT_PUBLIC_CLUSTER unset, so these run as mainnet.
-// Each test loads a fresh module so the page-load memo starts empty.
-describe("verifyCluster", () => {
-  const fakeRpc = (send: () => Promise<string>) =>
-    ({ getGenesisHash: () => ({ send }) }) as unknown as Parameters<
-      typeof import("./rpc").verifyCluster
-    >[0];
-  const fresh = async () => {
-    vi.resetModules();
-    return (await import("./rpc")).verifyCluster;
-  };
+describe("cluster gate", () => {
+  const PRIMARY = "https://primary.test";
+  const FALLBACK = "https://fallback.test";
+  // An endpoint serving `genesis`, answering any other call with `label`.
+  const chain = (genesis: string, label: string) =>
+    vi.fn(async ({ payload }: Parameters<RpcTransport>[0]) => {
+      const { id, method } = payload as { id: string; method: string };
+      return method === "getGenesisHash"
+        ? { jsonrpc: "2.0", id, result: genesis }
+        : { result: label };
+    }) as unknown as RpcTransport & ReturnType<typeof vi.fn>;
+  const genesisReads = (t: ReturnType<typeof vi.fn>) =>
+    t.mock.calls.filter(
+      ([config]) =>
+        (config as { payload: { method: string } }).payload.method ===
+        "getGenesisHash",
+    ).length;
+  const quiet = () => vi.spyOn(console, "error").mockImplementation(() => {});
 
-  it("reads the genesis once per page load", async () => {
-    const verifyCluster = await fresh();
-    const send = vi.fn(async () => MAINNET_GENESIS_HASH);
-    await expect(verifyCluster(fakeRpc(send))).resolves.toBe(true);
-    await expect(verifyCluster(fakeRpc(send))).resolves.toBe(true);
-    expect(send).toHaveBeenCalledOnce();
+  it("checks each endpoint once, then serves through it", async () => {
+    const gate = createClusterGate("mainnet");
+    const raw = chain(MAINNET_GENESIS_HASH, "ok");
+    const t = gate.guard(PRIMARY, raw);
+    expect(gate.status()).toBe("pending");
+    await expect(call(t)).resolves.toEqual({ result: "ok" });
+    await call(t);
+    expect(genesisReads(raw)).toBe(1);
+    expect(gate.status()).toBe("verified");
   });
 
-  it("refuses a chain that is not the build's cluster", async () => {
-    const verifyCluster = await fresh();
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(
-      verifyCluster(fakeRpc(async () => "FreshLocalGenesis1111")),
-    ).resolves.toBe(false);
-    expect(error).toHaveBeenCalledOnce();
+  it("refuses a primary on another chain and fails over to the fallback", async () => {
+    const error = quiet();
+    const gate = createClusterGate("mainnet");
+    const t = createFailoverTransport(
+      gate.guard(PRIMARY, chain("DevnetGenesis1111", "devnet")),
+      gate.guard(FALLBACK, chain(MAINNET_GENESIS_HASH, "mainnet")),
+    );
+    await expect(call(t)).resolves.toEqual({ result: "mainnet" });
+    expect(gate.status()).toBe("verified");
     error.mockRestore();
   });
 
-  it("asks again after a failed read", async () => {
-    const verifyCluster = await fresh();
-    const failing = fakeRpc(async () => {
-      throw new Error("HTTP 503");
-    });
-    await expect(verifyCluster(failing)).rejects.toThrow("HTTP 503");
-    const send = vi.fn(async () => MAINNET_GENESIS_HASH);
-    await expect(verifyCluster(fakeRpc(send))).resolves.toBe(true);
-    expect(send).toHaveBeenCalledOnce();
+  it("refuses a fallback on another chain rather than failing over to it", async () => {
+    const error = quiet();
+    const gate = createClusterGate("mainnet");
+    const fallback = chain("DevnetGenesis1111", "devnet");
+    const t = createFailoverTransport(
+      failing(),
+      gate.guard(FALLBACK, fallback),
+    );
+    await expect(call(t)).rejects.toBeInstanceOf(ClusterMismatchError);
+    expect(fallback).toHaveBeenCalledOnce();
+    error.mockRestore();
+  });
+
+  it("reads mismatch only once every endpoint has answered another chain", async () => {
+    const error = quiet();
+    const gate = createClusterGate("mainnet");
+    const listener = vi.fn();
+    gate.subscribe(listener);
+    const primary = gate.guard(PRIMARY, chain("DevnetGenesis1111", "a"));
+    const fallback = gate.guard(FALLBACK, chain("DevnetGenesis1111", "b"));
+    await expect(call(primary)).rejects.toBeInstanceOf(ClusterMismatchError);
+    expect(gate.status()).toBe("pending");
+    await expect(call(fallback)).rejects.toBeInstanceOf(ClusterMismatchError);
+    expect(gate.status()).toBe("mismatch");
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+
+  it("asks again after an unreadable genesis", async () => {
+    const gate = createClusterGate("mainnet");
+    let up = false;
+    const raw = vi.fn(async (config: Parameters<RpcTransport>[0]) => {
+      if (!up) throw new Error("HTTP 503");
+      return chain(MAINNET_GENESIS_HASH, "ok")(config);
+    }) as unknown as RpcTransport;
+    const t = gate.guard(PRIMARY, raw);
+    await expect(call(t)).rejects.toThrow("HTTP 503");
+    expect(gate.status()).toBe("pending");
+    up = true;
+    await expect(call(t)).resolves.toEqual({ result: "ok" });
+    expect(gate.status()).toBe("verified");
+  });
+
+  it("probes every guarded endpoint without app traffic", async () => {
+    const gate = createClusterGate("localnet");
+    const raw = chain("FreshLocalGenesis1111", "ok");
+    gate.guard(PRIMARY, raw);
+    gate.probe();
+    await vi.waitFor(() => expect(gate.status()).toBe("verified"));
+    expect(genesisReads(raw)).toBe(1);
   });
 });

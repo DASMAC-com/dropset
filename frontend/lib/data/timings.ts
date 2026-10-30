@@ -198,6 +198,11 @@ export const RECENT_FILLS_RESUBSCRIBE_MS = 2_000;
 // yet — and a definitive answer is cached, so only the failures retry.
 export const ECLOB_AVAILABILITY_RETRY_MS = 2_000;
 
+// Backoff before re-asking an endpoint's genesis hash while no endpoint has
+// answered it yet. Same localnet reason: the validator may not be listening
+// on the first read, and only a definitive answer is cached.
+export const CLUSTER_PROBE_RETRY_MS = 2_000;
+
 // ───────────── UI feedback ─────────────
 
 // How long the clipboard-copy "Copied!" feedback stays on screen.

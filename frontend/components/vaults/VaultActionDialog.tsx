@@ -54,6 +54,7 @@ import { FORMATS } from "@/lib/format/formats";
 import { sanitizeAmount } from "@/lib/format/input";
 import { BPS_SCALE, cappedPercentLabel } from "@/lib/format/percent";
 import { useAllBalances } from "@/lib/hooks/useAllBalances";
+import { useClusterStatus } from "@/lib/hooks/useClusterStatus";
 import { type UseVaultTx, useVaultTx } from "@/lib/hooks/useVaultTx";
 import { DIALOG_CONTENT_POSITION, DIALOG_OVERLAY_CLASS } from "@/lib/ui/dialog";
 import { pnlTone } from "@/lib/ui/pnlTone";
@@ -630,12 +631,16 @@ export function VaultActionDialog({
   );
   const tx = useVaultTx(vaultRef);
   // "unconfirmed" counts: the transaction may still land, so the form stays
-  // locked until the dialog is closed and reopened after checking it.
+  // locked until the dialog is closed and reopened after checking it. So does
+  // an endpoint not yet proved to serve the build's cluster (the
+  // wrong-network banner says why).
+  const clusterVerified = useClusterStatus() === "verified";
   const busy =
     tx.status === "preparing" ||
     tx.status === "signing" ||
     tx.status === "confirming" ||
-    tx.status === "unconfirmed";
+    tx.status === "unconfirmed" ||
+    !clusterVerified;
 
   // Quote tokens per base token; null for an empty vault (no ratio to hold).
   const ratio = vaultReserveRatio(vault);
