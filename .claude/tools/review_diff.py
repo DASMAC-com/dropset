@@ -648,8 +648,8 @@ def rust_test_fixtures(
     rather than one:
 
     * ``infra/localnet/docker-compose.yml`` was then CI-**excluded** (the filter
-      dropped all of ``infra/**``) and pulled in by three Rust files, two of
-      them tests. This is the dequeue class exactly: a diff confined to it made
+      dropped all of ``infra/**``) and pulled in by three Rust files at the
+      time, two of them tests. This is the dequeue class exactly: a diff confined to it made
       every Tests job a no-op while the merge queue compiled it into the full
       suite. The filter now excludes only ``infra/aws/**``; the scan still
       guards the next excluded tree a test starts reading.
