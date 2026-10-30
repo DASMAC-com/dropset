@@ -31,7 +31,7 @@ import {
   type Vault,
 } from "../data/vaults";
 import { type Submitted, SwapError } from "../swap/types";
-import { applySlippage } from "./eclobSwap";
+import { applySlippage, ECLOB_DEFAULT_SLIPPAGE_BPS } from "./eclobSwap";
 import { type EclobRoute, resolveEclobRoute } from "./route";
 import { assertWalletCanSign, submitInstructions } from "./submit";
 
@@ -68,7 +68,7 @@ const BPS_DENOMINATOR = 10_000n;
 // withdraw's floors are per leg, not on value: a fill that shifts the mix
 // more than this fails the withdraw even though its value barely moved. The
 // eCLOB swap's default, so the two paths carry one figure.
-export const VAULT_SLIPPAGE_BPS = 50;
+export const VAULT_SLIPPAGE_BPS = ECLOB_DEFAULT_SLIPPAGE_BPS;
 
 // The vault state sizing reads: the raw counts the program sizes against.
 export type VaultAtoms = Pick<
