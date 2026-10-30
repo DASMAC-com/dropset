@@ -469,10 +469,9 @@ Optional (ask on a scoped run if not provided):
        --state Backlog --milestone 'Session pending' --priority 3
      ```
 
-     `--priority 2` for a high-severity security finding. Either
-     is a **proposal**, messaged as `ratify-staged` step 2 says.
-     Team, project and assignee resolve from the `LINEAR_*`
-     environment by default, so they are never spelled here.
+     `--priority 2` for a high-severity security finding; each
+     is a proposal, messaged per `ratify-staged` step 2.
+     Team, project and assignee default from `LINEAR_*`.
 
      **Not `save_issue`.** The MCP echoes the entire stored
      body back on a *create* as well, which makes it worst
