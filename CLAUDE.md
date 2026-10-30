@@ -297,7 +297,7 @@ least privilege (deploys via the passed `*-cfn-deployment` role). The
 deploys run from the admin login; wiring the MCP to assume it is ruled
 out.
 
-**A session cannot log itself in** (`aws login` is interactive), so
+**A session cannot log itself in** (`aws sso login` is interactive), so
 `plan`, the one verb reading cost data, **gates its own launch** on
 credentials that resolve (probe, log in, re-probe, refuse); `architect`
 deliberately does not. The profile is an **optional** `DS_AWS_PROFILE`
