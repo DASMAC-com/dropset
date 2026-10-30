@@ -245,10 +245,11 @@ prose-deletion overage that a split would leave inert; that takes
 the last row.
 **The rate basis is Opus 5.5 on Bedrock**, and the bands re-seed at
 the next rate swap. A band, never a point: the measured spread inside
-one line band ran $39 to $140. Bands bind **Bedrock workers only**. A
-seat-bound issue (`architect`, `explore anthropic`, `plan anthropic`)
-states its seat and token profile instead, because the subscription's
-internal pricing is opaque and a seat dollar figure would be invented.
+one line band ran $39 to $140. Bands bind **Bedrock workers only**. An
+issue bound to the Claude subscription (`architect`,
+`explore anthropic`, `plan anthropic`) states its substrate and token
+profile instead, because the subscription's internal pricing is opaque
+and a subscription dollar figure would be invented.
 A default `plan` runs on Bedrock and is priced like a worker.
 
 **At close** the close tool (`close_session.py --session-id <uuid>`)
@@ -262,7 +263,7 @@ session id skips the line and says so. For a Bedrock session:
 **Cost actual**: $72 estimate, 140 turns, peak prefix 310k, 2026-10-15
 ```
 
-and for a seat session:
+and for a subscription session:
 
 ```text
 **Token profile**: 41M cache-read, 119 turns, peak prefix 319k, 2026-10-14
@@ -270,7 +271,7 @@ and for a seat session:
 
 **Only Bedrock bands verify in dollars**: deduplicated transcript
 pricing tracks the Bedrock bill, about 8% under it — the classifier's
-share — per "Reconciling against the bill" below. A seat session's
+share — per "Reconciling against the bill" below. A subscription session's
 check is the self-consistency of its token profile. Two sessions on
 one issue append two lines; a consumer sums them and says so.
 `fleet_cost.py reconcile` is the bill-side check on the measured lines.
@@ -384,13 +385,13 @@ dollars, flagged lines, and the path.
   `digest-*` files out with the transcripts. The medians' `history.jsonl`
   is never pruned.
 
-**Seat sessions are quoted at Bedrock rates, labelled "at Bedrock rates,
+**Subscription sessions are quoted at Bedrock rates, labelled "at Bedrock rates,
 not billed"**, on every surface: the session report, the digest and
 `fleet_cost.py`. The subscription is effectively Bedrock-rate usage at a
 heavy subsidy, so the figure says what the work would have cost, and the
 label stops anyone reading it as a charge. Only the reconciliation keeps
-seat figures out of its total, because that total is compared against a
-bill that seat usage never appears on.
+subscription figures out of its total, because that total is compared against a
+bill that subscription usage never appears on.
 
 ## Resident size has a hard cap
 
@@ -441,7 +442,7 @@ compression task through the normal meta filing flow.
 The memory index lives under the home directory, which CI does not
 have, so its cap runs in the **local tier**: `.claude/tools/memory_audit.py`
 reports the whole index past **12,000 bytes** and any line past 160
-characters; the upkeep pass runs it, and the launcher's one ask acts on
+characters; the upkeep pass runs it, and the analyst's one ask acts on
 what it reports. **An index
 line is a pointer** — name plus a few-word hook, one line, never
 content; the content lives in the memory file it points at.

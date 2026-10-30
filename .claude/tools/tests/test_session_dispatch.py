@@ -302,15 +302,16 @@ class Grammar(unittest.TestCase):
             session_dispatch.classify(["curate"]).cls, session_dispatch.FREE
         )
 
-    def test_launch_validates_as_a_free_seat(self):
-        self.assertEqual(session_dispatch.validate(["launch"]), ["launch"])
+    def test_analyze_validates_as_a_free_seat(self):
+        self.assertEqual(session_dispatch.validate(["analyze"]), ["analyze"])
         self.assertEqual(
-            session_dispatch.validate(["launch", "anthropic"]), ["launch", "anthropic"]
+            session_dispatch.validate(["analyze", "anthropic"]),
+            ["analyze", "anthropic"],
         )
         with self.assertRaises(ValueError):
-            session_dispatch.validate(["launch", "1234"])
+            session_dispatch.validate(["analyze", "1234"])
         self.assertEqual(
-            session_dispatch.classify(["launch"]).cls, session_dispatch.FREE
+            session_dispatch.classify(["analyze"]).cls, session_dispatch.FREE
         )
 
     def test_the_retired_housekeeping_verb_is_unknown(self):
@@ -513,16 +514,16 @@ class Dispatch(unittest.TestCase):
         self.assertIn("task anthropic 1234 -> /dev/a", text)
         self.assertIn("plan (free) -> /dev/b", text)
         self.assertIn("architect 56 (free) -> /dev/c", text)
-        # Only the seat verb's tab carries a role; it alone is placed as a seat.
+        # Only the daily-role verb's tab carries a role; it alone is placed as one.
         self.assertEqual(self.roles, [[None, "plan", None]])
 
-    def test_a_curate_tab_is_placed_as_a_seat_beside_the_scheduler(self):
+    def test_a_curate_tab_is_placed_as_a_daily_role_beside_the_scheduler(self):
         self._stub_tabs(["/dev/a", "/dev/b"])
         self._stub_names([])
         with redirect_stdout(io.StringIO()):
-            rc = session_dispatch.run(["curate", "+", "launch"])
+            rc = session_dispatch.run(["curate", "+", "analyze"])
         self.assertEqual(rc, 0)
-        self.assertEqual(self.roles, [["curate", "launch"]])
+        self.assertEqual(self.roles, [["curate", "analyze"]])
 
     def test_one_bad_verb_in_a_batch_dispatches_nothing(self):
         # A partial batch is the bad outcome: the caller cannot tell which tabs
@@ -612,7 +613,7 @@ class BlockedDispatch(unittest.TestCase):
     def test_the_printed_verb_is_the_full_line_including_the_substrate(self):
         # A `task anthropic` dispatch that falls back must hand over the SUBSTRATE
         # too — printing a bare `task 1234` would send the operator to Bedrock
-        # for work that was deliberately routed to the seat.
+        # for work that was deliberately routed to the Claude subscription.
         self._fail_with("nope")
         err = io.StringIO()
         with redirect_stderr(err):

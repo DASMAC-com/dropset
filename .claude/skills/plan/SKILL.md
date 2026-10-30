@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a scheduler session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), runs the audit heartbeat (file an audit issue or decline with a recorded reason), and messages the launcher once the state of play is written, before its one ask, so it starts the curator on the Backlog review inbox. Holds the fleet resume and first wave for the operator's start trigger in that ask. Then keeps the board coherent: Todo dispatched as standing authorization once the day is started, blocking edges curated by a human, file collisions reconciled by reading, the inbox kept stocked with staged specs, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
+description: Run a scheduler session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), runs the audit heartbeat (file an audit issue or decline with a recorded reason), and messages the analyst once the state of play is written, before its one ask, so it starts the curator on the Backlog review inbox. Holds the fleet resume and first wave for the operator's start trigger in that ask. Then keeps the board coherent: Todo dispatched as standing authorization once the day is started, blocking edges curated by a human, file collisions reconciled by reading, the inbox kept stocked with staged specs, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
 user-invocable: true
 model: fable
 ---
@@ -69,7 +69,7 @@ The **base repo**, never a worktree. Start or resume with a bare
 `plan` — idempotent; it creates or resumes today's
 `plan-<day-of-month>` on the advisor tier's model, with `/plan`
 as a new session's prompt, on Bedrock; `plan anthropic` is the
-seat override, and a reopen keeps the substrate its session
+Claude subscription override, and a reopen keeps the substrate its session
 recorded. There is no in-session model check: the `plan` helper pins
 the model and refuses an unresolved tier. Verbs:
 `docs/conventions/local-integrations.md`.
@@ -107,7 +107,7 @@ operator lever, never this mechanism.
   spill and slice), run
   `ListAgents` — and skip the once-a-day duties (the fold line,
   the audit heartbeat, the parked counts, the upkeep report, the
-  launcher's message, step 8) — **save the start trigger**,
+  analyst's message, step 8) — **save the start trigger**,
   asked alone when the document carries no `Fleet start:` line
   for today or `ListAgents` shows no worker session (`task`,
   `chore`, `explore`) live (a machine restart; step 5). That
@@ -159,13 +159,13 @@ lines too, any flagged day first. Say the run line's duration as
 the one re-authentication it names — the steps it gates were
 skipped, not broken. A run stamp
 older than today means the pass did not reach the document —
-say so. The launcher prunes finished worktrees unasked; the
+say so. The analyst prunes finished worktrees unasked; the
 other **destructive items** (the transcript purge, allowlist
 cruft, refresh candidates, judged memories) are its one ask
 (ruling 16) — never asked here.
 
-**Say the fold line.** The lever fold runs in the launcher's own
-tab (`launch`), alongside this bootstrap, never here:
+**Say the fold line.** The lever fold runs in the analyst's own
+tab (`analyze`), alongside this bootstrap, never here:
 
 ```sh
 python3 .claude/tools/upkeep.py fold-today
@@ -173,14 +173,14 @@ python3 .claude/tools/upkeep.py fold-today
 
 Say its line verbatim — `fold ran at HH:MM, N batches` or
 `no fold today`. The fold runs alongside this bootstrap, so
-`no fold today` with a live `launch-<day>` means not yet stamped,
+`no fold today` with a live `analyze-<day>` means not yet stamped,
 likely still folding: say that, not "no fold". The new batches
 reach the inbox, where the curator reviews them.
 
 **The bootstrap runs unattended until its one ask.** Do every duty
 that asks nothing — the overnight landing check, the board read,
 Next, the collision clusters, the audit heartbeat, the Queue's
-honesty — write the state of play back, message the launcher
+honesty — write the state of play back, message the analyst
 (below), then stop at step 8's consolidated ask. **`fleet resume`
 and every dispatch wait for that ask's start trigger** (ruling:
 fleet doctrine 1). A Discuss item or duty needing the operator's
@@ -220,13 +220,13 @@ Resolved means addressed-and-how, never approval. Never fold an
 In Progress spec; a fold into an approved (Todo) body moves it
 back to Backlog, priority and edges unchanged.
 
-**The curator reviews the inbox; the launcher dispatches it.**
+**The curator reviews the inbox; the analyst dispatches it.**
 Once the bootstrap's write-back of the state of play lands, and
 **before** step 8's ask, run `ListAgents` and message the live
-`launch-<day>` exactly `state of play written`, once — its cue to
+`analyze-<day>` exactly `state of play written`, once — its cue to
 dispatch the curator with the fold's hand-off, so neither the fold
-nor the curator waits on the scheduler's question. No launcher
-live: say `launcher: not live`, tell the operator to type `launch`
+nor the curator waits on the scheduler's question. No analyst
+live: say `analyst: not live`, tell the operator to type `analyze`
 in a new tab, and dispatch no curator from here. Todo is
 dispatched by step 5, after the start trigger. The scheduler
 still keeps the inbox stocked: when it runs thin, stage more
@@ -399,8 +399,8 @@ filing skill binds this session:
   a **`**Cost band**:`** line beside the fingerprint — a dollar
   range, a line band and the substrate, from
   `docs/conventions/context-economy.md` → "Cost bands". A band,
-  never a point. A seat-bound issue (`architect`)
-  states its seat and a token profile instead: dollar bands bind
+  never a point. A subscription-bound issue (`architect`)
+  states its substrate and a token profile instead: dollar bands bind
   Bedrock workers only.
 
 - **The Todo / Backlog split** (step 1), **the `Claude:` prefix**,
@@ -647,7 +647,7 @@ the milestone** in one `board_batch.py fields` write, never by
 closing and refiling. **Do not re-adjudicate a finding** —
 `audit-scope` cross-checked it before filing.
 
-**`Session pending` is never promoted here**: a count is a seat
+**`Session pending` is never promoted here**: a count is a subscription
 session that died mid-review — offer to resume it.
 
 ## Notes

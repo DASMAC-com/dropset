@@ -119,7 +119,7 @@ class LiveTags(unittest.TestCase):
 class ResumeCommand(unittest.TestCase):
     def test_it_types_the_substrate_aware_resume_verb(self):
         # `task resume` reads the session's own substrate marker, which is what
-        # lets a mixed Bedrock/seat fleet come back correctly with no substrate
+        # lets a mixed Bedrock/subscription fleet come back correctly with no substrate
         # knowledge in this tool.
         self.assertEqual(fr.resume_command("889"), "task resume 889")
 

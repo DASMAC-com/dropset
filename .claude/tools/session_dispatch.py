@@ -93,13 +93,13 @@ _NAME = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z", re.ASCII)
 #: The substrate override words, the same on every verb that takes one.
 _SUBSTRATES = ("anthropic", "bedrock")
 
-#: The daily seat verbs, each mapped to the iTerm role its tab will carry —
+#: The daily-role verbs, each mapped to the iTerm role its tab will carry —
 #: which places the tab (`iterm_api.insert_index`): the scheduler's rightmost,
 #: the others just left of it. Every other verb's tab is a worker's.
-SEAT_VERBS = {
+DAILY_VERBS = {
     "plan": iterm_api.PLAN_ROLE,
     "curate": iterm_api.CURATE_ROLE,
-    "launch": iterm_api.LAUNCH_ROLE,
+    "analyze": iterm_api.ANALYZE_ROLE,
 }
 
 
@@ -205,8 +205,8 @@ def validate(argv: list[str]) -> list[str]:
             return ["fleet", "go"]
         raise ValueError("`fleet` takes nothing or `go`")
 
-    if verb in SEAT_VERBS:
-        # The daily seat verbs: the day names the session, so no number.
+    if verb in DAILY_VERBS:
+        # The daily-role verbs: the day names the session, so no number.
         if len(args) > 1 or (args and args[0] not in _SUBSTRATES):
             raise ValueError(f"`{verb}` takes nothing, or anthropic or bedrock")
         return [verb, *args]
@@ -260,7 +260,7 @@ def command_line(words: list[str]) -> str:
 
 FREE, BUILDING = "free", "building"
 
-#: Each verb's class. `architect`, `explore` and the seat verbs run no cargo
+#: Each verb's class. `architect`, `explore` and the daily-role verbs run no cargo
 #: and no Docker and open no PR, so only the machine checks can refuse them; `fleet`
 #: is free because each session it resumes meets this same gate inside
 #: `fleet_resume.py`. `chore` is absent on purpose — it is inspected
@@ -271,7 +271,7 @@ VERB_CLASS = {
     "curate": FREE,
     "explore": FREE,
     "fleet": FREE,
-    "launch": FREE,
+    "analyze": FREE,
     "plan": FREE,
     "task": BUILDING,
 }
@@ -726,7 +726,7 @@ def run(argv: list[str]) -> int:
     write_records(admitted.seated, directory)
     commands = [seat.command for seat in admitted.seated]
     shown = {seat.command: seat.shown for seat in admitted.seated}
-    roles = [SEAT_VERBS.get(command.split()[0]) for command in commands]
+    roles = [DAILY_VERBS.get(command.split()[0]) for command in commands]
 
     try:
         ttys = iterm_api.open_tabs(commands, roles=roles)

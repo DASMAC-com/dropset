@@ -26,7 +26,7 @@ listing the projects directory:
    `scratchpad` in your scratchpad path, a bare UUID.
 
 1. **`daily-id`** — computed from the verb: `--daily-id plan`,
-   `curate` or `launch` for a seat, `--daily-id chore --tag <n>`
+   `curate` or `analyze` for a daily role, `--daily-id chore --tag <n>`
    for a chore:
 
    ```sh
@@ -46,7 +46,8 @@ and still write the account — never nothing.
 
 It reads the transcripts in its own process, so nothing but the
 paragraph enters context. It prices every substrate at Bedrock rates
-and labels a seat session's figure "at Bedrock rates, not billed".
+and labels a Claude subscription session's figure "at Bedrock rates,
+not billed".
 
 **3. Write the account**, ending the message with:
 
@@ -81,7 +82,7 @@ That is the whole skill.
   the line under `Session-metrics state`.
 
 The line is `**Cost actual**: $<usd> estimate, …` on Bedrock and a
-`**Token profile**` on the seat (`docs/conventions/context-economy.md`
+`**Token profile**` on the subscription (`docs/conventions/context-economy.md`
 → "Cost bands"). An id that resolves to no transcript skips the line
 and says so.
 

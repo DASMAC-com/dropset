@@ -28,13 +28,13 @@ peak prefix. ``--cost-line`` prints the one line a close appends to the issue
 token, so its headline is a dollar figure computed from its own transcript at
 the verified rates, with the prefix growth beside it — together they make the
 quadratic visible, since every turn replays the whole prefix and a session's
-bill is roughly its average prefix times its turn count. A **seat** session
+bill is roughly its average prefix times its turn count. A **subscription** session
 bills against the Claude subscription, which is in effect Bedrock-rate usage
 heavily subsidized, so it is priced at the same rates and labelled **at
 Bedrock rates, not billed**: the operator still sees what the session would
 have cost, and the label keeps the figure from being read as a bill line.
 :func:`resolve_substrate` decides which label applies, from the marker a
-launch writes, and fails toward seat — the daily reconciliation sums Bedrock
+launch writes, and fails toward the subscription — the daily reconciliation sums Bedrock
 sessions only (``fleet_cost.py``), so a misread substrate can only drop a
 figure out of that total, never add a charge the bill never made.
 
@@ -201,12 +201,13 @@ SUBSTRATE_DIR = Path(".claude") / "session-substrate"
 WORKTREE_SEGMENT = "/.claude/worktrees/"
 
 SUBSTRATE_BEDROCK = "bedrock"
-SUBSTRATE_SEAT = "seat"
-# What a launch now writes for the subscription substrate. `seat` is the retired
-# spelling, still on disk in older markers, so both read as the seat branch.
+SUBSTRATE_SUBSCRIPTION = "subscription"
+# What a launch now writes for the subscription substrate, and the retired
+# spelling still on disk in older markers; both read as the subscription.
+RETIRED_SEAT = "seat"
 SUBSTRATE_ANTHROPIC = "anthropic"
 
-# How every surface labels a seat session's dollar figure (this report, the
+# How every surface labels a subscription session's dollar figure (this report, the
 # digest, `fleet_cost.py`): priced at the Bedrock rates, never charged.
 NOT_BILLED = "at Bedrock rates, not billed"
 
@@ -313,11 +314,11 @@ class Cost:
     """A dollar breakdown of one token profile, at each model's Bedrock rates.
 
     Rendered for both substrates: a Bedrock session's figure is its bill, a
-    seat session's is the same tokens **at Bedrock rates, not billed** — the
+    subscription session's is the same tokens **at Bedrock rates, not billed** — the
     subscription is in effect those rates subsidized, so the figure says what
     the session would have cost, and the label says it was not charged. Only
-    the reconciliation in ``fleet_cost.py`` keeps seat figures out, because
-    that total is compared against a bill the seat never appears on.
+    the reconciliation in ``fleet_cost.py`` keeps subscription figures out, because
+    that total is compared against a bill the subscription never appears on.
     """
 
     input: float = 0.0
@@ -1716,7 +1717,7 @@ def _rate_standing(model: str) -> str:
 def _resident_headline(resident: ResidentProse, substrate: str) -> str:
     """The resident-prose line, rendered beside prefix growth. Its dollar
     figure follows the headline's rule: never when a model is unpriced, and
-    labelled not billed on a seat session.
+    labelled not billed on a subscription session.
     """
     parts = " · ".join(
         f"{kind} {human(tokens)}"
@@ -1796,12 +1797,12 @@ def to_markdown(report: dict, session_label: str) -> str:
     out.append(f"## Session metrics — {session_label}\n\n")
 
     # **Dollars first, on both substrates.** The headline is the number the
-    # small-PRs convention is trying to drive down, so it leads; a seat session
+    # small-PRs convention is trying to drive down, so it leads; a subscription session
     # is priced at the same rates and says it was not billed.
-    seat = report["substrate"] != SUBSTRATE_BEDROCK
-    if seat:
+    subscription = report["substrate"] != SUBSTRATE_BEDROCK
+    if subscription:
         out.append(
-            "**Substrate**: seat — billed to the Claude subscription, so any "
+            "**Substrate**: subscription — billed to the Claude subscription, so any "
             f"figure below is {NOT_BILLED}.\n"
         )
     if report["unpriced_models"]:
@@ -1817,7 +1818,7 @@ def to_markdown(report: dict, session_label: str) -> str:
         total: Cost = report["total_cost"]
         session: Cost = report["session_cost"]
         sub: Cost = report["subagent_cost"]
-        verb = "would have cost" if seat else "cost"
+        verb = "would have cost" if subscription else "cost"
         out.append(f"**This session {verb} about {money(total.total())}** ")
         if sub.total() > 0.0:
             out.append(
@@ -1834,7 +1835,7 @@ def to_markdown(report: dict, session_label: str) -> str:
         # rendered as if verified is exactly the drift the reconciliation hunts.
         out.append(
             "{} — {}; substrate {}.\n".format(
-                NOT_BILLED if seat else "at Bedrock rates",
+                NOT_BILLED if subscription else "at Bedrock rates",
                 ", ".join(_rate_standing(m) for m in report["priced_models"])
                 or "no billable tokens",
                 report["substrate_reason"],
@@ -2119,7 +2120,7 @@ def tag_from_cwd(cwd: str | None) -> str | None:
 
     Derived purely from the path — `claude --worktree` lays a worktree out at
     ``<base>/.claude/worktrees/<tag>``, so the tag is the segment after that
-    marker. A base-repo session (which is what every seat verb starts) has no
+    marker. A base-repo session (which is what every daily-role verb starts) has no
     such segment and so no tag, which is the correct answer rather than a
     failure: it has no marker either.
 
@@ -2175,7 +2176,7 @@ def read_substrate_marker(cwd: str | None, session_id: str | None = None) -> str
 
     ``None`` means *no marker was found* — a base-repo session, a marker never
     written, or one cleaned up when the worktree was pruned. It is deliberately
-    distinct from a marker that says ``seat``, so the report can say which of
+    distinct from a marker that says ``anthropic``, so the report can say which of
     the two it is, even though both land on the same headline.
     """
     return _find_substrate_marker(cwd, session_id)[0]
@@ -2217,8 +2218,8 @@ def _read_marker(marker: Path) -> str | None:
         # malformed marker, and nothing up the call chain handles it. The writer
         # in `.claude/shell/init.zsh` is a plain truncating redirect rather than
         # an atomic rename, so a torn write is the realistic producer of one.
-        # Degrading to seat here is what makes the documented fail-toward-seat
-        # policy true for malformed content as well as for a missing file.
+        # Degrading to the subscription here is what makes the documented
+        # fail-toward-subscription policy true for malformed content as well as for a missing file.
         return None
     return recorded or None
 
@@ -2231,14 +2232,14 @@ def resolve_substrate(
     **The transcript cannot answer this, which is why the marker is consulted
     at all.** Measured on a Bedrock worker session (2026-09-14): its transcript
     records ``message.model`` as the plain ``claude-opus-5``, byte-identical to
-    what a seat Opus session records, and no region-prefixed or
+    what a subscription Opus session records, and no region-prefixed or
     inference-profile form appears in any local transcript. Nor is the model *name* a usable
-    proxy, since seat verbs (`plan`, `curate`, `architect`) also run on Opus. The
+    proxy, since the advisor verbs (`plan`, `curate`, `architect`) also run on Opus. The
     only durable signal is the marker a launch writes, which is exactly what the
     resume verbs already steer by.
 
-    **Absent reads as seat**, matching `_ds_substrate_read` in
-    `.claude/shell/init.zsh` and for a sharper reason here: a seat figure is
+    **Absent reads as the subscription**, matching `_ds_substrate_read` in
+    `.claude/shell/init.zsh` and for a sharper reason here: a subscription figure is
     labelled not billed and kept out of the Bedrock reconciliation, so an
     unknown substrate degrades to a figure nobody reads as a charge rather than
     to a charge the bill never made.
@@ -2246,24 +2247,33 @@ def resolve_substrate(
     recorded, source = _find_substrate_marker(cwd, session_id)
     if recorded == SUBSTRATE_BEDROCK:
         return SUBSTRATE_BEDROCK, f"recorded by the launch verb ({source})"
-    if recorded in (SUBSTRATE_SEAT, SUBSTRATE_ANTHROPIC):
-        return SUBSTRATE_SEAT, f"recorded by the launch verb ({source})"
+    if recorded in (RETIRED_SEAT, SUBSTRATE_ANTHROPIC):
+        return SUBSTRATE_SUBSCRIPTION, f"recorded by the launch verb ({source})"
     if recorded is None:
         if tag_from_cwd(cwd) is None:
             if base_repo_from_cwd(cwd) is None:
-                return SUBSTRATE_SEAT, (
-                    "base-repo session with no session record, which reads as seat"
+                return SUBSTRATE_SUBSCRIPTION, (
+                    "base-repo session with no session record, which reads as the subscription"
                 )
             # Inside the worktrees directory but carrying no tag component. That
             # is a malformed path, not a base-repo session, so it does not get
             # the base-repo reason string.
-            return SUBSTRATE_SEAT, "no worktree tag in the path, which reads as seat"
-        return SUBSTRATE_SEAT, "no substrate marker found, which reads as seat"
+            return (
+                SUBSTRATE_SUBSCRIPTION,
+                "no worktree tag in the path, which reads as the subscription",
+            )
+        return (
+            SUBSTRATE_SUBSCRIPTION,
+            "no substrate marker found, which reads as the subscription",
+        )
     # A marker holding something unrecognized: treat it as unknown rather than
     # guessing, and fail toward the branch that prints no dollars. Truncated
     # because this string reaches the report, and an unexpected file at that
     # path should not have its whole body echoed into it.
-    return SUBSTRATE_SEAT, f"unrecognized marker {recorded[:32]!r}, treated as seat"
+    return (
+        SUBSTRATE_SUBSCRIPTION,
+        f"unrecognized marker {recorded[:32]!r}, treated as the subscription",
+    )
 
 
 def slugify(path: Path) -> str:
@@ -2395,7 +2405,7 @@ def to_brief(report: dict, session_label: str) -> str:
     """The one-paragraph estimate a session prints at its close and the
     launcher prints when it exits.
 
-    Every substrate is priced at Bedrock rates. A seat session's figure says it
+    Every substrate is priced at Bedrock rates. A subscription session's figure says it
     was not billed, so it reads as what the work would have cost and not as a
     bill. Only an unpriced model withholds the figure, as in `to_markdown`.
     """
@@ -2433,7 +2443,7 @@ def to_brief(report: dict, session_label: str) -> str:
 
 def cost_line(report: dict, day: str) -> str:
     """The one line a close appends to the session's issue, marked estimate:
-    the dollar form on Bedrock, the token profile on the seat, whose dollar
+    the dollar form on Bedrock, the token profile on the subscription, whose dollar
     figure would be invented (`docs/conventions/context-economy.md` →
     "Cost bands")."""
     totals: Totals = report["totals"]
@@ -2497,12 +2507,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--substrate",
-        choices=(SUBSTRATE_BEDROCK, SUBSTRATE_SEAT),
+        choices=(SUBSTRATE_BEDROCK, SUBSTRATE_SUBSCRIPTION),
         default=None,
         help=(
             "override the substrate the launch recorded. The escape hatch for a "
             "session whose marker is gone — pruning a worktree can take its "
-            "marker with it, and an absent marker reads as seat, so a historical "
+            "marker with it, and an absent marker reads as the subscription, so a historical "
             "Bedrock session would otherwise be labelled not billed"
         ),
     )
@@ -2519,7 +2529,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "print only the one-line issue cost line (Cost actual on Bedrock, "
-            "Token profile on the seat), dated today"
+            "Token profile on the subscription), dated today"
         ),
     )
     parser.add_argument(

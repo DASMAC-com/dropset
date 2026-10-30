@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Price the fleet's Bedrock spend from transcripts and reconcile it with the bill.
 
-The fleet cost picture, Bedrock billed and metered, the seat metered alone.
+The fleet cost picture, Bedrock billed and metered, the Claude subscription metered alone.
 Four subcommands over **complete UTC days** — AWS reports in UTC, so every
 day boundary there is a UTC one, on both sides — and ``local``, the one view
 bucketed by the machine's own day:
@@ -14,11 +14,11 @@ bucketed by the machine's own day:
     was measured), bucket it by the UTC day of the record and the model it
     recorded, and price it at ``session_metrics.RATES_BY_MODEL``. Sessions are
     split by substrate, which comes from the launch marker and **never** from
-    the transcript's model id (a seat and a Bedrock session record the same
+    the transcript's model id (a subscription and a Bedrock session record the same
     name). Every session is also keyed to its Linear issue the same way for
     every substrate — the worktree tag, or for a base-checkout ``chore`` its
     bootstrap prompt, which also keys an issue-less ``plan`` session by its
-    verb: Bedrock issues are priced, seat ones are priced too but labelled at
+    verb: Bedrock issues are priced, subscription ones are priced too but labelled at
     Bedrock rates, not billed (the subscription is those rates subsidized, and
     never enters the Bedrock total), and unattributed ones are listed by
     session count beside them.
@@ -51,7 +51,7 @@ bucketed by the machine's own day:
     last of them yesterday, then today so far: **billed**, from Cost
     Explorer's hourly buckets over the Bedrock-edition services, each hour on
     the local day it starts in, beside **metered**, the transcript meter at
-    Bedrock rates over the same windows, with the seat listed apart. Hourly
+    Bedrock rates over the same windows, with the subscription listed apart. Hourly
     data needs the payer account's hourly-granularity preference; while it
     is off the billed column reads ``hourly granularity off``. Hourly data
     lags by hours, so the heading names the last hour billed. The meter is
@@ -59,14 +59,14 @@ bucketed by the machine's own day:
     so an older day can meter low where its bill does not. The settled
     ``reconcile`` stays UTC; this view is never reconciled.
 
-**Substrate classes.** ``bedrock`` and ``seat`` come from a marker: the
+**Substrate classes.** ``bedrock`` and ``subscription`` come from a marker: the
 session's own record (``sessions/<id>``, written when the launch creates
 it) first, then its worktree's tag marker. A worktree session with **no**
 marker (or an unrecognized one) is ``unattributed`` and is never priced into
 the Bedrock total — that is the share the bill comparison cannot account for,
 reported rather than guessed. ``explore`` landed here until it wrote a marker;
 an older explore worktree still does. A base-repo session with no record reads
-as ``seat`` — unless its bootstrap prompt names an issue whose tag marker
+as ``subscription`` — unless its bootstrap prompt names an issue whose tag marker
 carries the ``helper`` tier a ``chore`` launch writes, which then decides. A session launched before the
 record still classifies the old way.
 
@@ -126,7 +126,7 @@ from typing import Callable
 import session_metrics as sm
 
 BEDROCK = "bedrock"
-SEAT = "seat"
+SUBSCRIPTION = "subscription"
 UNATTRIBUTED = "unattributed"
 
 EDITION_SUFFIX = " (Amazon Bedrock Edition)"
@@ -177,14 +177,14 @@ def classify(
     """A session's substrate class, from its launch marker.
 
     Unlike ``session_metrics.resolve_substrate``, which degrades an unknown to
-    seat because a single-session report must never invent a dollar figure, a
+    subscription because a single-session report must never invent a dollar figure, a
     fleet total needs the third answer: a worktree session with no marker is
-    neither priced nor silently waved through as seat.
+    neither priced nor silently waved through as subscription.
 
     A base-checkout session with no record but an ``issue`` from its bootstrap
     prompt reads that issue's tag marker when its tier is ``helper`` — the
     marker a ``chore`` launch writes — so a Bedrock chore is not metered as
-    seat. The prompt's verb is not checked, and the marker holds only the
+    subscription. The prompt's verb is not checked, and the marker holds only the
     latest chore launch's substrate; both matter only to a record-less
     session. A task's marker on the same number has no tier and is not read.
     """
@@ -193,10 +193,10 @@ def classify(
         recorded = _chore_marker(cwd, issue)
     if recorded == sm.SUBSTRATE_BEDROCK:
         return BEDROCK
-    if recorded in (sm.SUBSTRATE_SEAT, sm.SUBSTRATE_ANTHROPIC):
-        return SEAT
+    if recorded in (sm.RETIRED_SEAT, sm.SUBSTRATE_ANTHROPIC):
+        return SUBSCRIPTION
     if recorded is None and sm.base_repo_from_cwd(cwd) is None:
-        return SEAT
+        return SUBSCRIPTION
     return UNATTRIBUTED
 
 
@@ -252,23 +252,28 @@ def issue_of_prompt(text: str) -> str | None:
 
 # The bootstrap prompt of a launch with no issue at all: the scheduler's `plan`
 # types `/plan` in the base checkout, the curator's `curate` types `/curate`
-# and the morning launcher's `launch` types `/launch`, as the retired
-# `housekeeping` typed `/housekeeping`.
+# and the morning analyst's `analyze` types `/analyze`, as the retired
+# `housekeeping` typed `/housekeeping` and the analyst's old `launch` verb
+# typed `/launch`.
 PROMPT_VERB_RE = re.compile(
-    r"<command-name>/(plan|curate|launch|housekeeping)</command-name>"
-    r"|^/(plan|curate|launch|housekeeping)(?:\s|$)",
+    r"<command-name>/(plan|curate|analyze|launch|housekeeping)</command-name>"
+    r"|^/(plan|curate|analyze|launch|housekeeping)(?:\s|$)",
     re.IGNORECASE,
 )
+
+# A renamed verb's old prompt, grouped under the verb it became.
+RENAMED_VERBS = {"launch": "analyze"}
 
 
 def verb_of_prompt(text: str) -> str | None:
     """The verb an issue-less base-checkout session ran as, from its first
-    prompt — the key it groups under in the per-issue table, so each seat
+    prompt — the key it groups under in the per-issue table, so each daily-role
     cycle's cost is a line of its own rather than part of ``(no issue)``."""
     match = PROMPT_VERB_RE.search(text.strip())
     if not match:
         return None
-    return (match.group(1) or match.group(2)).lower()
+    verb = (match.group(1) or match.group(2)).lower()
+    return RENAMED_VERBS.get(verb, verb)
 
 
 def service_for_model(model: str) -> str | None:
@@ -300,7 +305,7 @@ def service_for_model(model: str) -> str | None:
 @dataclass
 class Meter:
     """Deduplicated token counts, bucketed per UTC day, substrate and model,
-    plus the same per issue — every substrate, keyed one way, so a seat
+    plus the same per issue — every substrate, keyed one way, so a subscription
     session carries its issue as a Bedrock one does.
     """
 
@@ -602,8 +607,8 @@ def friction_summary(meter: Meter, day: str) -> dict | None:
 def render_friction(friction: dict) -> str:
     after = friction["dollars_after"]
     parts = [f"{money(after.get(BEDROCK, 0.0))} Bedrock"]
-    if after.get(SEAT):
-        parts.append(f"{money(after[SEAT])} seat {sm.NOT_BILLED}")
+    if after.get(SUBSCRIPTION):
+        parts.append(f"{money(after[SUBSCRIPTION])} subscription {sm.NOT_BILLED}")
     if after.get(UNATTRIBUTED):
         parts.append(f"{money(after[UNATTRIBUTED])} unattributed")
     return (
@@ -632,7 +637,7 @@ def issue_session_counts(
     meter: Meter, days: list[str], substrate: str
 ) -> list[tuple[str, int]]:
     """Sessions per issue on one non-Bedrock class over ``days``, most first.
-    Listed rather than priced: seat spend has no bill line to reconcile."""
+    Listed rather than priced: subscription spend has no bill line to reconcile."""
     by_issue: dict[str, set[str]] = {}
     for (day, sub, issue), sessions in meter.issue_sessions.items():
         if day in days and sub == substrate:
@@ -1005,13 +1010,13 @@ def pct(fraction: float | None) -> str:
 def render_meter(summary: dict, label: str) -> list[str]:
     subs = summary["substrates"]
     lines = [f"{label} (UTC)"]
-    for name in (BEDROCK, SEAT, UNATTRIBUTED):
+    for name in (BEDROCK, SUBSCRIPTION, UNATTRIBUTED):
         entry = subs.get(name)
         if not entry:
             continue
         if name == BEDROCK:
             figure = money(entry["dollars"])
-        elif name == SEAT:
+        elif name == SUBSCRIPTION:
             figure = f"{money(entry['dollars'])} {sm.NOT_BILLED}"
         else:
             figure = f"{money(entry['dollars'])} at Bedrock rates, NOT in the total"
@@ -1231,7 +1236,7 @@ def local_report(meter: Meter, windows, billed, through, billed_state: str, tz=N
     rows = []
     for day, _, _ in windows:
         subs = day_summary(meter, day)["substrates"]
-        bedrock, seat = subs.get(BEDROCK) or {}, subs.get(SEAT) or {}
+        bedrock, subscription = subs.get(BEDROCK) or {}, subs.get(SUBSCRIPTION) or {}
         rows.append(
             {
                 "day": day,
@@ -1243,8 +1248,8 @@ def local_report(meter: Meter, windows, billed, through, billed_state: str, tz=N
                 "billed": None if billed is None else billed.get(day, 0.0),
                 "metered": bedrock.get("dollars", 0.0),
                 "sessions": bedrock.get("sessions", 0),
-                "seat": seat.get("dollars", 0.0),
-                "seat_sessions": seat.get("sessions", 0),
+                "subscription": subscription.get("dollars", 0.0),
+                "subscription_sessions": subscription.get("sessions", 0),
             }
         )
     week = rows[:-1]
@@ -1258,7 +1263,7 @@ def local_report(meter: Meter, windows, billed, through, billed_state: str, tz=N
         "week": {
             "billed": None if billed is None else sum(r["billed"] for r in week),
             "metered": sum(r["metered"] for r in week),
-            "seat": sum(r["seat"] for r in week),
+            "subscription": sum(r["subscription"] for r in week),
         },
         "unreadable_transcripts": meter.unreadable,
     }
@@ -1271,18 +1276,18 @@ def local_heading(report: dict) -> str:
         through = report["billed_through"]
         state = f"billed through {through}" if through else "nothing billed yet"
     return (
-        f"by local day ({report['zone']}), {state}; metered and seat at Bedrock "
-        "rates (sessions), the seat not billed"
+        f"by local day ({report['zone']}), {state}; metered and subscription at Bedrock "
+        "rates (sessions), the subscription not billed"
     )
 
 
 def local_row(row: dict, state: str) -> str:
-    """One day: billed beside metered, the seat apart. Shared with upkeep."""
+    """One day: billed beside metered, the subscription apart. Shared with upkeep."""
     billed = money(row["billed"]) if row["billed"] is not None else state
     return (
         f"{row['day']} {row['label']}: billed {billed} | metered "
-        f"{money(row['metered'])} ({row['sessions']}) | seat "
-        f"{money(row['seat'])} ({row['seat_sessions']})"
+        f"{money(row['metered'])} ({row['sessions']}) | subscription "
+        f"{money(row['subscription'])} ({row['subscription_sessions']})"
     )
 
 
@@ -1291,7 +1296,7 @@ def local_week(report: dict) -> str:
     billed = money(week["billed"]) if week["billed"] is not None else report["billed"]
     return (
         f"last {LOCAL_DAYS} days: billed {billed} | metered "
-        f"{money(week['metered'])} | seat {money(week['seat'])}"
+        f"{money(week['metered'])} | subscription {money(week['subscription'])}"
     )
 
 
@@ -1397,12 +1402,14 @@ def main(argv: list[str] | None = None) -> int:
             if issues:
                 top = ", ".join(f"{i} {money(c)}" for i, c in issues[: args.top])
                 lines.append(f"costliest issues: {top}")
-            seat_issues = issue_costs(meter, days, SEAT)
-            report["seat_issue_costs"] = seat_issues
-            if seat_issues:
-                top = ", ".join(f"{i} {money(c)}" for i, c in seat_issues[: args.top])
-                lines.append(f"seat issues {sm.NOT_BILLED}: {top}")
-            for substrate in (SEAT, UNATTRIBUTED):
+            subscription_issues = issue_costs(meter, days, SUBSCRIPTION)
+            report["subscription_issue_costs"] = subscription_issues
+            if subscription_issues:
+                top = ", ".join(
+                    f"{i} {money(c)}" for i, c in subscription_issues[: args.top]
+                )
+                lines.append(f"subscription issues {sm.NOT_BILLED}: {top}")
+            for substrate in (SUBSCRIPTION, UNATTRIBUTED):
                 counts = issue_session_counts(meter, days, substrate)
                 report[f"{substrate}_issues"] = counts
                 if counts:
