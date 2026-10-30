@@ -2004,8 +2004,10 @@ class FixtureReachabilityGateTests(unittest.TestCase):
     file one test pulls in with `include_str!`.
     """
 
-    READER = "market-data/tests/compose_agreement.rs"
-    FIXTURE = "infra/localnet/docker-compose.yml"
+    # The fixture must sit in a tree CI's `code` filter still excludes; the
+    # localnet compose file this once used is no longer one.
+    READER = "market-data/tests/stack_agreement.rs"
+    FIXTURE = "infra/aws/stack.yml"
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -2057,7 +2059,7 @@ class FixtureReachabilityGateTests(unittest.TestCase):
         # The negative case below rests on this too: if the README were ever
         # RUST_REACHABLE, `test_an_unrelated_excluded_path_stays_unreachable`
         # would be asserting nothing.
-        self.assertFalse(rd.rust_is_reachable(["infra/localnet/README.md"]))
+        self.assertFalse(rd.rust_is_reachable(["infra/aws/README.md"]))
 
     def test_touching_the_fixture_is_reachable_and_names_the_hit(self):
         verdict = self._commit_change(self.FIXTURE, "services: {db: {}}\n")
@@ -2068,7 +2070,7 @@ class FixtureReachabilityGateTests(unittest.TestCase):
         # The gate projects a sorted LIST out of a dict keyed by fixture, so
         # ordering and multiplicity are properties of the projection rather than of
         # the scanner — which the scanner's own sort/dedup tests cannot cover.
-        second = "infra/localnet/extra.yml"
+        second = "infra/aws/extra.yml"
         self._write(
             self.READER,
             f'const A: &str = include_str!("../../{self.FIXTURE}");\nconst B: &str = include_str!("../../{second}");\n',
@@ -2089,7 +2091,7 @@ class FixtureReachabilityGateTests(unittest.TestCase):
 
     def test_an_unrelated_excluded_path_stays_unreachable(self):
         # The list did not go blunt: only a path some test actually reads flips.
-        verdict = self._commit_change("infra/localnet/README.md", "notes\n")
+        verdict = self._commit_change("infra/aws/README.md", "notes\n")
         self.assertFalse(verdict["rust_reachable"])
         self.assertEqual(verdict["rust_fixture_hits"], [])
 
