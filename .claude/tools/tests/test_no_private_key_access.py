@@ -92,6 +92,39 @@ class NameTests(Base):
             "echo 'op://Dev/Example Quotes feed/credential'",
         )
 
+    def test_a_title_only_matches_at_the_start_of_the_item(self):
+        self.assertAllowed("echo 'op://x/Old Example Admin/k'")
+
+    def test_an_earlier_reference_does_not_swallow_a_key_item(self):
+        self.assertBlocked(
+            "echo op://Dev/x op://Other/Example Admin/k",
+            "echo op://Dev/x' 'op://Other/Example Admin/k",
+        )
+
+    def test_quoting_escaping_and_percent_encoding_inside_a_title(self):
+        self.assertBlocked(
+            "echo op://x/Example' 'Admin/k",
+            "echo op://x/'Example Admin'/k",
+            'echo op://x/"Example Admin (SSH)"/k',
+            "echo op://x/Example\\ Admin/k",
+            "echo op://x/Example%20Admin/k",
+            "echo 'op://Example%20Keys%20Vault/other/field'",
+        )
+
+    def test_titles_separate_on_comma_semicolon_or_newline(self):
+        env = {guard.KEY_ITEMS_ENV: "Example One; Example Two\nExample Three"}
+        for title in ("Example One", "Example Two", "Example Three"):
+            with self.subTest(title=title):
+                self.assertEqual(_bash("echo 'op://x/%s/k'" % title, env=env)[0], 2)
+        self.assertEqual(
+            guard._key_titles(env),
+            [
+                ("example", "one"),
+                ("example", "two"),
+                ("example", "three"),
+            ],
+        )
+
     def test_unset_items_env_matches_no_item(self):
         env = {guard.VAULT_ENV: ENV[guard.VAULT_ENV]}
         self.assertEqual(_bash("echo 'op://x/Example Admin/k'", env=env)[0], 0)

@@ -992,5 +992,44 @@ class ItermDriftTests(RepoFixture):
         )
 
 
+class GuardEnvTests(unittest.TestCase):
+    """The private-key guard's variables are reported by count, never value."""
+
+    VAULT = "DS_OP_PRIVATE_KEYS_VAULT"
+    ITEMS = "DS_OP_PRIVATE_KEY_ITEMS"
+
+    def _render(self, counts):
+        result = {
+            "wired": {"x.py": ["s"]},
+            "mismatched": {},
+            "misdirected": {},
+            "unwired": [],
+            "deny_missing": [],
+            "iterm": {"drift": {}, "deployed": False},
+            "guard_env": counts,
+        }
+        return hw.render(result)
+
+    def test_counts_parse_with_the_guards_own_rules(self):
+        env = {self.VAULT: "Example Vault,abc123", self.ITEMS: "A one; B two,,"}
+        self.assertEqual(hw.guard_env(env), {self.VAULT: 2, self.ITEMS: 2})
+        self.assertEqual(hw.guard_env({}), {self.VAULT: 0, self.ITEMS: 0})
+
+    def test_the_report_names_counts_never_values(self):
+        counts = hw.guard_env({self.VAULT: "Example Vault", self.ITEMS: "Secret Title"})
+        report = self._render(counts)
+        self.assertIn("every private-key guard variable is set", report)
+        self.assertNotIn("Example Vault", report)
+        self.assertNotIn("Secret Title", report)
+
+    def test_an_unset_variable_is_named_but_is_no_gap(self):
+        report = self._render(hw.guard_env({self.VAULT: "Example Vault"}))
+        self.assertIn(f"UNSET      {self.ITEMS}", report)
+        self.assertIn("name check is off", report)
+
+    def test_no_section_when_the_guard_cannot_load(self):
+        self.assertNotIn("guard-env", self._render(None))
+
+
 if __name__ == "__main__":
     unittest.main()

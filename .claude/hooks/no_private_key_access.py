@@ -12,14 +12,17 @@ that reaches toward them:
    read from ``DS_OP_PRIVATE_KEYS_VAULT`` in the session environment, comma
    separated for both; unset, the vault check is off), an ``op://``
    reference to one of the key items (their titles read from
-   ``DS_OP_PRIVATE_KEY_ITEMS``, comma separated, each matched
-   case-insensitively on the item's leading words, so a wallet record's
-   ``(SSH)`` signing duplicate matches too; unset, the item check is off),
-   or the 1Password agent socket. The committed script carries no real
-   vault name or item title. The titles are matched only inside an
-   ``op://`` reference: their words may be ordinary in this codebase, and a
-   guard that blocks ``grep Admin`` gets turned off. Fetching an item by its bare title needs ``op``, which
-   rule 2 blocks anyway.
+   ``DS_OP_PRIVATE_KEY_ITEMS``, separated by commas, semicolons or newlines,
+   each matched case-insensitively on the item's leading words, so a wallet
+   record's ``(SSH)`` signing duplicate matches too; unset, the item check is
+   off), or the 1Password agent socket. References are read with quotes and
+   backslashes removed and percent escapes decoded. The committed script
+   carries no real vault name or item title. The titles are matched only
+   inside an ``op://`` reference: their words may be ordinary in this
+   codebase, and a guard that blocks ``grep signer`` gets turned off.
+   Fetching an item by its bare title needs ``op``, which rule 2 blocks
+   anyway. ``make hook-wiring`` reports how many entries each variable
+   parses to, never their values.
 2. **``op`` at any command position**, including after ``env``, ``sudo``,
    ``xargs``, ``watch``, ``find -exec``, a control operator (glued or
    spaced), inside a ``-c`` payload, ``eval``, a command substitution, or a
@@ -87,6 +90,7 @@ import os
 import re
 import shlex
 import sys
+import urllib.parse
 
 try:
     import _shell_tokens as sh
@@ -107,8 +111,16 @@ MIN_VAULT_LEN = 3
 # under-blocks.
 KEY_ITEMS_ENV = "DS_OP_PRIVATE_KEY_ITEMS"
 
-# A segment may hold spaces, as a quoted title does (`'op://v/Key title/k'`).
-OP_REF_RE = re.compile(r"op://([^/'\"\n]+)/([^/'\"\n]+)")
+# Titles separate on a comma, a semicolon or a newline.
+TITLE_SEP_RE = re.compile(r"[,;\n]")
+
+# A segment may hold spaces, as a multi-word title does, but never runs into a
+# following reference (`op://a/b op://v/Key title/k` is two references). The
+# references are read from text with quotes and backslashes removed and percent
+# escapes decoded, so `'Key'' title'`, `Key\ title` and `Key%20title` all read
+# as `Key title`.
+OP_REF_RE = re.compile(r"op://((?:(?!op://)[^/\n])+)/((?:(?!op://)[^/\n])+)")
+UNQUOTE_RE = re.compile(r"[\\'\"]")
 ITEM_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 
 # The agent socket is `agent.sock` under 1Password's macOS group container,
@@ -178,19 +190,21 @@ def _key_titles(env):
     raw = env.get(KEY_ITEMS_ENV) or ""
     if not isinstance(raw, str):
         return []
-    titles = (tuple(w.lower() for w in ITEM_WORD_RE.findall(t)) for t in raw.split(","))
+    titles = (
+        tuple(w.lower() for w in ITEM_WORD_RE.findall(t))
+        for t in TITLE_SEP_RE.split(raw)
+    )
     return [t for t in titles if t]
 
 
 def _name_reason(text, vaults, titles):
     """Rule 1 on raw text: the vault, a key item reference, the agent socket."""
     low = text.lower()
+    plain = urllib.parse.unquote(UNQUOTE_RE.sub("", text))
     for vault in vaults:
-        if vault in low:
+        if vault in low or vault in plain.lower():
             return "the command names the private-keys vault"
-    for vault_seg, item_seg in OP_REF_RE.findall(text):
-        if vault_seg.strip().lower() in vaults:
-            return "the command names the private-keys vault"
+    for _vault_seg, item_seg in OP_REF_RE.findall(plain):
         words = tuple(w.lower() for w in ITEM_WORD_RE.findall(item_seg))
         if any(words[: len(title)] == title for title in titles):
             return "the command references a private-key item (%s)" % item_seg.strip()
@@ -536,6 +550,12 @@ BASH_CASES = [
     ("rg 'Example Upgrade Key' sdk/", False),
     ("echo op://Dev/feeds-api/credential", False),
     ("echo 'op://Dev/Example Feed/credential'", False),
+    ("echo op://Dev/x op://Other/Example Signer/k", True),
+    ("echo op://Other/Example' 'Signer/k", True),
+    ('echo op://Other/"Example Signer"/k', True),
+    ("echo op://Other/Example\\ Signer/k", True),
+    ("echo op://Other/Example%20Signer/k", True),
+    ("echo 'op://Other/Old Example Signer/k'", False),
     # Rule 2: op at any command position.
     ("op read op://x/y/z", True),
     ("op item list", True),
