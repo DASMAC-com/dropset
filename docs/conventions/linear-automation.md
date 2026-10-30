@@ -666,8 +666,8 @@ it runs every day, named by its date. The division of labour:
 
 - **The curator judges** — what to promote, kill or merge.
 - **The scheduler schedules** — the `plan` session owns dispatch,
-  holds, priorities and the direction after Todo, and owns the Planning
-  document.
+  holds and the direction after Todo, and owns the Planning document.
+- **Both hold priorities** — under the agreement rule below.
 - **The launcher starts the day** — it runs the lever fold, then
   dispatches the curator with one hand-off message carrying the batches
   filed and the kill and merge candidates with their evidence. The
@@ -734,14 +734,12 @@ review, and a count with no live curator means the curator stopped
 mid-day. Only the curator writes this milestone, and the scheduler
 never promotes it.
 
-The curator writes nothing else on its own: **no priority** beyond the
-architect task's fixed Urgent at filing (one it believes wrong is
-messaged to the scheduler, and waits while none is live), no edge,
-kill or merge the operator did not tick (see "Blocking relations"), no
-other milestone beyond its own mark, no title token, no other issue's
-state or body beyond the fold. It
-messages the scheduler every Todo move, cancel, merge and
-edge it places, and hands it any kill or merge that reaches outside the
+The curator writes nothing else on its own: no priority outside the
+agreement rule below, no edge, kill or merge the operator did not tick
+(see "Blocking relations"), no other milestone beyond its own mark, no
+title token, no other issue's state or body beyond the fold. It
+messages the scheduler every Todo move, cancel, merge, priority and
+edge it writes, and hands it any kill or merge that reaches outside the
 pool.
 
 **The close.** On the operator's close-out yes the scheduler lists live
@@ -753,6 +751,43 @@ prints `CLEAR TO CLOSE — close this window`, so its tab goes yellow
 once. Before that it sweeps its `Curator pending` marks; no other board
 write accompanies the stop, and no Planning-document note: the scheduler is
 rewriting the document as the curator stops.
+
+#### Priorities: shared authority, the agreement rule
+
+**Both advisors hold priority authority** (operator ruling,
+2026-10-29; ruling 2): the curator and the scheduler each write
+priorities, in Backlog and in Todo alike, because priorities shift as
+things come in and both sessions hold the context to judge them. The
+**agreement rule** keeps two writers coherent, and every skill that
+writes a priority cites it here rather than restating it:
+
+1. A priority write is **messaged to the other session in the same
+   turn**, with the reason (the edge rule, extended).
+1. The other may answer with a **counter-write** and its reason.
+1. A **third exchange** on one issue goes to the operator through
+   `AskUserQuestion` in the tab that last wrote.
+
+The scheduler owns dispatch order **as read**: it dispatches on the
+priorities as they stand at the moment of the wave. The Planning
+document records the result at the scheduler's next write-back. Two
+writers racing on one issue is last-write-wins; the message rule makes
+the loser visible in the same minute, and the third-exchange rule
+bounds a ping-pong.
+
+**Every filer proposes.** The `ratify-staged` filing ask carries a
+priority per task, with the filer's reasoning in a word; the yes writes
+it in the creating call; the filer then messages the live scheduler and
+curator the set in one line. Either confirms by silence or rewrites
+under the agreement rule; with neither live the proposal stands and is
+named in the handoff. `linear-task`, `audit-scope` and the curator's
+architect spin-off propose the same way. `[Operator]` items stay fixed
+at Urgent. The review ask shows each task's filed priority, so an
+inflated proposal is a tick-and-comment away from correction.
+
+(Struck 2026-10-29: the 2026-10-28 rule that "priorities are the
+scheduler's alone", under which the curator wrote none beyond the
+architect task's fixed Urgent and messaged a priority it believed
+wrong, waiting while no scheduler was live.)
 
 ### Which milestones park, and which do not
 
@@ -1614,8 +1649,9 @@ same human-placed form:
 Each is the human-placed form executed, never an automated filer
 deciding one.
 
-**Two edge writers, one coordination rule.** Priorities are the
-scheduler's alone; the curator messages one it believes wrong. Edges
+**Two edge writers, one coordination rule.** Priorities have two
+writers under the agreement rule ("The curator owns review" →
+"Priorities: shared authority, the agreement rule"). Edges
 have two writers: the scheduler and the curator both write them,
 anywhere on the board, because each sees what the other lacks — the
 scheduler the fleet and the dispatch order, the curator the specs it

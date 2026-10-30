@@ -17,7 +17,9 @@ space- or comma-separated) except ``list``:
 * ``ask --ids …`` — the ``AskUserQuestion`` payload for the review ask: one
   checkbox per staged task, never grouped, at most four per question and four
   questions per call (so sixteen tasks fit one ask; more spill into further
-  calls). Printed as JSON, ``{"calls": [{"questions": [...]}, ...]}``.
+  calls). Each description leads with the task's priority as filed, so the
+  operator reviews the filer's proposal in the same tick. Printed as JSON,
+  ``{"calls": [{"questions": [...]}, ...]}``.
 * ``review --ids …`` — for the tasks the operator ticked: each one is
   ``APPROVED`` (no open comment thread — the tick is the approval) or
   ``HELD`` (an open thread, printed with its id and body so the session can
@@ -25,7 +27,8 @@ space- or comma-separated) except ``list``:
 * ``approve --ids … [--cancel …] [--dry-run]`` — the one batch write at the
   end: every approved task loses the milestone and moves to Todo, every
   rejected one is canceled. Refuses the whole batch, writing nothing, while
-  any approved task still holds an open thread or is not staged. A task an
+  any approved task still holds an open thread or is not staged. Priority is
+  never written here: the filer set it in the creating call. A task an
   earlier, partly failed run already moved reports ``ALREADY`` and is
   skipped, so the same command re-runs cleanly.
 * ``gate --ids …`` — the close gate: exits 1, naming them, while any of the
@@ -43,12 +46,12 @@ drives through the same machinery:
   id to the one-line commentary that becomes that checkbox's description; the
   title otherwise) and ``--proposals`` (a JSON list of edges
   ``{"edge": {"blocker": …, "blocked": …}, "reason": …}``, and the launcher's
-  hand-off kills ``{"kill": …, "reason": …}`` and merges
-  ``{"merge": [… two or more], "reason": …}``, rendered as a further
-  multi-select question whose ticks the session executes — an edge through
-  ``board_batch.py``, a kill as a cancel, a merge through ``merge-tasks``).
-  There is no priority kind: priorities are the scheduler's alone. Both work
-  on either pool.
+  hand-off kills ``{"kill": …, "reason": …}``, merges
+  ``{"merge": [… two or more], "reason": …}`` and priority changes
+  ``{"priority": {"id": …, "to": …}, "reason": …}``, rendered as a further
+  multi-select question whose ticks the session executes — an edge or a
+  priority through ``board_batch.py``, a kill as a cancel, a merge through
+  ``merge-tasks``). Both work on either pool.
 * ``approve --pool inbox`` takes **at most one** ``--ids`` — the
   one-at-a-time rule, enforced here rather than in prose — plus any number of
   ``--cancel`` rejects. The approved id moves to Todo; the rest is as above.
@@ -378,7 +381,7 @@ def parse_notes(raw: object, ids: list[str]) -> dict[str, str]:
     return notes
 
 
-PROPOSAL_KINDS = ("edge", "kill", "merge")
+PROPOSAL_KINDS = ("edge", "kill", "merge", "priority")
 ISSUE_ID = re.compile(r"ENG-(\d+)")
 
 
@@ -401,17 +404,42 @@ def _hand_off_ids(proposal: dict) -> list[str]:
     return []
 
 
+def _priority_target(proposal: dict) -> str | None:
+    """The issue a priority proposal re-ranks; ``None`` for any other kind."""
+    if "priority" not in proposal:
+        return None
+    change = proposal["priority"]
+    if not isinstance(change, dict) or "id" not in change:
+        raise RatifyError(f"priority {change!r} needs an id and a target 'to'")
+    return _issue_id(change["id"])[0]
+
+
+def priority_name(value: object) -> str:
+    """A priority, by name or Linear's integer, as the ask shows it."""
+    try:
+        number = board_batch.normalize_priority(value)
+    except board_batch.BoardBatchError as exc:
+        raise RatifyError(str(exc)) from exc
+    return "No priority" if number == 0 else board_batch.PRIORITY_LABELS[number].title()
+
+
 def proposal_option(proposal: object) -> dict:
-    """One proposal as a checkbox: an edge, or a kill or merge from the
-    launcher's hand-off, its reason (the evidence) as the description. No
-    priority kind: priorities are the scheduler's alone."""
+    """One proposal as a checkbox: an edge, a priority change, or a kill or
+    merge from the launcher's hand-off, its reason (the evidence) as the
+    description."""
     if not isinstance(proposal, dict) or not str(proposal.get("reason", "")).strip():
         raise RatifyError(f"proposal {proposal!r} needs a one-line reason")
     kinds = [k for k in PROPOSAL_KINDS if k in proposal]
     if len(kinds) > 1:
         raise RatifyError(f"proposal {proposal!r} mixes {' and '.join(kinds)}")
     reason = str(proposal["reason"]).strip()
-    edge, kill, merge = (proposal.get(k) for k in PROPOSAL_KINDS)
+    edge, kill, merge, _ = (proposal.get(k) for k in PROPOSAL_KINDS)
+    target = _priority_target(proposal)
+    if target is not None:
+        if "to" not in proposal["priority"]:
+            raise RatifyError(f"priority for {target} needs a target 'to'")
+        to = priority_name(proposal["priority"]["to"])
+        return {"label": f"{target} to {to}", "description": reason}
     if isinstance(edge, dict) and edge.get("blocker") and edge.get("blocked"):
         blocker = str(edge["blocker"]).strip().upper()
         blocked = str(edge["blocked"]).strip().upper()
@@ -429,8 +457,8 @@ def proposal_option(proposal: object) -> dict:
             "description": reason,
         }
     raise RatifyError(
-        f"proposal {proposal!r} is neither an edge {{blocker, blocked}}, a kill "
-        "(an id) nor a merge (two or more ids)"
+        f"proposal {proposal!r} is neither an edge {{blocker, blocked}}, a "
+        "priority {id, to}, a kill (an id) nor a merge (two or more ids)"
     )
 
 
@@ -438,7 +466,9 @@ def parse_proposals(raw: object) -> list[dict]:
     if raw is None:
         return []
     if not isinstance(raw, list):
-        raise RatifyError("--proposals expects a list of edges, kills and merges")
+        raise RatifyError(
+            "--proposals expects a list of edges, priorities, kills and merges"
+        )
     options = [proposal_option(p) for p in raw]
     labels = [o["label"] for o in options]
     repeated = sorted({label for label in labels if labels.count(label) > 1})
@@ -452,6 +482,11 @@ def parse_proposals(raw: object) -> list[dict]:
         raise RatifyError(
             f"--proposals names an issue in two kills or merges: {', '.join(contested)}"
         )
+    ranked = [t for t in (_priority_target(p) for p in raw) if t]
+    twice = sorted({t for t in ranked if ranked.count(t) > 1})
+    if twice:
+        # Two ticked targets for one issue: whichever ran last would win.
+        raise RatifyError(f"--proposals re-ranks an issue twice: {', '.join(twice)}")
     return options
 
 
@@ -499,14 +534,18 @@ def build_ask(
     operator: dict | None = None,
 ) -> dict:
     """The review ask as ``AskUserQuestion`` payloads, one per call: a checkbox
-    per task (its note as the description, else its title), then the one
-    ``operator`` option (the fifth box, already described) as its own
-    question, then any proposals as further questions."""
+    per task (its priority, then its note or else its title, as the
+    description), then the one ``operator`` option (the fifth box, already
+    described) as its own question, then any proposals as further
+    questions."""
     notes = notes or {}
     options = [
         {
             "label": issue["identifier"],
-            "description": notes.get(issue["identifier"]) or issue["title"],
+            "description": (
+                f"{priority_name(issue.get('priority') or 0)} · "
+                f"{notes.get(issue['identifier']) or issue['title']}"
+            ),
         }
         for issue in issues
     ]

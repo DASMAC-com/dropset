@@ -469,7 +469,8 @@ Optional (ask on a scoped run if not provided):
        --state Backlog --milestone 'Session pending' --priority 3
      ```
 
-     `--priority 2` for a high-severity security finding.
+     `--priority 2` for a high-severity security finding: a
+     **proposal**, messaged as `ratify-staged` step 2 says.
      Team, project and assignee resolve from the `LINEAR_*`
      environment by default, so they are never spelled here.
 

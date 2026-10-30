@@ -47,17 +47,32 @@ the document's state sections.
    planning session, a seat session's filing yes in the operator's
    tab (`ratify-staged`), and an edge the operator ticks in the
    curator's tab (ruling 12). (`SKILL.md` step 2.)
-   **The coordination rule** (2026-10-26, amended 2026-10-28): the
-   curator judges — promote, kill, merge; the scheduler schedules,
-   owns priorities, the direction and the Planning document; the
-   launcher starts the day and hands the curator its kill and
-   merge candidates. Priorities are the scheduler's alone: the
-   curator messages one it believes wrong, and with no live
-   scheduler it waits. Both write edges anywhere; an edge write
-   touching what the other placed is messaged to it in the same
-   turn with the reason; neither deletes the other's edge without
-   a message; the document records the result at the scheduler's
-   next write-back. **The close** (2026-10-28): on the operator's
+   **The coordination rule** (2026-10-26, amended 2026-10-28 and
+   2026-10-29): the curator judges — promote, kill, merge; the
+   scheduler schedules, owns the direction and the Planning
+   document; the launcher starts the day and hands the curator its
+   kill and merge candidates. **Both advisors hold priority
+   authority** (2026-10-29), in Backlog and in Todo alike, under
+   the **agreement rule**: a priority write is messaged to the
+   other session in the same turn with the reason; the other may
+   answer with a counter-write and its reason; a third exchange on
+   one issue goes to the operator through `AskUserQuestion` in the
+   tab that last wrote. The scheduler owns dispatch order as read:
+   it dispatches on the priorities as they stand at the moment of
+   the wave. **Every filer proposes**: the filing ask carries a
+   priority per task, the yes writes it in the creating call, and
+   the filer messages the live scheduler and curator the set in one
+   line; either confirms by silence or rewrites under the agreement
+   rule, and with neither live the proposal stands and is named in
+   the handoff. `[Operator]` items stay fixed at Urgent. (Struck
+   2026-10-29: the 2026-10-28 clause "priorities are the
+   scheduler's alone", under which the curator only messaged a
+   priority it believed wrong and waited.) Both write edges
+   anywhere; an edge write touching what the other placed is
+   messaged to it in the same turn with the reason; neither
+   deletes the other's edge without a message; the document
+   records the result at the scheduler's next write-back.
+   **The close** (2026-10-28): on the operator's
    close-out yes the scheduler messages a live curator "closing
    for the day", waits for no answer, and reports
    `curator: not live` otherwise; the curator finishes a batch
@@ -127,8 +142,9 @@ the document's state sections.
    curator's carve-out** (2026-10-26): it moves a ticked,
    uncommented pool member to Todo one at a time, the tick in its
    tab being the operator's move, and executes an edge, kill or
-   merge the operator ticks in the same tab — never a priority —
-   messaging the scheduler each one.
+   merge the operator ticks in the same tab, and writes priorities
+   under ruling 2's agreement rule — messaging the scheduler each
+   one.
 
 1. **Planning is read-only toward the repo.** A scheduler session
    writes Linear state only; a fast-forward of the base checkout

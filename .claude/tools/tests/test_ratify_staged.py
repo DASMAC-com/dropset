@@ -285,14 +285,30 @@ class InboxPoolTests(unittest.TestCase):
 
     def test_notes_become_the_checkbox_descriptions(self):
         payload = build_ask(
-            [_inbox(1), _inbox(2)], notes={"ENG-1": "Carried from 10-26"}
+            [_inbox(1, priority=2), _inbox(2)], notes={"ENG-1": "Carried from 10-26"}
         )
         (question,) = payload["calls"][0]["questions"]
         self.assertEqual(question["question"], rs.ASK_TEXT)
         self.assertEqual(question["header"], rs.ASK_HEADER)
         self.assertEqual(
             [o["description"] for o in question["options"]],
-            ["Carried from 10-26", "Task 2"],
+            ["High · Carried from 10-26", "No priority · Task 2"],
+        )
+
+    def test_every_checkbox_leads_with_the_filed_priority(self):
+        issues = [_issue(n) for n in (1, 2, 3, 4)]
+        for issue, priority in zip(issues, (1, 2, 3, 4)):
+            issue["priority"] = priority
+        (call,) = build_ask(issues)["calls"]
+        (question,) = call["questions"]
+        self.assertEqual(
+            [o["description"] for o in question["options"]],
+            [
+                "Urgent · Task 1",
+                "High · Task 2",
+                "Medium · Task 3",
+                "Low · Task 4",
+            ],
         )
 
     def test_a_note_for_an_id_outside_the_ask_is_refused(self):
@@ -359,11 +375,49 @@ class InboxPoolTests(unittest.TestCase):
                 ]
             )
 
-    def test_the_curator_cannot_propose_a_priority(self):
-        with self.assertRaisesRegex(RatifyError, "neither an edge"):
+    def test_a_priority_change_is_a_proposal_kind(self):
+        options = rs.parse_proposals(
+            [
+                {"priority": {"id": "eng-03", "to": "high"}, "reason": "Demo"},
+                {"priority": {"id": "ENG-4", "to": 4}, "reason": "Nice to have"},
+            ]
+        )
+        self.assertEqual(
+            options,
+            [
+                {"label": "ENG-3 to High", "description": "Demo"},
+                {"label": "ENG-4 to Low", "description": "Nice to have"},
+            ],
+        )
+        with self.assertRaisesRegex(RatifyError, "unrecognized"):
             rs.parse_proposals(
-                [{"priority": {"id": "ENG-3", "to": "High"}, "reason": "Demo"}]
+                [{"priority": {"id": "ENG-3", "to": "soon"}, "reason": "x"}]
             )
+        with self.assertRaisesRegex(RatifyError, "target 'to'"):
+            rs.parse_proposals([{"priority": {"id": "ENG-3"}, "reason": "x"}])
+        with self.assertRaisesRegex(RatifyError, "mixes edge and priority"):
+            rs.parse_proposals(
+                [
+                    {
+                        "edge": {"blocker": "ENG-1", "blocked": "ENG-2"},
+                        "priority": {"id": "ENG-3", "to": "High"},
+                        "reason": "x",
+                    }
+                ]
+            )
+        # Two targets for one issue: the ticks could not both stand.
+        with self.assertRaisesRegex(RatifyError, "re-ranks an issue twice: ENG-3"):
+            rs.parse_proposals(
+                [
+                    {"priority": {"id": "ENG-3", "to": "High"}, "reason": "x"},
+                    {"priority": {"id": "ENG-03", "to": "Low"}, "reason": "y"},
+                ]
+            )
+
+    def test_approval_never_writes_a_priority(self):
+        for pool, issue in (("staged", _issue(1)), ("inbox", _inbox(1, priority=2))):
+            updates, _ = plan_approval([issue], [], held=[], pool=pool)
+            self.assertNotIn("priority", updates["ENG-1"], pool)
 
     def test_the_inbox_approves_one_task_at_a_time(self):
         with self.assertRaisesRegex(RatifyError, "one task at a time, got 2"):
@@ -420,7 +474,10 @@ class InboxRunTests(unittest.TestCase):
         options = payload["calls"][0]["questions"][0]["options"]
         self.assertEqual(
             [(o["label"], o["description"]) for o in options],
-            [("ENG-1", "Task 1"), ("ENG-2", "Operator item, hand-run")],
+            [
+                ("ENG-1", "No priority · Task 1"),
+                ("ENG-2", "No priority · Operator item, hand-run"),
+            ],
         )
 
     def test_approve_refuses_a_second_id_and_writes_nothing(self):
@@ -489,7 +546,7 @@ class InboxRunTests(unittest.TestCase):
         payload = json.loads(out)
         self.assertEqual(payload["skipped"], ["ENG-2"])
         options = payload["calls"][0]["questions"][0]["options"]
-        self.assertEqual(options[0]["description"], "Keep")
+        self.assertEqual(options[0]["description"], "No priority · Keep")
 
     def test_a_curator_pending_member_is_still_in_the_inbox(self):
         marked = _issue(1, milestone=rs.CURATOR_MILESTONE)

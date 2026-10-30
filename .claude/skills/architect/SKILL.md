@@ -164,7 +164,9 @@ is forbidden.
   ratified, which it places on filing — one may name an existing
   issue, since the yes named it, and that relation is the only
   touch on that issue;
-- **no re-prioritizing**, no milestone changes beyond its own
+- **no re-prioritizing** — its one priority write is the proposal
+  on each of its own tasks, written at filing as the filing yes left
+  it (`ratify-staged` step 1); no milestone changes beyond its own
   tasks' `Session pending`, no closing beyond its own rejects;
 - **nothing on another issue** — not its state, not its body.
 
