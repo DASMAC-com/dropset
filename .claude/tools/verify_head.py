@@ -20,8 +20,9 @@ the whole fall-through inside one Bash call::
    ``gh pr view --json headRefOid`` and the watcher's own
    ``gh pr checks --json`` read, believed only while the PR's head is this
    SHA. Otherwise the run is local only and the verdict says why.
-3. **Each check settles on whichever side finishes first.** CI's ``Lint``
-   green kills the local lint; every ``Tests*`` check green — which is how
+3. **Each check settles on whichever side finishes first.** Every ``Lint*``
+   check green (``Lint``, ``Lint (clippy)``, ``Lint (rustdoc)``) kills the
+   local lint; every ``Tests*`` check green — which is how
    CI's ``code`` filter reports a PR no test can see — kills or skips the
    local test. A ``skipping`` job verified nothing (its ``Detect changes``
    failed), so it never settles a check. A
@@ -47,7 +48,8 @@ the whole fall-through inside one Bash call::
 Prints one verdict line, then appends the machine-load probe's ``--sample``
 line to the fleet log (best-effort)::
 
-    verify-head: GREEN sha=0123456789ab lint=ci:green[Lint] \
+    verify-head: GREEN sha=0123456789ab \
+lint=ci:green[Lint,Lint (clippy),Lint (rustdoc)] \
 test=local:green[/…/verify-head-0123456789ab-test.log] wall=212s \
 killed=lint ci=consulted
 
