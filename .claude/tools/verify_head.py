@@ -85,13 +85,14 @@ import wait_for_checks as wfc
 #: The two checks, in local run order, and the make target each runs.
 STAGES = (("lint", ["make", "lint-abridged"]), ("test", ["make", "test-abridged"]))
 
-#: CI's check for each stage: ``Lint`` exactly, and every ``Tests*`` job.
-CI_LINT = re.compile(r"^Lint$")
+#: CI's check for each stage: every ``Lint*`` job, and every ``Tests*`` job.
+CI_LINT = re.compile(r"^Lint\b")
 CI_TEST = re.compile(r"^Tests\b")
 
 #: The jobs that must all have registered before a check reads green, so a
-#: subset that registered (and passed) first cannot settle it early.
-LINT_JOBS = frozenset({"Lint"})
+#: subset that registered (and passed) first cannot settle it early. The
+#: cargo-backed hooks run in their own jobs, so ``Lint`` alone is not lint.
+LINT_JOBS = frozenset({"Lint", "Lint (clippy)", "Lint (rustdoc)"})
 TEST_JOBS = frozenset(
     {"Tests", "Tests (no teardown)", "Tests (asm parity)", "Tests (Postgres)"}
 )

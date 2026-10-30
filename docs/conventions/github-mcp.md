@@ -503,13 +503,17 @@ credential out of every build step that has no business seeing it.
 
 ### Required status checks
 
-Nine contexts gate `main`, via a repository **ruleset** (not classic
+Eleven contexts gate `main`, via a repository **ruleset** (not classic
 branch protection — the branch-protection REST endpoint returns 404, so
 read them with `gh api repos/{owner}/{repo}/rulesets/{id}`):
 
-`Semantic PR`, `Lint`, `Detect changes`, `Tests`,
-`Tests (no teardown)`, `Tests (asm parity)`, `Tests (Postgres)`, `SDK`,
-`Frontend`.
+`Semantic PR`, `Lint`, `Lint (clippy)`, `Lint (rustdoc)`,
+`Detect changes`, `Tests`, `Tests (no teardown)`, `Tests (asm parity)`,
+`Tests (Postgres)`, `SDK`, `Frontend`.
+
+`Lint (clippy)` and `Lint (rustdoc)` are the two legs of `lint.yml`'s
+`lint-rust` matrix job, split out of `Lint` so the cargo-backed hooks
+run beside the rest instead of after them.
 
 Note these are **job** names, not step names. A workflow can therefore
 add or remove a *step* inside a required job with no ruleset change at

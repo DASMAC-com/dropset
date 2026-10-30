@@ -272,15 +272,20 @@ class BucketStateTest(unittest.TestCase):
     def test_states(self):
         checks = [
             {"name": "Lint", "bucket": "pass"},
+            {"name": "Lint (clippy)", "bucket": "pass"},
+            {"name": "Lint (rustdoc)", "bucket": "pass"},
             {"name": "Tests", "bucket": "pass"},
             {"name": "Tests (Postgres)", "bucket": "pending"},
             {"name": "Detect changes", "bucket": "pass"},
         ]
         lint = (vh.CI_LINT, vh.LINT_JOBS)
         test = (vh.CI_TEST, vh.TEST_JOBS)
-        self.assertEqual(vh.bucket_state(checks, *lint), ("green", "Lint"))
+        self.assertEqual(
+            vh.bucket_state(checks, *lint),
+            ("green", "Lint,Lint (clippy),Lint (rustdoc)"),
+        )
         self.assertEqual(vh.bucket_state(checks, *test), PEND)
-        checks[2]["bucket"] = "cancel"
+        checks[4]["bucket"] = "cancel"
         self.assertEqual(vh.bucket_state(checks, *test), ("red", "Tests (Postgres)"))
         self.assertEqual(vh.bucket_state([], *lint), PEND)
 
@@ -289,16 +294,29 @@ class BucketStateTest(unittest.TestCase):
         self.assertEqual(vh.bucket_state(checks, vh.CI_TEST, vh.TEST_JOBS), PEND)
         checks = [{"name": n, "bucket": "pass"} for n in sorted(vh.TEST_JOBS)]
         self.assertEqual(vh.bucket_state(checks, vh.CI_TEST, vh.TEST_JOBS)[0], "green")
+        # A green `Lint` without its cargo-backed siblings is not lint.
+        checks = [{"name": "Lint", "bucket": "pass"}]
+        self.assertEqual(vh.bucket_state(checks, vh.CI_LINT, vh.LINT_JOBS), PEND)
 
     def test_expected_jobs_match_the_workflows(self):
         # A renamed job would leave a check pending forever (CI never settles
-        # it), so pin the sets to the workflows' own job names.
+        # it), so pin the sets to the workflows' own job names, a matrix
+        # job's name expanded over its `hook` legs.
         root = Path(__file__).resolve().parents[3] / ".github" / "workflows"
         named = re.compile(r"^    name: '([^']+)'$", re.MULTILINE)
         tests = {n for n in named.findall((root / "test.yml").read_text())}
-        lint = set(named.findall((root / "lint.yml").read_text()))
+        text = (root / "lint.yml").read_text()
+        legs = re.search(r"^        hook:\n((?:        - '[^']+'\n)+)", text, re.M)
+        self.assertIsNotNone(legs)
+        hooks = re.findall(r"- '([^']+)'", legs.group(1))
+        lint = set()
+        for name in named.findall(text):
+            if "${{ matrix.hook }}" in name:
+                lint |= {name.replace("${{ matrix.hook }}", h) for h in hooks}
+            else:
+                lint.add(name)
         self.assertEqual({n for n in tests if vh.CI_TEST.search(n)}, set(vh.TEST_JOBS))
-        self.assertLessEqual(set(vh.LINT_JOBS), lint)
+        self.assertEqual(set(vh.LINT_JOBS), lint)
 
 
 class LocalOnlyReasonTest(unittest.TestCase):
