@@ -43,7 +43,10 @@ the document's state sections.
 
 1. **Next means dispatchable right now.** A planning hold is a
    blocking edge the operator can see, never prose-only state.
-   Automated filers never place an edge. (`SKILL.md` step 2.)
+   Automated filers never place an edge; the human sources are a
+   planning session, a seat session's filing yes in the operator's
+   tab (`ratify-staged`), and an edge the operator ticks in the
+   curator's tab (ruling 12). (`SKILL.md` step 2.)
    **The coordination rule** (2026-10-26, amended 2026-10-28): the
    curator judges — promote, kill, merge; the scheduler schedules,
    owns priorities, the direction and the Planning document; the
@@ -224,6 +227,49 @@ the document's state sections.
    issue; a skill kicks the session off and it reads the Linear
    text as its whole brief, on Sonnet-class Bedrock, and the
    launch fails fast if the model is not enabled.
+
+1. **Program-touching work lands before the mainnet publish**,
+   never as a later upgrade; the performance-fee issue is the one
+   ruled exception after C2. The publish ceremony chore carries
+   the merged-at-recorded-commit check (2026-10-26).
+
+1. **Docs move with behavior.** A PR that changes behavior the
+   architecture or interface docs describe updates those docs in
+   the same PR; every dispatch carries that line in its kick-off
+   (2026-10-26).
+
+1. **A first execute rehearsal, on localnet, precedes the
+   publish** as
+   ceremony precondition 7: kill the ladders, close the vault,
+   drain the leader through the confirm path. The C4 real-vault
+   rehearsal stays (2026-10-26).
+
+1. **Demo first, in three phases.** Throughput is bounded by how
+   many sessions and ratifications run at once, so the board is
+   sequenced in phases and priority follows the phase: A, the
+   localnet demo, until a person swaps USDC to tGBP and back on a
+   phone against the passive ladder; B, the pre-publish program
+   set and the SDK freeze; C, custody and the mainnet publish with
+   funds (2026-10-26).
+
+1. **A fix that shortens every in-flight PR's path jumps the
+   queue.** PR-throughput tasks get held slots ahead of the
+   dispatch queue; the fleet is not resumed while a shared build
+   lock makes every lint wait; every resumed or dispatched session
+   is told to rebase onto current main first (2026-10-27).
+
+1. **A blank vault name renders as `#` plus the per-market
+   sequence number** on every surface, TUI and frontend alike,
+   never the sector index; the leader stays visible in the vault
+   dialog and the cell's hover title (product ruling, 2026-10-26).
+
+1. **Fleet limits are the runtime config's alone.** The fleet
+   total and the load gate (`DS_FLEET_TOTAL`,
+   `DS_FLEET_CPU_LOAD_MAX`) are read by the dispatch tooling and
+   by nothing else; no ruling, Planning-document line or scheduler
+   states a value. The scheduler simply dispatches, and the
+   dispatcher's refusal is how it learns a limit is reached
+   (2026-10-29).
 
 ## Rulings index (beyond the numbered set)
 
