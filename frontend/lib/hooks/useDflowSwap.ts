@@ -1,171 +1,23 @@
 "use client";
 
-import { useSolanaClient, useWallet } from "@solana/react-hooks";
-import { useCallback, useRef, useState } from "react";
-import { stablecoinDecimals, stablecoinMint } from "../data/currencies";
 import { executeDflowSwap } from "../dflow/dflowSwap";
-import { emit } from "../events";
-import { parseAmountToBase } from "../format/balance";
 import { percentToBps } from "../format/percent";
-import { getErrorMessage } from "../guards";
-import { type Slippage, useSwapStore } from "../store";
-import { waitForSwapConfirmation } from "../swap/confirm";
-import { SwapError, type SwapOutcome } from "../swap/types";
-
-export type SwapStatus =
-  | "idle"
-  | "preparing" // GET /order in flight
-  | "signing" // tx handed to wallet for signing + submission
-  | "confirming" // signature received, polling RPC for on-chain confirmation
-  | "success"
-  // Confirmed on-chain, but nothing moved: the eCLOB program soft-reverts a
-  // fill below `min_out` and still returns a successful transaction, so this
-  // is neither a success nor an error. Its own outcome rather than a flag on
-  // `result` because the two need different chrome and different follow-up —
-  // the user's funds are untouched and the swap is worth retrying.
-  //
-  // Only the eCLOB path can produce it; the aggregator route reverts in the
-  // ordinary way and lands on "error". Shared here because both hooks return
-  // one `UseDflowSwap`, so the panel switches on one union either way.
-  | "no-fill"
-  // Submitted, but confirmation ran out of time without a verdict, so the
-  // swap may still land. Not an error: the form must stay locked rather than
-  // invite a retry that would be a second real swap. `error` carries the
-  // message and the signature to check.
-  | "unconfirmed"
-  | "error";
-
-// Statuses during which a swap may still move funds: the Swap button stays
-// disabled through all of them, whichever venue's hook holds them.
-export const isSwapPending = (status: SwapStatus): boolean =>
-  status === "preparing" ||
-  status === "signing" ||
-  status === "confirming" ||
-  status === "unconfirmed";
-
-// Augment the bare DFlow result with the from/to symbols captured at the
-// moment of execution. Pinning these here (rather than reading from the
-// live store in the result banner) means flipping sides after a swap
-// can't rewrite history on the success/error chrome.
-export type CompletedSwap = SwapOutcome & {
-  fromStablecoin: string;
-  toStablecoin: string;
-};
-
-// Flat shape (not a discriminated union) on purpose: SwapResult reads
-// both `status` and `result` to render the success banner with a link to
-// the explorer, and the success → idle transition (via reset()) should
-// not require re-typing `result`. A strict union would also force the
-// confirming → success transition to atomically swap status + result,
-// which is harder to reason about than letting React set both in the
-// same effect tick.
-export type UseDflowSwap = {
-  status: SwapStatus;
-  result: CompletedSwap | null;
-  error: SwapError | null;
-  // `quotedOutAmount` is the output the panel showed when Swap was pressed;
-  // the executor refuses a fresh price more than the slippage below it.
-  execute: (quotedOutAmount: bigint) => Promise<void>;
-  reset: () => void;
-};
+import type { Slippage } from "../store";
+import type { SwapOutcome, UseSwap } from "../swap/types";
+import { type SwapRoute, useSwapExecution } from "./useSwapExecution";
 
 const slippageBpsParam = (slip: Slippage): string =>
   slip.mode === "auto" ? "auto" : percentToBps(slip.percent).toString();
 
-export function useDflowSwap(): UseDflowSwap {
-  const wallet = useWallet();
-  const client = useSolanaClient();
-  const fromStablecoin = useSwapStore((s) => s.from.stablecoin);
-  const toStablecoin = useSwapStore((s) => s.to.stablecoin);
-  const amount = useSwapStore((s) => s.amount);
-  const setAmount = useSwapStore((s) => s.setAmount);
-  const slippage = useSwapStore((s) => s.slippage);
+// The aggregator reverts a failed swap in the ordinary way, so a confirmed
+// transaction is a fill at the figures the order returned: no `settle`.
+const DFLOW_ROUTE: SwapRoute<SwapOutcome> = {
+  submit: ({ slippage, ...req }) =>
+    executeDflowSwap({ ...req, slippageBps: slippageBpsParam(slippage) }),
+};
 
-  const [status, setStatus] = useState<SwapStatus>("idle");
-  const [result, setResult] = useState<CompletedSwap | null>(null);
-  const [error, setError] = useState<SwapError | null>(null);
-
-  // Track whether a swap is in flight so multiple clicks don't queue.
-  const inFlight = useRef(false);
-
-  const reset = useCallback(() => {
-    setStatus("idle");
-    setResult(null);
-    setError(null);
-  }, []);
-
-  const execute = useCallback(
-    async (quotedOutAmount: bigint) => {
-      if (inFlight.current) return;
-      if (wallet.status !== "connected") {
-        setError(new SwapError("Wallet not connected", "wallet"));
-        setStatus("error");
-        return;
-      }
-      const fromMint = stablecoinMint(fromStablecoin);
-      const toMint = stablecoinMint(toStablecoin);
-      const fromDecimals = stablecoinDecimals(fromStablecoin);
-      const atomicAmount = parseAmountToBase(amount, fromDecimals);
-      if (atomicAmount === 0n) return;
-      if (fromMint === toMint) return;
-
-      inFlight.current = true;
-      setError(null);
-      setResult(null);
-      setStatus("preparing");
-
-      try {
-        setStatus("signing");
-        // Re-check wallet status right before handing off to the order +
-        // signing path. The initial check above is racy: between then and
-        // now we've awaited nothing, but useCallback could be re-invoked
-        // after a disconnect dispatched during the same tick. Catching it
-        // here keeps the failure mode "Wallet not connected" instead of a
-        // confusing wallet-adapter error during sendTransaction.
-        if (wallet.status !== "connected") {
-          throw new SwapError("Wallet not connected", "wallet");
-        }
-        const res = await executeDflowSwap({
-          inputMint: fromMint,
-          outputMint: toMint,
-          atomicAmount,
-          slippageBps: slippageBpsParam(slippage),
-          quotedOutAmount,
-          userPublicKey: wallet.session.account.address.toString(),
-          walletSession: wallet.session,
-          rpc: client.runtime.rpc,
-        });
-        // Wallet `sendTransaction` resolves at submission — wait for on-chain
-        // confirmation before declaring success, otherwise the balance refetch
-        // we fire next sees stale state.
-        setStatus("confirming");
-        await waitForSwapConfirmation(client.runtime.rpc, res.signature, {
-          lifetime: res.lifetime,
-        });
-        setResult({ ...res, fromStablecoin, toStablecoin });
-        setStatus("success");
-        // Clear the input once the swap confirms: the from-balance just
-        // dropped by `amount`, so leaving it populated invites a re-submit
-        // the user likely can no longer fund (or didn't intend to repeat).
-        setAmount("");
-        // Tell components subscribed via useSplToken to refetch — the swap
-        // mutated balances for both the from- and to-mints.
-        emit("swapSucceeded");
-      } catch (e) {
-        const err =
-          e instanceof SwapError
-            ? e
-            : new SwapError(getErrorMessage(e), "wallet");
-        setError(err);
-        setStatus(err.kind === "unconfirmed" ? "unconfirmed" : "error");
-        // The swap may have landed, so the balances on screen may be stale.
-        if (err.kind === "unconfirmed") emit("swapSucceeded");
-      } finally {
-        inFlight.current = false;
-      }
-    },
-    [wallet, client, fromStablecoin, toStablecoin, amount, slippage, setAmount],
-  );
-
-  return { status, result, error, execute, reset };
+// Swaps through the DFlow aggregator: GET /order, then the wallet's
+// `sendTransaction`.
+export function useDflowSwap(): UseSwap {
+  return useSwapExecution(DFLOW_ROUTE);
 }

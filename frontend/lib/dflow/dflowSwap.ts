@@ -66,6 +66,8 @@ export type DflowSwapInput = {
   // Used to check (once, cached) whether the platform-fee vault for the output
   // mint exists on-chain before declaring the fee to DFlow.
   rpc: SolanaClientRuntime["rpc"];
+  // Called once the order is fetched and checked, as it goes to the wallet.
+  onSigning?: () => void;
 };
 
 // Check a decoded /order against what the user asked for, before the wallet
@@ -137,6 +139,7 @@ export async function executeDflowSwap(
     userPublicKey,
     walletSession,
     rpc,
+    onSigning,
   } = input;
 
   const url = new URL(absoluteUrl(DFLOW_ORDER_URL));
@@ -239,6 +242,7 @@ export async function executeDflowSwap(
     );
   }
 
+  onSigning?.();
   let signature: Signature;
   try {
     // Cast: the DFlow tx is missing the user's signature — the wallet adds it

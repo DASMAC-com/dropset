@@ -36,7 +36,8 @@ import { INITIAL_QUOTE, type QuoteState } from "../quote";
 // lifecycle around it.
 
 // Slippage flag sent to the aggregator. "auto" lets DFlow size it from current
-// liquidity; we render the returned `slippageBps` for transparency.
+// liquidity. The returned `slippageBps` is carried on the quote but not
+// rendered.
 const SLIPPAGE = "auto";
 
 // The timer mirrors the eCLOB hook: debounce on input change, then refresh on

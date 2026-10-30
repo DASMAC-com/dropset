@@ -70,7 +70,14 @@ export type EclobSwapInput = {
   userPublicKey: string;
   walletSession: WalletSession;
   rpc: Rpc;
+  // Called once the transaction is built, as it goes to the wallet.
+  onSigning?: () => void;
 };
+
+// eCLOB has no server-side "auto" slippage sizing (that's a DFlow feature), so
+// an "auto" selection maps to this fixed default floor for the on-chain
+// minOut. The vault write path uses the same figure.
+export const ECLOB_DEFAULT_SLIPPAGE_BPS = 50; // 0.5%
 
 const BPS_DENOMINATOR = 10_000n;
 // The store's slippage input is uncapped (it can exceed 100%), but a bps of
@@ -132,6 +139,7 @@ export async function executeEclobSwap(
     userPublicKey,
     walletSession,
     rpc,
+    onSigning,
   } = input;
 
   assertWalletCanSign(walletSession);
@@ -298,6 +306,7 @@ export async function executeEclobSwap(
     { programAddress },
   );
 
+  onSigning?.();
   const submitted = await submitInstructions({
     feePayer: taker,
     instructions: [createBaseAta, createQuoteAta, swapIx],
