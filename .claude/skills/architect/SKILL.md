@@ -139,7 +139,10 @@ absolute rule and they are not the same thing.
   *before* the handoff, so a session that could not file would
   have no way to make its output durable. They are filed **only
   after the operator's filing yes**, `Backlog` plus the
-  `Session pending` milestone, and ratified one by one through
+  `Session pending` milestone, each a **sub-issue of the governing
+  issue** (`linear_issue.py create --parent <n>`), after the agreed
+  spec is posted to the governing issue as one comment (unless the
+  design lives in its body), and ratified one by one through
   `ratify-staged` (see "The loop" below). **Each title carries
   its launch line** — the
   `[<Verb>/<Substrate>]` token, before any `Claude:`, omitted

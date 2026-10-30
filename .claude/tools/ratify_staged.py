@@ -8,8 +8,9 @@ the ``Session pending`` milestone on the operator's filing yes; this tool
 drives the review that follows, so the language and the writes live in one
 place rather than in each consumer skill.
 
-Five subcommands, every one taking the session's own task ids (``ENG-###``,
-space- or comma-separated) except ``list``:
+Five subcommands, every one but ``list`` naming the session's own tasks —
+as ids (``--ids``, ``ENG-###``, space- or comma-separated) or as the
+sub-issues of its governing issue (``--parent``, see "The parent switch"):
 
 * ``list`` — every open issue under ``Session pending``, one compact line
   each. The milestone is shared by every seat session, so this is the
@@ -100,6 +101,18 @@ milestone resolved by name:
 An out-of-pool id (Todo, parked under any other milestone, closed) is skipped and
 named, never silently dropped.
 
+**The parent switch.** A seat session files its tasks as sub-issues of its
+governing issue (``linear_issue.py create --parent``), so ``--parent ENG-###``
+names the set wherever ``--ids`` does — ``ask``, ``review``, ``approve`` and
+``gate`` — and narrows ``list`` to it: a session that died mid-review resumes
+from its issue number alone. ``review`` and ``approve`` take the sub-issues
+still staged (``approve --parent`` approves every one not given to
+``--cancel``, reports one an earlier run moved as ``ALREADY``, names any
+other as ``SKIPPED``, and refuses a ``--cancel`` id outside the set); ``gate``
+judges them all. A parent with no sub-issues is refused, never a vacuous
+``CLEAR``, and ``--parent`` is refused on every pool but ``staged``: the
+inbox and operator pools approve by id.
+
 **The write is the operator's, executed.** ``approve`` runs only on the
 operator's final answer in the session's own tab (ruling 12's carve-out); it
 never decides that a task is ratified. A tick with no comment is the
@@ -119,6 +132,9 @@ Usage:
     python3 .claude/tools/ratify_staged.py review --ids ENG-1 ENG-2
     python3 .claude/tools/ratify_staged.py approve --ids ENG-1 --cancel ENG-2
     python3 .claude/tools/ratify_staged.py gate --ids ENG-1 ENG-2
+    python3 .claude/tools/ratify_staged.py review --parent ENG-9
+    python3 .claude/tools/ratify_staged.py approve --parent ENG-9 --cancel ENG-2
+    python3 .claude/tools/ratify_staged.py gate --parent ENG-9
     python3 .claude/tools/ratify_staged.py list --pool inbox
     python3 .claude/tools/ratify_staged.py ask --pool inbox --ids ENG-1 ENG-2 \\
         --notes notes.json --proposals proposals.json --out ask.json
@@ -596,6 +612,38 @@ def fetch_comments(api_key: str, ident: str) -> list[dict]:
     return comments.get("nodes") or []
 
 
+_PARENT_QUERY = """
+query($id: String!) {
+  issue(id: $id) { id identifier }
+}
+"""
+
+PARENT_ID = re.compile(r"[A-Z]+-\d+")
+
+
+def fetch_children(api_key: str, project: str, parent: str) -> list[dict]:
+    """The sub-issues of ``parent`` within the project, by number — the set a
+    seat session filed with ``linear_issue.py create --parent``.
+
+    This is what makes a session that died mid-review resumable from its
+    governing issue's number alone. A parent that does not resolve, or has no
+    children, is refused: an empty set would read as a vacuous ``CLEAR``.
+    """
+    ident = parent.strip().upper()
+    if not PARENT_ID.fullmatch(ident):
+        raise RatifyError(f"--parent wants an ENG-### identifier, got {parent!r}")
+    issue = board_batch._post(api_key, _PARENT_QUERY, {"id": ident}).get("issue")
+    if not (issue or {}).get("id"):
+        raise RatifyError(f"parent {ident}: no such issue")
+    children = board_batch._fetch_filtered(
+        api_key,
+        {"project": {"id": {"eq": project}}, "parent": {"id": {"eq": issue["id"]}}},
+    )
+    if not children:
+        raise RatifyError(f"{ident} has no sub-issues in this project")
+    return sorted(children, key=lambda i: int(i.get("number") or 0))
+
+
 def resolve_all(api_key: str, project: str, ids: list[str]) -> list[dict]:
     """The named issues, resolved within the project — a hard error on any
     reference that does not resolve, never a guess."""
@@ -740,8 +788,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     listing = sub.add_parser("list", help="every open issue in the pool")
+    listing.add_argument("--parent", help="only the sub-issues of this ENG-###")
     ask = sub.add_parser("ask", help="the one-checkbox-per-task review ask")
-    ask.add_argument("--ids", nargs="+", default=[])
     ask.add_argument(
         "--operator",
         help="the one operator item, its own question after the review ticks; "
@@ -751,9 +799,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     ask.add_argument("--proposals", help="JSON list of edges / kills / merges")
     ask.add_argument("--out", help="write the JSON here instead of stdout")
     review = sub.add_parser("review", help="approved or held, per ticked task")
-    review.add_argument("--ids", nargs="+", required=True)
     approve = sub.add_parser("approve", help="the one batch write at the end")
-    approve.add_argument("--ids", nargs="+", default=[])
     approve.add_argument("--cancel", nargs="+", default=[])
     approve.add_argument(
         "--title",
@@ -767,7 +813,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     approve.add_argument("--dry-run", action="store_true")
     gate = sub.add_parser("gate", help="fail while any id is still staged")
-    gate.add_argument("--ids", nargs="+", required=True)
+    for command in (ask, review, approve, gate):
+        # The set is named either way: the ids, or the governing issue whose
+        # sub-issues they are. approve may name neither (cancels only), and
+        # ask neither when it carries only `--operator`; `run` checks those.
+        which = command.add_mutually_exclusive_group(
+            required=command not in (ask, approve)
+        )
+        which.add_argument("--ids", nargs="+", default=[])
+        which.add_argument("--parent", help="the sub-issues of this ENG-###")
     for command in (listing, ask, review, approve, gate):
         command.add_argument("--pool", choices=POOLS, default="staged")
     mark = sub.add_parser("mark", help=f"stamp an inbox batch {CURATOR_MILESTONE}")
@@ -830,11 +884,35 @@ def run(argv: list[str]) -> int:
         raise RatifyError(
             "--operator rides the curator's inbox batch — pass --pool inbox"
         )
+    # `is not None` throughout, never truthiness: `--parent ""` must reach
+    # `fetch_children`'s refusal, not fall back to an empty `--ids` set.
+    parent = args.parent
+    if parent is not None and pool != "staged":
+        # Every other pool approves by id: on the operator pool an implicit
+        # sweep of a parent's children would move an operator item to Done
+        # unnamed.
+        raise RatifyError(
+            f"--parent names a seat session's staged set — the {pool} pool is "
+            "reviewed by id, one task at a time"
+        )
     key = board_batch.env_var("LINEAR_API_KEY")
     project = board_batch.env_var("LINEAR_PROJECT_ID")
 
+    def named() -> list[dict]:
+        """The set the command names: the ids, or the parent's sub-issues."""
+        if parent is not None:
+            return fetch_children(key, project, parent)
+        return resolve_all(key, project, parse_ids(args.ids))
+
     if args.cmd == "list":
-        if pool == "inbox":
+        if parent is not None:
+            members = [
+                i for i in fetch_children(key, project, parent) if in_pool(i, pool)
+            ]
+            lines = board_batch.format_listing(members) or [
+                f"none of {parent.upper()}'s sub-issues is {POOL_WHERE[pool]}"
+            ]
+        elif pool == "inbox":
             issues = board_batch.fetch_issues(key, project, states=[INBOX_STATE])
             members = [i for i in issues if in_pool(i, pool)]
             lines = format_pool_listing(members) or [f"none {POOL_WHERE[pool]}"]
@@ -853,10 +931,16 @@ def run(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "ask":
-        if not args.ids and not args.operator:
-            raise RatifyError("nothing to ask: pass --ids, --operator or both")
-        ids = parse_ids(args.ids) if args.ids else []
-        issues = resolve_all(key, project, ids) if ids else []
+        if not args.ids and parent is None and not args.operator:
+            raise RatifyError(
+                "nothing to ask: pass --ids or --parent, --operator, or both"
+            )
+        if parent is not None:
+            issues = fetch_children(key, project, parent)
+            ids = [i["identifier"] for i in issues]
+        else:
+            ids = parse_ids(args.ids) if args.ids else []
+            issues = resolve_all(key, project, ids) if ids else []
         staged = [i for i in issues if in_pool(i, pool)]
         skipped = [i["identifier"] for i in issues if not in_pool(i, pool)]
         if ids and not staged:
@@ -895,16 +979,20 @@ def run(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "review":
-        issues = resolve_all(key, project, parse_ids(args.ids))
+        issues = named()
+        if parent is not None:
+            # A parent names the whole set, already-moved tasks included; only
+            # the ones still staged have anything to review.
+            issues = [i for i in issues if in_pool(i, pool)] or issues
         lines, _ = review_lines(key, issues, pool)
         print("\n".join(lines))
         return 0
 
     if args.cmd == "approve" and args.chore is not None:
-        if args.ids or args.cancel or args.title is not None:
+        if args.ids or args.cancel or args.title is not None or parent is not None:
             raise RatifyError(
                 "--chore is its own write: pass it alone, with no --ids, "
-                "--cancel or --title"
+                "--parent, --cancel or --title"
             )
         chore_ids = parse_ids([args.chore])
         if len(chore_ids) != 1:
@@ -923,17 +1011,42 @@ def run(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "approve":
-        approve_ids = parse_ids(args.ids) if args.ids else []
         cancel_ids = parse_ids(args.cancel) if args.cancel else []
-        if not approve_ids and not cancel_ids:
-            raise RatifyError("nothing to approve or cancel")
+        approve_ids = parse_ids(args.ids) if args.ids else []
+        # `--parent` is refused on every pool but staged, so this refuses a
+        # `--title` beside it too.
         if args.title is not None and (pool != "inbox" or len(approve_ids) != 1):
             raise RatifyError(
                 "--title retitles the one task an inbox approve moves — "
                 "pass it with --pool inbox and exactly one --ids"
             )
-        approve = resolve_all(key, project, approve_ids) if approve_ids else []
-        cancel = resolve_all(key, project, cancel_ids) if cancel_ids else []
+        if parent is not None:
+            children = fetch_children(key, project, parent)
+            stray = sorted(set(cancel_ids) - {i["identifier"] for i in children})
+            if stray:
+                raise RatifyError(
+                    "refusing the batch, nothing written — --cancel names ids "
+                    f"that are not sub-issues of {parent.upper()}: {', '.join(stray)}"
+                )
+            cancel = [i for i in children if i["identifier"] in cancel_ids]
+            # Every staged sub-issue not rejected is approved — the final
+            # answer covers the whole set. One an earlier run already moved
+            # rides along so `plan_approval` reports it ALREADY and the same
+            # command re-runs cleanly; any other child is named, never
+            # silently dropped.
+            approve = []
+            for issue in children:
+                if issue["identifier"] in cancel_ids:
+                    continue
+                if in_pool(issue, pool) or already_moved(issue, cancel=False):
+                    approve.append(issue)
+                else:
+                    print(f"SKIPPED {issue['identifier']} | not {POOL_WHERE[pool]}")
+        else:
+            approve = resolve_all(key, project, approve_ids) if approve_ids else []
+            cancel = resolve_all(key, project, cancel_ids) if cancel_ids else []
+        if not approve and not cancel:
+            raise RatifyError("nothing to approve or cancel")
         _, held = review_lines(key, [i for i in approve if in_pool(i, pool)], pool)
         updates, already = plan_approval(approve, cancel, held, pool)
         if args.title is not None:
@@ -950,12 +1063,16 @@ def run(argv: list[str]) -> int:
         board_batch.apply_fields(key, updates, by_number, dry_run=args.dry_run)
         return 0
 
-    issues = resolve_all(key, project, parse_ids(args.ids))
+    issues = named()
     still = [i["identifier"] for i in issues if in_pool(i, pool)]
     if still:
         print(f"OPEN — still under {MILESTONE}: {', '.join(still)}")
         return 1
-    print(f"CLEAR — none of {len(issues)} task(s) is under {MILESTONE}")
+    # A parent's set was never typed by the caller, so it is named.
+    named_set = (
+        f" ({', '.join(i['identifier'] for i in issues)})" if parent is not None else ""
+    )
+    print(f"CLEAR — none of {len(issues)} task(s){named_set} is under {MILESTONE}")
     return 0
 
 

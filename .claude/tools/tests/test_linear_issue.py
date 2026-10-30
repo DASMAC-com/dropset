@@ -292,6 +292,69 @@ class CreateIssue(_Stubbed):
         self.assertNotIn("FINDINGS", line)
         self.assertIn("ENG-500", line)
 
+    PARENT = {"issue": {"id": "uuid-2323", "identifier": "ENG-2323"}}
+
+    def test_a_parent_rides_the_one_create_as_parent_id(self):
+        rec = self.install([self.PARENT, self.CREATED])
+        line = li.create_issue(
+            "k", team_id="t", project_id="p", title="t", body="b", parent="eng-2323"
+        )
+        self.assertEqual(len(rec.calls), 2, "one parent read, one create")
+        self.assertEqual(rec.calls[0][1], {"id": "ENG-2323"})
+        self.assertEqual(rec.calls[1][1]["input"]["parentId"], "uuid-2323")
+        self.assertIn("parent ENG-2323", line)
+
+    def test_a_dry_run_resolves_the_parent_and_names_its_id(self):
+        rec = self.install([self.PARENT])
+        line = li.create_issue(
+            "k",
+            team_id="t",
+            project_id="p",
+            title="t",
+            body="b",
+            parent="ENG-2323",
+            dry_run=True,
+        )
+        self.assertEqual(len(rec.calls), 1, "the parent read only — no create")
+        self.assertIn("WOULD FILE", line)
+        self.assertIn("parentId uuid-2323", line)
+
+    def test_an_unresolved_parent_refuses_before_any_create(self):
+        for response in (
+            {"issue": None},
+            {"issue": {"id": "x", "identifier": "ENG-9"}},
+        ):
+            with self.subTest(response=response):
+                rec = self.install([response])
+                with self.assertRaises(li.LinearIssueError):
+                    li.create_issue(
+                        "k",
+                        team_id="t",
+                        project_id="p",
+                        title="t",
+                        body="b",
+                        parent="ENG-2323",
+                    )
+                self.assertEqual(len(rec.calls), 1, "no create was sent")
+
+    def test_a_transport_failure_on_the_parent_refuses_too(self):
+        def boom(api_key, query, variables):
+            raise li.LinearIssueError("Linear GraphQL error: Entity not found")
+
+        li._post = boom
+        with self.assertRaisesRegex(li.LinearIssueError, "did not resolve"):
+            li.create_issue(
+                "k", team_id="t", project_id="p", title="t", body="b", parent="ENG-1"
+            )
+
+    def test_a_malformed_parent_is_refused_without_a_call(self):
+        rec = self.install([])
+        with self.assertRaises(li.LinearIssueError):
+            li.create_issue(
+                "k", team_id="t", project_id="p", title="t", body="b", parent="2323"
+            )
+        self.assertEqual(rec.calls, [])
+
     def test_a_plain_backlog_filing_reminds_to_message_the_curator(self):
         states = {"team": {"states": {"nodes": [{"id": "s-b", "name": "Backlog"}]}}}
         self.install([states, self.CREATED])

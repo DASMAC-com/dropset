@@ -916,6 +916,36 @@ class CliTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(calls[0]["input"], {"priority": 1})
 
+    def test_fields_fetches_a_parent_the_payload_names_by_number(self):
+        """The bounded read once fetched only the issues being updated, so a
+        parent given as a number was refused as not in this project."""
+        filters, writes = [], []
+
+        def fake_post(api_key, query, variables):
+            if "issues(" in query:
+                filters.append(variables["filter"])
+                wanted = variables["filter"]["number"]["in"]
+                return {"issues": {"nodes": [_issue(n) for n in wanted]}}
+            writes.append(variables)
+            return {"issueUpdate": {"success": True}}
+
+        for parent in (20, "20", "ENG-20"):
+            with self.subTest(parent=parent):
+                filters.clear()
+                writes.clear()
+                path = self._write({"10": {"parent": parent}})
+                with mock.patch.object(bb, "_post", side_effect=fake_post):
+                    with mock.patch("sys.stdout"):
+                        rc = run(["board_batch.py", "fields", "--updates", path])
+                self.assertEqual(rc, 0)
+                self.assertEqual(filters[0]["number"], {"in": [10, 20]})
+                self.assertEqual(writes[0]["input"], {"parentId": "uuid-20"})
+
+    def test_update_refs_skips_a_parent_that_is_already_a_uuid(self):
+        uuid = "0b1e7f0a-1111-2222-3333-444455556666"
+        refs = bb.update_refs({"10": {"parent": uuid}, "11": {"parent": "ENG-3"}})
+        self.assertEqual(refs, ["10", "11", "ENG-3"])
+
     def test_list_drops_milestoned_issues_by_default(self):
         nodes = [_issue(1, "Live"), _issue(2, "Parked", milestone="Audit findings")]
         with mock.patch.object(bb, "_post", return_value={"issues": {"nodes": nodes}}):

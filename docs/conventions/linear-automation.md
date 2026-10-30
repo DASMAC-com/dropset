@@ -631,6 +631,34 @@ bootstrap is a session that died mid-review, and the count-and-offer
 line is the backstop — offer to resume that session, never promote its
 tasks around it.
 
+**Where a seat session's spec lands, and the record of what it filed.**
+At the filing yes, before the first create, the session posts the agreed
+spec verbatim, task list included, as **one comment on its governing
+issue** (`linear_patch.py comment`); a design written into the governing
+issue's body itself gets no comment. Each task is then filed as a
+**sub-issue of the governing issue**: `linear_issue.py create` with
+`--parent ENG-###` resolves the parent and sends `parentId` in the one
+`issueCreate`, so a filing costs no second write, and a parent that does
+not resolve refuses before anything is filed, since a half-parented set
+is worse than none. The **sub-issue relation is the filing record**; a
+reject shows as a canceled child. `ratify_staged.py` takes `--parent` in
+place of `--ids` on `ask`, `review`, `approve` and `gate` (and narrows
+`list` to it), so a session that died mid-review resumes from its issue
+number alone. An audit pulled from an audit issue parents its findings
+on that issue; an ad-hoc `--rotation` run has none. The curator's
+architect spin-off takes no parent: it is the future parent.
+
+The governing issue closes **Done with its sub-issues still open**,
+which holds because the Engineering team's `autoCloseParentIssues` and
+`autoCloseChildIssues` settings both read `null` — unset, and Linear
+treats an unset auto-close as off (read from the GraphQL `Team` type,
+2026-10-29). Turning on the child setting would close every open task
+when its governing issue goes Done. Sub-issues are ordinary members of
+every pool: the pool reads' hand-written filters carry no parent clause
+(only `--parent` adds one), and a Backlog child is returned by the same
+read the inbox uses (checked on 2026-10-29 against three Backlog
+sub-issues, which only their milestones kept out of the pool).
+
 **Every bootstrap says each parked count out loud.** Parked must be
 invisible to the queue without being invisible to the operator, and a
 count is what keeps those two apart: an issue nobody can see is an issue

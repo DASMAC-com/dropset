@@ -455,9 +455,8 @@ Optional (ask on a scoped run if not provided):
      printenv LINEAR_ASSIGNEE_ID
      ```
 
-     Query each on its own line — macOS / BSD `printenv`
-     honors only its first operand, so a combined
-     `printenv A B C` returns just `A`.
+     Query each on its own line: BSD `printenv` honors only
+     its first operand.
 
      File through the **zero-echo writer**, one
      call per issue, body on disk:
@@ -466,11 +465,13 @@ Optional (ask on a scoped run if not provided):
      python3 .claude/tools/linear_issue.py create \
        --title '<file>: <imperative fix, no trailing period>' \
        --body-file <scratchpad>/finding-N.md \
-       --state Backlog --milestone 'Session pending' --priority 3
+       --state Backlog --milestone 'Session pending' --priority 3 \
+       --parent <ENG-###>
      ```
 
      `--priority 2` for a high-severity security finding; each
      is a proposal, messaged per `ratify-staged` step 2.
+     `--parent`: the audit issue; `--rotation` omits it.
      Team, project and assignee default from `LINEAR_*`.
 
      **Not `save_issue`.** The MCP echoes the entire stored

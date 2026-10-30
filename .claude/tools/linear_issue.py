@@ -53,6 +53,8 @@ Subcommands::
         --state Todo --milestone "Audit findings"
     linear_issue.py create --title "…" --body-file body.md \
         --verb chore --substrate anthropic     # → "[Chore/Anthropic] …"
+    linear_issue.py create --title "…" --body-file body.md \
+        --state Backlog --milestone "Session pending" --parent ENG-123
 
 ``create`` is the filer for the **bulk** callers, whose bodies are long by
 design because the fold convention asks for a part and a fingerprint per
@@ -450,6 +452,36 @@ query Milestones($projectId: String!) {
 }
 """
 
+_PARENT_QUERY = """
+query Parent($id: String!) {
+  issue(id: $id) { id identifier }
+}
+"""
+
+
+def resolve_parent(api_key: str, identifier: str) -> str:
+    """The UUID of the governing issue ``identifier``, or a refusal.
+
+    Resolved **before** anything is written, dry runs included, so a
+    ``ratify-staged`` filing whose parent does not resolve refuses at its
+    first ``create`` with nothing filed: a half-parented set is worse than
+    none, since the children of the parent are how a resumed session finds
+    the set.
+    """
+    wanted = identifier.strip().upper()
+    if not re.fullmatch(r"[A-Z]+-\d+", wanted):
+        raise LinearIssueError(
+            f"--parent wants an ENG-### identifier, got {identifier!r}"
+        )
+    try:
+        data = _post(api_key, _PARENT_QUERY, {"id": wanted})
+    except LinearIssueError as exc:
+        raise LinearIssueError(f"parent {wanted} did not resolve: {exc}") from exc
+    issue = data.get("issue") or {}
+    if not issue.get("id") or str(issue.get("identifier", "")).upper() != wanted:
+        raise LinearIssueError(f"parent {wanted} did not resolve — nothing filed")
+    return str(issue["id"])
+
 
 def _resolve_named(nodes: list, wanted: str, kind: str) -> str:
     """An id for ``wanted``, matched case-insensitively by name.
@@ -501,6 +533,7 @@ def create_issue(
     assignee_id: str | None = None,
     verb: str | None = None,
     substrate: str | None = None,
+    parent: str | None = None,
     dry_run: bool = False,
 ) -> str:
     """File one issue in a single zero-echo call, and return one line.
@@ -532,6 +565,10 @@ def create_issue(
     ``verb`` / ``substrate`` prefix the title with its launch-line token
     (`title_token`), built here so the token and the filing stay consistent by
     construction, as the ``Claude:`` prefix does.
+
+    ``parent`` files the issue as a sub-issue of its governing issue, the
+    ``parentId`` riding the one ``issueCreate`` so a seat session's filing
+    costs no second write. It is resolved even on a dry run (`resolve_parent`).
     """
     if not title.strip():
         raise LinearIssueError("--title must not be blank")
@@ -542,6 +579,9 @@ def create_issue(
         title = f"{token} {title.strip()}"
 
     plan = [f"{len(body)} char(s)"]
+    parent_id = resolve_parent(api_key, parent) if parent else None
+    if parent:
+        plan.append(f"parent {parent.strip().upper()} (parentId {parent_id})")
     if state:
         plan.append(f"state {state}")
     if milestone:
@@ -571,6 +611,8 @@ def create_issue(
         payload["priority"] = priority
     if assignee_id:
         payload["assigneeId"] = assignee_id
+    if parent_id:
+        payload["parentId"] = parent_id
 
     data = _post(api_key, _CREATE_MUTATION, {"input": payload})
     result = data.get("issueCreate") or {}
@@ -685,6 +727,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="title-token substrate: bedrock, anthropic (omit with operator)",
     )
+    create.add_argument(
+        "--parent",
+        default=None,
+        help="governing issue ENG-###: file as its sub-issue (refuses if unresolved)",
+    )
 
     find_cmd = subs.add_parser("find", help="title-only search")
     find_cmd.add_argument(
@@ -752,6 +799,7 @@ def run(argv: list[str]) -> int:
                 assignee_id=assignee,
                 verb=args.verb,
                 substrate=args.substrate,
+                parent=args.parent,
                 dry_run=args.dry_run,
             )
         )

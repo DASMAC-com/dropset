@@ -56,14 +56,31 @@ needed says so.
 
 ## 2. File into `Session pending`
 
-File every task `Backlog` plus the **`Session pending`** milestone
-and its **proposed priority**, all **in the creating call**, with its
-title token (`docs/conventions/linear-automation.md` → "The
-verb/substrate title token"). Once every task exists, place the
-ratified edges with `board_batch.py edges --pairs <file>` (rehearse
-with `--dry-run`). Then message the live scheduler and curator the
-set in one line (`filed ENG-1 High, ENG-2 Medium — <why>`); either
-confirms by silence or rewrites under the agreement rule
+**First, the spec comment.** Before the first `create`, post the
+agreed spec verbatim, task list included, as one comment on the
+**governing issue**:
+
+```sh
+python3 .claude/tools/linear_patch.py comment <governing ENG-###> \
+  --body <spec file, or the spec written to the scratchpad>
+```
+
+When the design was written into the governing issue's body itself,
+post no comment; the body already is the record.
+
+Then file every task `Backlog` plus the **`Session pending`**
+milestone and its **proposed priority**, all **in the creating call**,
+with its title token (`docs/conventions/linear-automation.md` → "The
+verb/substrate title token"), as a **sub-issue of the governing
+issue**: `linear_issue.py` `create` takes `--parent <governing ENG-###>`
+and sends `parentId` in the same `issueCreate`, and a parent that does
+not resolve refuses before anything is filed. The sub-issue relation is
+the record of what was filed; a reject later shows as a canceled child.
+Once every task exists, place the ratified edges with
+`board_batch.py edges --pairs <file>` (rehearse with `--dry-run`).
+Then message the live scheduler and curator the set in one line
+(`filed ENG-1 High, ENG-2 Medium — <why>`); either confirms by silence
+or rewrites under the agreement rule
 (`docs/conventions/linear-automation.md` → "Priorities: shared
 authority, the agreement rule"). With neither live, the proposal
 stands and is named in the handoff. Then say, in plain text: "filed
@@ -71,6 +88,14 @@ these N tasks; let me know what you think." The operator reads the
 filed bodies in Linear and comments on any that needs work.
 
 ## 3. The review ask, in rounds
+
+Every subcommand below takes `--parent <governing ENG-###>` in place
+of `--ids`, naming the governing issue's sub-issues as the set: a
+session resumed after dying mid-review needs only that number.
+`review` and `approve` take the children still staged — `approve`
+approves every one not passed to `--cancel` — and `gate` judges them
+all and names the set it resolved. `--parent` excludes `--ids`, and a
+parent with no sub-issues is refused rather than read as a clear gate.
 
 Build the ask from the filed ids — never compose it by hand:
 
@@ -149,4 +174,4 @@ operator-absent approval path** (an audit files without an ask, but
 approves nothing that way). A session that dies mid-review leaves
 its tasks parked, where upkeep's `Session pending` count and `plan`'s
 count-and-offer line catch them (`ratify_staged.py list` shows the
-pool).
+pool; `list --parent <ENG-###>` narrows it to one session's set).
