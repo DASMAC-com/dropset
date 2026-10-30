@@ -687,7 +687,7 @@ count the next ask shows, and from the third deferral the curator
 recommends cancel under the necessity gate, executed only by the
 operator's `drop`. A comment `attended chore` swaps its token
 for `[Chore/Bedrock]` and leaves it in Todo for the scheduler to dispatch
-under the fleet gate — the curator dispatches nothing, and a
+under the fleet gate — the curator dispatches no chore, and a
 chore-token item never takes the fifth box. With the inbox empty the
 curator asks one operator item per ask until none is left or the
 operator says "stop for today".

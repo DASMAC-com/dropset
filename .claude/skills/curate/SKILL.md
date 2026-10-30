@@ -214,7 +214,7 @@ the necessity gate (ruling 3). Do not restate either.
 
 A `[Chore/…]` item is never in the box: it is Todo work the
 scheduler dispatches under the fleet gate, and **the curator
-dispatches nothing**. The walk is **asked, never pushed** — no
+dispatches no chore**. The walk is **asked, never pushed** — no
 message, no reminder outside the ask.
 
 **When the inbox is empty**, keep asking one operator item per ask,
