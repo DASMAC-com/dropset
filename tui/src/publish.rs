@@ -482,6 +482,24 @@ impl Stranded {
     }
 }
 
+/// The one-line warning a quit gets while a kept writer still holds lamports,
+/// given each kept writer and its balance (`None` when the read failed, which
+/// warns too — an unread balance may be a stranded one). `None` when every
+/// writer was swept or none was kept, so the quit goes through.
+pub fn exit_warning(writers: &[(Pubkey, Option<u64>)]) -> Option<String> {
+    let held: Vec<_> = writers.iter().filter(|(_, b)| *b != Some(0)).collect();
+    let (writer, balance) = held.first()?;
+    let balance = balance.map_or("an unread balance".to_string(), sol);
+    let more = match held.len() {
+        1 => String::new(),
+        n => format!(" (and {} more)", n - 1),
+    };
+    Some(format!(
+        "Kept writer {writer} still holds {balance}{more} — exiting abandons it. Enter retries \
+         the sweep (\"Close stranded buffers\"); quit again to exit anyway."
+    ))
+}
+
 /// The writers [`Stranded::hand_back`] holds outside the lock, returned to the
 /// store when it drops — on success, failure or unwind alike.
 struct Retrying<'a> {
@@ -1088,6 +1106,22 @@ mod tests {
         });
         assert!(taken.is_err());
         assert_eq!(stranded.addresses(), pairs);
+    }
+
+    #[test]
+    fn a_quit_warns_only_while_a_kept_writer_holds_lamports() {
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        // None kept, or every kept writer swept: the quit goes through.
+        assert_eq!(exit_warning(&[]), None);
+        assert_eq!(exit_warning(&[(a, Some(0)), (b, Some(0))]), None);
+        // A writer still funded names itself and its balance.
+        let warning = exit_warning(&[(a, Some(0)), (b, Some(LAMPORTS_PER_SOL))]).unwrap();
+        assert!(warning.contains(&b.to_string()) && warning.contains("1.0000 SOL"));
+        assert!(!warning.contains("more"));
+        // An unread balance warns too, and a second held writer is counted.
+        let warning = exit_warning(&[(a, None), (b, Some(1))]).unwrap();
+        assert!(warning.contains(&a.to_string()) && warning.contains("an unread balance"));
+        assert!(warning.contains("(and 1 more)"));
     }
 
     #[test]

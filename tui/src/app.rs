@@ -269,6 +269,9 @@ pub struct App {
     pub(crate) rotate_prompt: Option<RotatePrompt>,
     /// The open ceremony prompt, if any — takes every keystroke while open.
     pub(crate) ceremony_prompt: Option<CeremonyPrompt>,
+    /// Whether the last key was a quit that [`App::request_quit`] held back
+    /// with the kept-writer warning, so the next quit exits anyway.
+    quit_warned: bool,
     /// Each market's posture: an active one is seeded for and run by its
     /// maker bot, a passive one is seeded with the passive book and never
     /// spawns one. `P` flips the selected market's.
@@ -389,6 +392,7 @@ impl App {
             name_prompt: None,
             rotate_prompt: None,
             ceremony_prompt: None,
+            quit_warned: false,
             postures,
             bots: BotManager::new(),
             takers: BotManager::new(),
@@ -672,9 +676,14 @@ impl App {
             return Flow::Continue;
         }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        if matches!(k.code, KeyCode::Char('q') | KeyCode::Esc)
+            || (ctrl && k.code == KeyCode::Char('c'))
+        {
+            return self.request_quit();
+        }
+        // Any other key stands a held quit down: only two quits in a row exit.
+        self.quit_warned = false;
         match k.code {
-            KeyCode::Char('q') | KeyCode::Esc => return Flow::Quit,
-            KeyCode::Char('c') if ctrl => return Flow::Quit,
             KeyCode::Char('j') | KeyCode::Down => self.menu_step(1),
             KeyCode::Char('k') | KeyCode::Up => self.menu_step(-1),
             // Book selector — cycle which market's book and accounts show.
@@ -750,6 +759,37 @@ impl App {
             }
             _ => {}
         }
+        Flow::Continue
+    }
+
+    /// Quit — unless a writer kept after a failed handoff still holds
+    /// lamports and this is the first quit since. Then warn with its balance,
+    /// select "Close stranded buffers" so Enter retries the sweep, and stay; a
+    /// second quit in a row exits anyway. Exiting drops the writer's key, the
+    /// only one that can move what it holds.
+    fn request_quit(&mut self) -> Flow {
+        if std::mem::take(&mut self.quit_warned) {
+            return Flow::Quit;
+        }
+        let writers: Vec<_> = self
+            .ctx
+            .stranded
+            .addresses()
+            .into_iter()
+            .map(|(_, writer)| (writer, self.client.get_balance(&writer).ok()))
+            .collect();
+        let Some(warning) = crate::publish::exit_warning(&writers) else {
+            return Flow::Quit;
+        };
+        if let Some(i) = self
+            .menu_entries()
+            .iter()
+            .position(|a| *a == Action::CloseBuffers)
+        {
+            self.menu.select(Some(i));
+        }
+        self.log(LogKind::Err, warning);
+        self.quit_warned = true;
         Flow::Continue
     }
 
