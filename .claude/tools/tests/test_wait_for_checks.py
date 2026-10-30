@@ -1091,6 +1091,37 @@ class QueueWatchTests(unittest.TestCase):
         self.assertEqual(v["last"]["merge_state_status"], "BLOCKED")
         self.assertEqual(v["last"]["pending_checks"], pending)
 
+    def test_a_required_check_still_running_holds_the_auto_merge_bound(self):
+        """Auto-merge legitimately waits on a required check: the bound
+        counts only from when nothing required is pending."""
+        auto = {"enabledAt": ENQUEUED}
+        running = dict(snap(auto=auto))
+        running["pending_checks"] = [{"name": "Tests", "required": True}]
+        polls = wfc.AUTO_MERGE_WAIT_SECONDS // 60 + 5
+        v = self._watch([running] * polls + [snap(auto=auto)])
+        self.assertEqual(v["conclusion"], "auto_merge_waiting")
+        self.assertGreaterEqual(
+            v["elapsed_seconds"], polls * 60 + wfc.AUTO_MERGE_WAIT_SECONDS
+        )
+
+    def test_a_flap_out_of_auto_merge_restarts_its_bound(self):
+        """auto → all-null → auto: the second stretch is timed from scratch."""
+        auto = snap(auto={"enabledAt": ENQUEUED})
+        half = wfc.AUTO_MERGE_WAIT_SECONDS // 60 // 2 + 1
+        v = self._watch([auto] * half + [snap()] + [auto])
+        self.assertEqual(v["conclusion"], "auto_merge_waiting")
+        self.assertGreaterEqual(
+            v["elapsed_seconds"], (half + 1) * 60 + wfc.AUTO_MERGE_WAIT_SECONDS
+        )
+
+    def test_a_timeline_only_enqueue_with_no_group_is_queued_no_group(self):
+        """GraphQL's entry null, the timeline still queued, no run: bounded too,
+        with the entry fields honestly null."""
+        v = self._watch([snap(enqueued=ENQUEUED)], await_group_seconds=600)
+        self.assertEqual(v["conclusion"], "queued_no_group")
+        self.assertIsNone(v["last"]["entry_state"])
+        self.assertIsNone(v["last"]["entry_position"])
+
     def test_auto_merge_that_enters_the_queue_keeps_waiting(self):
         """Within the bound the entry appears: an ordinary queued merge."""
         auto = {"enabledAt": ENQUEUED}
@@ -1703,6 +1734,20 @@ class QueueModeCliTests(unittest.TestCase):
         )
         self.assertEqual(seen["await_group_seconds"], 300)
         self.assertTrue(seen["classic_auto_merge"])
+
+    def test_a_non_positive_group_bound_is_refused(self):
+        for value in ("0", "-5"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(wfc.WaitForChecksError, "positive"):
+                    wfc.run(
+                        [
+                            "wait_for_checks.py",
+                            "--queue",
+                            "285",
+                            "--await-group-seconds",
+                            value,
+                        ]
+                    )
 
     def test_the_queue_bounds_are_refused_outside_queue_mode(self):
         for flag in (["--await-group-seconds", "300"], ["--classic-auto-merge"]):

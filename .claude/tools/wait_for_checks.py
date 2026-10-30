@@ -1136,8 +1136,9 @@ def wait_queue(
     Two bounded readings replace a silent wait to the timeout. A set
     ``autoMergeRequest`` with no entry is **not** queued on a merge-queue
     repo — auto-merge defers the enqueue behind every pending check,
-    required or not — so after :data:`AUTO_MERGE_WAIT_SECONDS` it is
-    ``auto_merge_waiting``, ``last.pending_checks`` naming the holdout
+    required or not — so after :data:`AUTO_MERGE_WAIT_SECONDS` with no
+    required check still running it is ``auto_merge_waiting``,
+    ``last.pending_checks`` naming any non-required holdout
     (``classic_auto_merge`` restores waiting, for a repo with no queue). An
     entry with no run on its queue branch for ``await_group_seconds`` is
     ``queued_no_group``; ``first_run_seen_at`` records when a run appeared.
@@ -1287,6 +1288,11 @@ def wait_queue(
                     dequeue_streak = 0
                     if classic_auto_merge:
                         seen_entry = True
+                    elif any(c.get("required") for c in snap.get("pending_checks", [])):
+                        # A required check still running is a legitimate wait,
+                        # not the stuck shape: the bound counts only from when
+                        # nothing required remains.
+                        auto_since = None
                     else:
                         if auto_since is None:
                             auto_since = now
@@ -2838,6 +2844,8 @@ def run(argv: list[str]) -> int:
     ):
         if value is not None and args.queue_pr is None:
             raise WaitForChecksError(f"{flag} is meaningful only with --queue")
+    if args.await_group_seconds is not None and args.await_group_seconds <= 0:
+        raise WaitForChecksError("--await-group-seconds must be positive")
     if args.snapshot is not None and args.pr is None:
         raise WaitForChecksError("--snapshot is meaningful only with --pr")
     if args.base is not None and args.snapshot is None:

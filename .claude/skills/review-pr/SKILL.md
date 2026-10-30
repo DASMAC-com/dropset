@@ -1781,9 +1781,11 @@ migrations or generation inputs, and whether it spans crates.
      both-null shape (auto-merge off, no entry).
    - **`auto_merge_waiting`** → auto-merge is enabled but the PR never
      entered the queue (the PR 548 shape): auto-merge waits on every
-     pending check, required or not, and `last.pending_checks` names
-     it. Run the plain `gh pr merge <number>` (no `--auto`), then the
-     watch.
+     pending check, required or not, and `last.pending_checks` usually
+     names a non-required holdout (empty means the hold is elsewhere —
+     review or `last.merge_state_status`). Re-run step 20's
+     `--enqueue`, whose plain `gh pr merge` goes first under the merge
+     queue, then the watch.
    - **`queued_no_group`** → the entry exists (`last.entry_state`,
      `last.entry_position`) but no merge-group run started within
      `--await-group-seconds`; report it and restart the watch — a
