@@ -38,7 +38,9 @@ def hermetic_env(
 
     `claude_home` becomes `CLAUDE_CONFIG_DIR`, so no case sees real transcripts,
     and `ZDOTDIR`, so no operator `.zshenv` runs; it need not exist, and must
-    not hold a `.zshenv`. `also_scrub` names a suite's own extra variables (the
+    not hold a `.zshenv`. The system `/etc/zshenv` still runs, by design: no
+    variable or flag of a `zsh -c` child can skip it, and it is not where an
+    operator's runtime config lives. `also_scrub` names a suite's own extra variables (the
     cargo pool's `CARGO_*`, say). `env` is applied last and wins over all of it,
     which is how a case sets a `DS_*` knob it means to test. `DS_ITERM_DISABLED`
     is forced on so no case can reach a real iTerm tab (`iterm_api.DISABLED_ENV`).
