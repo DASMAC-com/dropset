@@ -257,6 +257,14 @@ The reminders neither states:
   read (a rebase, a hook autofix, a sibling session), and take
   `--stat` first when the question is which files moved.
 
+- **Size a file at another ref without printing it.**
+  `git show <ref>:<path>` prints the whole blob — `--stat` and
+  `--no-patch` suppress a diff, never a blob. Take `wc -c` on the
+  worktree file, or `show_at_ref.py <ref> <path> --count` for the base
+  (the skill-size cap's question,
+  `docs/conventions/context-economy.md` → "Resident size has a hard
+  cap").
+
 - **Cap a build or test log's error grep at the first few matches.**
   A compiler log is a cascade — one root cause, dozens of identical
   blocks — so take

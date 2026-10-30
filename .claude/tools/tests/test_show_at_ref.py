@@ -140,6 +140,13 @@ class ShowAtRefTests(unittest.TestCase):
         self.assertNotIn("old alpha body", out)
         self.assertIn("chars to", err)
 
+    def test_out_creates_a_missing_parent_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "fresh", "nested", "old.md")
+            code, _, _ = self._run([self.first, "doc.md", "--out", path])
+            self.assertEqual(code, 0)
+            self.assertEqual(Path(path).read_text(encoding="utf-8"), OLD)
+
     def test_a_spilled_file_is_owner_only(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "old.md")

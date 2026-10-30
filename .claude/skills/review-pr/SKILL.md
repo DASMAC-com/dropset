@@ -261,9 +261,10 @@ migrations or generation inputs, and whether it spans crates.
      a silent omission is missing.
 
    - **One write**: the addressed ticks and the move to In Progress,
-     zero-echo, one `--box` per box (its text as written; a duplicate
-     box is named once per tick; a box with a backtick goes one per
-     line in a `--box-file`, which the shell guard cannot refuse):
+     zero-echo, one `--box` per box (any unique part of its text, with
+     backticks and emphasis dropped, since the match ignores them; a
+     duplicate box is named once per tick; text the shell guard
+     refuses inline goes one per line in a `--box-file`):
 
      ```sh
      python3 .claude/tools/linear_issue.py tick --id <ENG-###> \
