@@ -548,7 +548,8 @@ jobs:
   test-postgres:
     name: 'Tests (Postgres)'
     needs: 'changes'
-    # Checkout is the only GITHUB_TOKEN consumer; pin it rather than inherit
+    # Every GITHUB_TOKEN use here is a read (checkout, and the setup and
+    # install actions' public release lookups); pin that rather than inherit
     # the repository default, since this job runs third-party build scripts.
     permissions:
       contents: 'read'

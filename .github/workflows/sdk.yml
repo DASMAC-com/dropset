@@ -2,9 +2,9 @@
 jobs:
   sdk:
     name: 'SDK'
-    # Checkout is the only GITHUB_TOKEN consumer; pin it rather than inherit
-    # the repository default, since pnpm and cargo run third-party install and
-    # build scripts here.
+    # Every GITHUB_TOKEN use here is a read (checkout, and the setup and
+    # install actions' public release lookups); pin that rather than inherit
+    # the repository default, since pnpm and cargo run third-party scripts.
     permissions:
       contents: 'read'
     runs-on: 'ubuntu-latest'

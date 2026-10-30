@@ -134,8 +134,9 @@ nor the Solana-toolchain layer:
   the program sources and the build config, the Makefile included (it holds
   the `anchor build` recipes and their feature flags: `program`,
   `program-no-teardown`, `program-parity`), so any Makefile edit misses it.
-  The sBPF version is anchor-cli's own default, and `ANCHOR_VERSION` is a
-  literal component of every `sbf-*` key. An exact hit skips
+  No recipe pins the sBPF version; the toolchain default picks it, and
+  `SOLANA_VERSION` and `ANCHOR_VERSION` are literal components of every
+  `sbf-*` key. An exact hit skips
   `cargo build-sbf` entirely.
 - **The Solana toolchain cache**, one entry — keyed on the pinned Solana,
   anchor-cli and platform-tools versions.
