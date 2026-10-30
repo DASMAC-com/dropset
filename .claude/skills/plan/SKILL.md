@@ -152,9 +152,12 @@ pool's count and direction (ruling 23) — what was pruned and dismissed
 lock, an open PR — reported, never retried) and each pruned
 name's ahead count, and any inert guard,
 dangling reference or file near its size cap. Say the
-`Curator pending` count beside the parked line once upkeep
-reports it: still inbox, the curator's to clear, never promoted
-here. Say the `fleet-cost` day lines too, any flagged day first. A run stamp
+`Curator pending` count in the parked line: still inbox, the
+curator's to clear, never promoted here. Say the `fleet-cost` day
+lines too, any flagged day first. Say the run line's duration as
+`upkeep ran in 4m10s (last 3m50s)`, and a failed `auth` line as
+the one re-authentication it names — the steps it gates were
+skipped, not broken. A run stamp
 older than today means the pass did not reach the document —
 say so. The launcher prunes finished worktrees unasked; the
 other **destructive items** (the transcript purge, allowlist

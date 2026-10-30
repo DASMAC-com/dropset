@@ -15,21 +15,33 @@ cost line on the issue is the close tool's write, not this skill's.
 
 ## Steps
 
-**1. Derive the session id** from your scratchpad path: the
-directory name immediately above `scratchpad`, a bare UUID. An
-exported `CLAUDE_SESSION_ID` works too. A scheduler session computes
-it instead, never listing the projects directory:
+**1. Derive the session id**, first path that answers, never
+listing the projects directory:
 
-```sh
-python3 .claude/tools/resolve_session.py --daily-id plan
-```
+1. **`env`** — `CLAUDE_SESSION_ID`, non-empty. Every launch verb
+   exports the id it seeded or resumed (`printenv CLAUDE_SESSION_ID`).
+
+1. **`scratchpad`** — the directory name immediately above
+   `scratchpad` in your scratchpad path, a bare UUID.
+
+1. **`daily-id`** — computed from the verb: `--daily-id plan`,
+   `curate` or `launch` for a seat, `--daily-id chore --tag <n>`
+   for a chore:
+
+   ```sh
+   python3 .claude/tools/resolve_session.py --daily-id plan
+   ```
 
 **2. Run the brief and print its paragraph verbatim** — never
-restated, rounded or summarized:
+restated, rounded or summarized — under one line naming the path
+that resolved the id, `session id: <uuid> (via env)`:
 
 ```sh
 python3 .claude/tools/session_metrics.py --brief --session-id <uuid>
 ```
+
+When no path answers, print `session id: unresolved` in its place
+and still write the account — never nothing.
 
 It reads the transcripts in its own process, so nothing but the
 paragraph enters context. It prices every substrate at Bedrock rates

@@ -720,6 +720,17 @@ _ds_claude() {
   _ds_fleet_knobs || { _ds_substrate_unset; return 1; }
   local -x ANTHROPIC_MODEL="$1"
   shift
+  # The id this launch seeded or resumes, exported so the session's metrics
+  # tail resolves it on its first path whatever the verb. `--resume <tag>` (a
+  # picker filter) and `--continue` name no id, so an inherited one is blanked
+  # rather than passed on to a different session.
+  local -x CLAUDE_SESSION_ID=''
+  local i
+  for (( i = 1; i < $#; i++ )); do
+    [[ "${@[i]}" == (--session-id|--resume) &&
+      "${@[i+1]}" =~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' ]] &&
+      CLAUDE_SESSION_ID="${@[i+1]}"
+  done
   if [[ -n "$CLAUDE_CODE_USE_BEDROCK" ]]; then
     local executor helper
     # Not silenced: a sub-agent tier missing its window suffix warns here,
@@ -982,6 +993,26 @@ _ds_exit_estimate() {
 _ds_iterm_role() {
   [[ "$TERM_PROGRAM" == iTerm.app && -t 1 ]] || return 0
   printf '\e]1337;SetUserVar=ds_role=%s\a' "$(print -rn -- "$1" | base64)"
+}
+
+# Internal: title this iTerm tab $1 (OSC 1, the tab title, which no Claude
+# session is around to overwrite in a shell-only tab). Same guard as the role,
+# plus `DS_ITERM_DISABLED=1`, which opts out of every escape.
+_ds_iterm_title() {
+  [[ "$DS_ITERM_DISABLED" != 1 && "$TERM_PROGRAM" == iTerm.app && -t 1 ]] ||
+    return 0
+  printf '\e]1;%s\a' "$1"
+}
+
+# Internal: give this tab the green attend mark a dispatched tab gets, through
+# the committed `iterm-attend.sh --tty <tty> --mark` (sets, never toggles).
+# Best-effort: a missing script or a refused mark is silent.
+_ds_iterm_attend() {
+  local script="$_DS_REPO/.claude/scripts/iterm-attend.sh"
+  [[ "$DS_ITERM_DISABLED" != 1 && "$TERM_PROGRAM" == iTerm.app && -n "$TTY" &&
+    -x "$script" ]] || return 0
+  "$script" --tty "$TTY" --mark >/dev/null 2>&1
+  return 0
 }
 
 # Internal: a deterministic per-TOPIC session UUID, seeded by kind + topic.
@@ -2164,6 +2195,13 @@ _ds_upkeep() {
     print -u2 'dropset: no base checkout to run the upkeep pass in — skipping.'
     return 0
   fi
+  # Named the seat way (`upkeep-<unpadded day>`) with its role set, so the tab says
+  # which wait it is on; the title outlives the pass, and the green mark at the
+  # end says it is done whatever the exit.
+  if [[ "$DS_ITERM_DISABLED" != 1 ]]; then
+    _ds_iterm_title "upkeep-$(date +%-d)"
+    _ds_iterm_role upkeep
+  fi
   # Before the secrets fetch, so a hung `op read` is covered too.
   trap 'interrupted=1' INT
   _ds_secrets
@@ -2174,6 +2212,7 @@ _ds_upkeep() {
   (( $#config )) && local -x "${config[@]}"
   python3 "$_DS_REPO/.claude/tools/upkeep.py" run --if-stale
   rc=$?
+  _ds_iterm_attend
   if [[ -n "$interrupted" ]]; then
     print -u2 'dropset: upkeep interrupted — launching anyway.'
   elif (( rc != 0 )); then

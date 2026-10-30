@@ -308,9 +308,18 @@ def resolve(tag: str, repo: Path) -> dict:
 
 
 #: The kinds `.claude/shell/init.zsh` actually seeds a daily id with — the
-#: scheduler's `plan` and the curator's `curate` (the `housekeeping` verb
-#: retired). Anything else has no session to name.
-DAILY_KINDS = ("plan", "curate")
+#: scheduler's `plan`, the curator's `curate` and the launcher's `launch` (the
+#: `housekeeping` verb retired). Anything else has no session to name.
+DAILY_KINDS = ("plan", "curate", "launch")
+
+#: The daily kinds that cycle; `launch` always seeds cycle 0
+#: (`_ds_daily_sid launch 0`), so no counter file can move it.
+CYCLING_KINDS = ("plan", "curate")
+
+#: The kinds seeded by issue number instead of by day (`_ds_topic_sid chore
+#: <n>`), reached through ``--daily-id chore --tag <n>`` so a chore's tail has
+#: the same one computed path a seat's does.
+TOPIC_KINDS = ("chore",)
 
 _DAILY_DATE_RE = re.compile(r"^\d{8}$")
 
@@ -396,7 +405,8 @@ def daily_session_id(kind: str, date: str, cycle: int = 0) -> str:
     if kind not in DAILY_KINDS:
         raise ResolveSessionError(
             f"unknown daily kind {kind!r} — the launcher seeds only "
-            f"{', '.join(DAILY_KINDS)}. Any string would hash to a well-formed id "
+            f"{', '.join(DAILY_KINDS)} by day and {', '.join(TOPIC_KINDS)} by "
+            f"issue number. Any string would hash to a well-formed id "
             f"naming no session, so this refuses rather than guessing. (An "
             f"`architect` session is seeded by topic, not by day, and has no "
             f"daily id.)"
@@ -408,10 +418,34 @@ def daily_session_id(kind: str, date: str, cycle: int = 0) -> str:
             f"wrong id."
         )
     seed = f"dropset-{kind}-{date}" + (f"-c{cycle}" if cycle > 0 else "")
+    return _seed_uuid(seed)
+
+
+def _seed_uuid(seed: str) -> str:
     digest = hashlib.md5(seed.encode("utf-8")).hexdigest()  # noqa: S324 - a naming seed, not a security primitive
     return (
         f"{digest[0:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
     )
+
+
+def topic_session_id(kind: str, tag: str) -> str:
+    """The id a number-seeded verb (``chore <n>``) launched under — the seed
+    ``dropset-<kind>-<n>`` of `_ds_topic_sid`, which must match it exactly.
+
+    ``tag`` is the bare number or ``eng-<n>``; anything else refuses, for the
+    reason ``daily_session_id`` gives: a wrong input still hashes to an id.
+    """
+    if kind not in TOPIC_KINDS:
+        raise ResolveSessionError(
+            f"unknown topic kind {kind!r} — only {', '.join(TOPIC_KINDS)} is "
+            f"seeded by issue number"
+        )
+    number = normalize_tag(tag)
+    if not number.isdigit():
+        raise ResolveSessionError(
+            f"--daily-id {kind} needs --tag <n>, an issue number, got {tag!r}"
+        )
+    return _seed_uuid(f"dropset-{kind}-{number}")
 
 
 def run(argv: list[str]) -> int:
@@ -424,7 +458,7 @@ def run(argv: list[str]) -> int:
         default=None,
         metavar="KIND",
         help="print the deterministic session id for a daily verb (plan, "
-        "curate) and "
+        "curate, launch), or a chore with --tag <n>, and "
         "exit — compute your own id rather than listing the "
         "projects directory to find it",
     )
@@ -468,6 +502,13 @@ def run(argv: list[str]) -> int:
     # argument without touching symlinks, which is exactly the needed half.
     repo = Path(os.path.abspath(args.repo if args.repo else Path.cwd()))
 
+    if args.daily_id in TOPIC_KINDS:
+        if not args.tag:
+            raise ResolveSessionError(
+                f"--daily-id {args.daily_id} needs --tag <n>, the issue number"
+            )
+        print(topic_session_id(args.daily_id, args.tag))
+        return 0
     if args.daily_id:
         # `daily_session_id` refuses any kind outside DAILY_KINDS.
         date = args.date or launch_date()
@@ -477,7 +518,11 @@ def run(argv: list[str]) -> int:
         if cycle is not None and cycle < 0:
             raise ResolveSessionError(f"--cycle must be >= 0, got {cycle}")
         if cycle is None:
-            cycle = read_cycle(repo, date, args.daily_id)
+            cycle = (
+                read_cycle(repo, date, args.daily_id)
+                if args.daily_id in CYCLING_KINDS
+                else 0
+            )
         print(daily_session_id(args.daily_id, date, cycle))
         return 0
 
