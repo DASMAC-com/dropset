@@ -18,6 +18,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import board_batch  # noqa: E402
 import ratify_staged as rs  # noqa: E402
 from ratify_staged import (  # noqa: E402
     RatifyError,
@@ -164,6 +165,10 @@ class FakeLinear:
             page = {"hasNextPage": ident in self.more_comments}
             nodes = self.comments.get(ident, [])
             return {"issue": {"comments": {"pageInfo": page, "nodes": nodes}}}
+        if "projectMilestones" in query:
+            names = (rs.MILESTONE, rs.CURATOR_MILESTONE)
+            nodes = [{"id": f"m-{n.split()[0]}", "name": n} for n in names]
+            return {"project": {"projectMilestones": {"nodes": nodes}}}
         if "TeamStates" in query:
             names = ("Backlog", "Todo", "Canceled")
             return {
@@ -485,6 +490,134 @@ class InboxRunTests(unittest.TestCase):
         self.assertEqual(payload["skipped"], ["ENG-2"])
         options = payload["calls"][0]["questions"][0]["options"]
         self.assertEqual(options[0]["description"], "Keep")
+
+    def test_a_curator_pending_member_is_still_in_the_inbox(self):
+        marked = _issue(1, milestone=rs.CURATOR_MILESTONE)
+        self.assertTrue(rs.in_pool(marked, "inbox"))
+        self.assertFalse(rs.in_pool(marked, "staged"))
+        fake = FakeLinear([marked, _inbox(2)])
+        _, out = self._run(fake, ["list", "--pool", "inbox"])
+        lines = out.splitlines()
+        self.assertEqual([line.split(" | ")[0] for line in lines], ["ENG-1", "ENG-2"])
+        self.assertTrue(lines[0].endswith("[curator pending]"))
+
+    def test_the_ticked_move_clears_the_mark_and_only_it(self):
+        fake = FakeLinear(
+            [
+                _issue(1, milestone=rs.CURATOR_MILESTONE),
+                _issue(2, milestone=rs.CURATOR_MILESTONE),
+                _inbox(3),
+            ]
+        )
+        code, _ = self._run(
+            fake,
+            ["approve", "--pool", "inbox", "--ids", "ENG-1"]
+            + ["--cancel", "ENG-2", "ENG-3"],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.writes,
+            [
+                ("uuid-1", {"projectMilestoneId": None, "stateId": "s-Todo"}),
+                ("uuid-2", {"projectMilestoneId": None, "stateId": "s-Canceled"}),
+                ("uuid-3", {"stateId": "s-Canceled"}),
+            ],
+        )
+
+    def test_a_ticked_retitle_lands_in_the_same_write(self):
+        marked = _issue(1, milestone=rs.CURATOR_MILESTONE)
+        marked["title"] = "Claude: Old shorthand"
+        fake = FakeLinear([marked])
+        code, _ = self._run(
+            fake,
+            ["approve", "--pool", "inbox", "--ids", "ENG-1"]
+            + ["--title", "Claude: The subject the body now has"],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.writes,
+            [
+                (
+                    "uuid-1",
+                    {
+                        "projectMilestoneId": None,
+                        "stateId": "s-Todo",
+                        "title": "Claude: The subject the body now has",
+                    },
+                )
+            ],
+        )
+
+    def test_a_retitle_that_changes_the_token_writes_nothing(self):
+        issue = _inbox(1, title="[Chore/Anthropic] Old")
+        fake = FakeLinear([issue])
+        with self.assertRaisesRegex(board_batch.BoardBatchError, "--retoken"):
+            self._run(
+                fake,
+                ["approve", "--pool", "inbox", "--ids", "ENG-1", "--title", "New"],
+            )
+        self.assertEqual(fake.writes, [])
+        with self.assertRaisesRegex(RatifyError, "--title retitles"):
+            self._run(fake, ["approve", "--ids", "ENG-1", "--title", "New"])
+
+    def test_a_retitle_on_an_already_moved_task_is_named_not_dropped(self):
+        moved = _inbox(1, state_type="unstarted", state="Todo")
+        fake = FakeLinear([moved])
+        code, out = self._run(
+            fake, ["approve", "--pool", "inbox", "--ids", "ENG-1", "--title", "New"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("ALREADY ENG-1", out)
+        self.assertIn("TITLE NOT APPLIED ENG-1", out)
+        self.assertEqual(fake.writes, [])
+
+    def test_unmark_ids_clears_a_marked_task(self):
+        fake = FakeLinear([_issue(1, milestone=rs.CURATOR_MILESTONE), _inbox(2)])
+        code, _ = self._run(fake, ["unmark", "--ids", "ENG-1,ENG-2"])
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.writes, [("uuid-1", {"projectMilestoneId": None})])
+
+    def test_mark_stamps_inbox_members_and_skips_the_rest(self):
+        marked = _issue(2, milestone=rs.CURATOR_MILESTONE)
+        fake = FakeLinear([_inbox(1), marked, _issue(3)])
+        code, out = self._run(fake, ["mark", "--ids", "ENG-1,ENG-2,ENG-3"])
+        self.assertEqual(code, 0)
+        self.assertIn("SKIPPED ENG-3", out)
+        # ENG-2 already carries the mark, so it needs no write.
+        self.assertEqual(fake.writes, [("uuid-1", {"projectMilestoneId": "m-Curator"})])
+
+    def test_unmark_all_clears_only_the_curator_mark(self):
+        fake = FakeLinear(
+            [
+                _issue(1, milestone=rs.CURATOR_MILESTONE),
+                _issue(2),
+                _inbox(3),
+            ]
+        )
+        code, _ = self._run(fake, ["unmark", "--all"])
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.writes, [("uuid-1", {"projectMilestoneId": None})])
+        fake = FakeLinear([_inbox(1)])
+        code, out = self._run(fake, ["unmark", "--ids", "ENG-1", "--dry-run"])
+        self.assertIn("NOTHING to write", out)
+        self.assertEqual(fake.writes, [])
+
+    def test_mark_refuses_an_ambiguous_milestone_name(self):
+        with self.assertRaisesRegex(RatifyError, "2 milestones"):
+            with mock.patch(
+                "board_batch._post",
+                return_value={
+                    "project": {
+                        "projectMilestones": {
+                            "nodes": [
+                                {"id": "a", "name": rs.CURATOR_MILESTONE},
+                                {"id": "b", "name": rs.CURATOR_MILESTONE},
+                            ]
+                        }
+                    }
+                },
+            ):
+                rs.milestone_id("k", "p", rs.CURATOR_MILESTONE)
 
     def test_repeated_proposals_are_refused(self):
         edge = {"edge": {"blocker": "ENG-1", "blocked": "ENG-2"}, "reason": "a"}

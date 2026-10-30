@@ -344,6 +344,87 @@ class ZeroEchoTests(unittest.TestCase):
         self.assertNotIn("NARRATIVE-SENTINEL", printed)
         self.assertIn("COMMENTED", printed)
 
+    def test_reply_to_posts_in_the_thread_and_prints_the_reply_id(self):
+        posts = [
+            {"issue": self._issue(self.SECRET)},
+            {
+                "commentCreate": {
+                    "success": True,
+                    "comment": {"id": "reply-9", "url": "c"},
+                }
+            },
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            body_path = os.path.join(d, "note.md")
+            with open(body_path, "w", encoding="utf-8") as handle:
+                handle.write("Folded into Part 2.")
+            with mock.patch.object(lp, "_post", side_effect=posts) as posted:
+                out = io.StringIO()
+                with (
+                    mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}),
+                    redirect_stdout(out),
+                ):
+                    lp.run(
+                        [
+                            "comment",
+                            "ENG-942",
+                            "--body",
+                            body_path,
+                            "--reply-to",
+                            "thread-1",
+                        ]
+                    )
+        sent = posted.call_args_list[1].args[2]
+        self.assertEqual(sent["parentId"], "thread-1")
+        self.assertIn("REPLIED", out.getvalue())
+        self.assertIn("reply-9", out.getvalue())
+        self.assertIn("thread-1", out.getvalue())
+
+    def test_a_top_level_comment_sends_no_parent(self):
+        posts = [
+            {"issue": self._issue(self.SECRET)},
+            {"commentCreate": {"success": True, "comment": {"url": "c"}}},
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            body_path = os.path.join(d, "note.md")
+            with open(body_path, "w", encoding="utf-8") as handle:
+                handle.write("text")
+            with mock.patch.object(lp, "_post", side_effect=posts) as posted:
+                lp.cmd_comment("k", "ENG-942", body_path, dry_run=False)
+        self.assertNotIn("parentId", posted.call_args_list[1].args[2])
+
+    def test_a_failed_reply_raises_so_the_resolve_is_never_reached(self):
+        posts = [
+            {"issue": self._issue(self.SECRET)},
+            {"commentCreate": {"success": False}},
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            body_path = os.path.join(d, "note.md")
+            with open(body_path, "w", encoding="utf-8") as handle:
+                handle.write("text")
+            with mock.patch.object(lp, "_post", side_effect=posts):
+                with self.assertRaises(LinearPatchError):
+                    lp.cmd_comment(
+                        "k", "ENG-942", body_path, dry_run=False, reply_to="t-1"
+                    )
+
+    def test_an_empty_reply_to_or_a_missing_reply_id_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            body_path = os.path.join(d, "note.md")
+            with open(body_path, "w", encoding="utf-8") as handle:
+                handle.write("text")
+            with mock.patch.object(lp, "_post") as posted:
+                with self.assertRaisesRegex(LinearPatchError, "empty comment id"):
+                    lp.cmd_comment("k", "ENG-942", body_path, False, reply_to=" ")
+            posted.assert_not_called()
+            posts = [
+                {"issue": self._issue(self.SECRET)},
+                {"commentCreate": {"success": True, "comment": None}},
+            ]
+            with mock.patch.object(lp, "_post", side_effect=posts):
+                with self.assertRaisesRegex(LinearPatchError, "no reply id"):
+                    lp.cmd_comment("k", "ENG-942", body_path, False, reply_to="t-1")
+
     def test_a_patch_that_changes_nothing_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             ops = os.path.join(d, "ops.json")

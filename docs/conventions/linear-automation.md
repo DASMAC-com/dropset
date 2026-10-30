@@ -550,13 +550,14 @@ session-metrics state, standing decisions and verification debt.
 
 The state and the milestone together say where an issue sits:
 
-| State                        | Milestone         | Meaning                                                            |
-| ---------------------------- | ----------------- | ------------------------------------------------------------------ |
-| Backlog                      | none              | a spec awaiting the operator's review — the inbox                  |
-| Backlog or Todo              | other parking     | **parked**: hidden from the operator's project view                |
-| Backlog                      | `Session pending` | a seat session's filed tasks, under its in-tab review; short-lived |
-| Todo                         | none              | reviewed and dispatchable; the body is frozen                      |
-| In Progress, In Review, Done | —                 | the session state machine, unchanged (see above)                   |
+| State                        | Milestone         | Meaning                                                                    |
+| ---------------------------- | ----------------- | -------------------------------------------------------------------------- |
+| Backlog                      | none              | a spec awaiting the operator's review — the inbox                          |
+| Backlog or Todo              | other parking     | **parked**: hidden from the operator's project view, bar `Curator pending` |
+| Backlog                      | `Session pending` | a seat session's filed tasks, under its in-tab review; short-lived         |
+| Backlog                      | `Curator pending` | the curator's current batch, still in its pool; short-lived                |
+| Todo                         | none              | reviewed and dispatchable; the body is frozen                              |
+| In Progress, In Review, Done | —                 | the session state machine, unchanged (see above)                           |
 
 **The operator's move from Backlog to Todo is the approval.** The
 scheduler never makes that move, nor does any session on its own
@@ -572,9 +573,14 @@ operator approved is no longer the body on the issue.
 retired thumbs-up reaction plays no part. An
 unresolved comment thread on a Todo issue is *not* a refusal, since only
 the operator may make that move (operator, 2026-10-21). The **fold
-protocol**: fold the comment into the body, reply on the thread saying
-how it was addressed, and resolve it — so a resolved thread means
-addressed-and-how, never approval. The operator's **Next** view is the
+protocol**: fold the comment into the body, **reply in that comment's
+thread** saying what changed and where it landed
+(`linear_patch.py comment --reply-to <comment-id>`), then resolve the
+thread with the reply as its resolving comment. A resolved thread
+therefore means addressed-and-how, never approval. A fold whose reply
+fails **leaves the thread open**, because a resolved thread with no
+answer reads as approval with nothing behind it. The operator's **Next**
+view is the
 unblocked Todo; it is Linear's server-side blocker filter, which is why a
 scheduler hold is expressed as an edge (see "Blocking relations").
 
@@ -674,6 +680,8 @@ it runs every day, named by its date. The division of labour:
 operator item is reviewed and ticked like any other, surfaced once in
 priority order; the tick moves it to Todo, where the Next view holds it
 until the operator's Done, and dispatch refuses it downstream.
+The curator's own `Curator pending` mark keeps a task in the pool (see
+"The curator marks its batch" below).
 `Session pending` (another session's review),
 `Audit findings` (the scheduler promotes them while the lane drains) and
 `Post-validation` (the operator's deferral) are out of the pool.
@@ -691,11 +699,36 @@ the fold protocol and carried to the next batch; a comment asking to
 drop it cancels it, and a deferral goes to `Post-validation` only when
 the comment names that milestone.
 
+**Retitle on the tick.** A batch member whose title is shorthand, or
+no longer matches its body after a fold, gets a proposal on its
+commentary line: `title → <proposed title>`. A bare tick accepts the
+Todo move and the retitle in one write. A comment `keep title` keeps
+the old title, and a comment giving another title uses that one. A
+held task that grew a part is retitled on the same rule when it
+returns. A retitle **never changes** the leading
+`[<Verb>/<Substrate>]` token, `[Operator]` or `Claude:`.
+`board_batch.py`'s title write refuses a title whose token run differs
+from the current one unless `--retoken` is passed. The curator's path,
+`ratify_staged.py approve --title`, has no `--retoken` at all. If the
+body contradicts the token, the curator raises it with the operator as
+a comment.
+
+**The curator marks its batch.** Before each ask the curator stamps
+the batch `Curator pending` in one write
+(`ratify_staged.py mark`). The ticked move clears the mark. A held or
+unticked task keeps it until it is re-presented or until the close
+sweep (`unmark --all`), and the next curator's bootstrap clears any
+leftover the same way. So the operator's view shows what is under
+review, and a count with no live curator means the curator stopped
+mid-day. Only the curator writes this milestone, and the scheduler
+never promotes it.
+
 The curator writes nothing else on its own: **no priority** beyond the
 architect task's fixed Urgent at filing (one it believes wrong is
 messaged to the scheduler, and waits while none is live), no edge,
 kill or merge the operator did not tick (see "Blocking relations"), no
-other milestone, no other issue's state or body beyond the fold. It
+other milestone beyond its own mark, no title token, no other issue's
+state or body beyond the fold. It
 messages the scheduler every Todo move, cancel, merge and
 edge it places, and hands it any kill or merge that reaches outside the
 pool.
@@ -706,15 +739,20 @@ waiting for an answer, or reports `curator: not live`. The curator
 takes no new batch, finishes one mid-tick, states the inbox remaining
 (count and ids), runs its session-metrics tail with its cost, and
 prints `CLEAR TO CLOSE — close this window`, so its tab goes yellow
-once. No board write accompanies the stop, and no Planning-document
-note: the scheduler is rewriting the document as the curator stops.
+once. Before that it sweeps its `Curator pending` marks; no other board
+write accompanies the stop, and no Planning-document note: the scheduler is
+rewriting the document as the curator stops.
 
 ### Which milestones park, and which do not
 
 The project's milestones split into two kinds, and only one kind parks.
-**Parking** milestones — `Session pending`, and the legacy
-`Audit findings` — mean "filed, not yet reviewed", and an issue
-carrying one is read as parked by every rule above. ~~`Follow-ups`~~
+**Parking** milestones — `Session pending`, `Curator pending`, and the
+legacy `Audit findings` — mean "filed, not yet reviewed", and an issue
+carrying one is read as parked by every rule above, with one exception:
+`Curator pending` marks the curator's own batch **under** review, so
+its issues stay in the curator's pool. It keeps the parked rhythm:
+it is counted out loud at every bootstrap, and only the curator's own
+tick or sweep clears it, never the scheduler. ~~`Follow-ups`~~
 (into which `Claude meta` already merged) is struck: filers land in
 Backlog and message the curator, and the milestone is deleted once what
 it still holds is cleared. The rest —

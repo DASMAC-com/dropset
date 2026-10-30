@@ -31,7 +31,7 @@ Subcommands
 
 ``read``    fetch the body to a file; print its size only.
 ``patch``   apply an ops file to the description, atomically.
-``comment`` add a comment from a file.
+``comment`` add a comment from a file; ``--reply-to`` posts it in a thread.
 ``state``   move the issue to a named state, with no body echo.
 
 Ops file — a JSON array, applied in order, capped at 50::
@@ -97,9 +97,11 @@ mutation SetState($id: String!, $stateId: String!) {
 }
 """
 
+# `parentId` makes the comment a reply in that comment's thread; omitted, it is
+# a new top-level thread.
 _COMMENT_MUTATION = """
-mutation AddComment($issueId: String!, $body: String!) {
-  commentCreate(input: { issueId: $issueId, body: $body }) {
+mutation AddComment($issueId: String!, $body: String!, $parentId: String) {
+  commentCreate(input: { issueId: $issueId, body: $body, parentId: $parentId }) {
     success
     comment { id url }
   }
@@ -348,19 +350,53 @@ def cmd_patch(api_key: str, identifier: str, ops_path: str, dry_run: bool) -> st
     )
 
 
-def cmd_comment(api_key: str, identifier: str, body_path: str, dry_run: bool) -> str:
+def cmd_comment(
+    api_key: str,
+    identifier: str,
+    body_path: str,
+    dry_run: bool,
+    reply_to: str | None = None,
+) -> str:
+    """Add a comment, or with ``reply_to`` a reply in that comment's thread.
+
+    A reply prints its own comment id, which is what
+    ``linear_gate.py resolve <thread> <id>`` takes: a fold
+    answers in the operator's thread and then resolves it, and a reply that
+    failed raises here, so the caller never reaches the resolve.
+    """
+    if reply_to is not None and not reply_to.strip():
+        # An empty id would post a top-level comment that a caller then
+        # resolves the operator's thread with — refused, never downgraded.
+        raise LinearPatchError("--reply-to was given an empty comment id")
     body = _read_text(body_path)
     if not body.strip():
         raise LinearPatchError(f"{body_path} is empty — nothing to comment")
     issue = _fetch(api_key, identifier)
+    verb = f"REPLY to {reply_to}" if reply_to else "COMMENT"
     if dry_run:
-        return f"WOULD COMMENT on {issue['identifier']} | {len(body)} chars"
-    data = _post(api_key, _COMMENT_MUTATION, {"issueId": issue["id"], "body": body})
+        return f"WOULD {verb} on {issue['identifier']} | {len(body)} chars"
+    variables = {"issueId": issue["id"], "body": body}
+    if reply_to:
+        variables["parentId"] = reply_to
+    data = _post(api_key, _COMMENT_MUTATION, variables)
     result = data.get("commentCreate") or {}
     if not result.get("success"):
         raise LinearPatchError(f"commentCreate failed for {issue['identifier']}")
     comment = result.get("comment") or {}
-    return f"COMMENTED {issue['identifier']} {comment.get('url')} | {len(body)} chars"
+    if reply_to:
+        if not comment.get("id"):
+            raise LinearPatchError(
+                f"commentCreate on {issue['identifier']} returned no reply id — "
+                "do not resolve the thread"
+            )
+        return (
+            f"REPLIED {issue['identifier']} {comment.get('url')} | comment "
+            f"{comment.get('id')} in thread {reply_to} | {len(body)} chars"
+        )
+    return (
+        f"COMMENTED {issue['identifier']} {comment.get('url')} | comment "
+        f"{comment.get('id')} | {len(body)} chars"
+    )
 
 
 def cmd_state(api_key: str, identifier: str, wanted: str, dry_run: bool) -> str:
@@ -418,6 +454,11 @@ def build_parser() -> argparse.ArgumentParser:
     comment = sub.add_parser("comment", help="add a comment from a file")
     comment.add_argument("identifier")
     comment.add_argument("--body", required=True, help="file holding the comment text")
+    comment.add_argument(
+        "--reply-to",
+        metavar="COMMENT_ID",
+        help="post as a reply in this comment's thread; prints the reply's id",
+    )
     comment.add_argument("--dry-run", action="store_true")
 
     state = sub.add_parser("state", help="move the issue to a named state")
@@ -437,7 +478,9 @@ def run(argv: list[str]) -> int:
         elif args.command == "patch":
             line = cmd_patch(api_key, args.identifier, args.ops, args.dry_run)
         elif args.command == "comment":
-            line = cmd_comment(api_key, args.identifier, args.body, args.dry_run)
+            line = cmd_comment(
+                api_key, args.identifier, args.body, args.dry_run, args.reply_to
+            )
         else:
             line = cmd_state(api_key, args.identifier, args.wanted, args.dry_run)
     except LinearPatchError as exc:

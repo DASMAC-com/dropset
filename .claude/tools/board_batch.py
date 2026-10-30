@@ -23,7 +23,9 @@ ids, never a committed token):
   number, like ``list``, not in the view's own order).
 * ``fields --updates FILE`` — every non-body **issue field**: priority, state,
   parent, milestone, labels, assignee. Takes an explicit map of issue number
-  to field values and prints one line per issue.
+  to field values and prints one line per issue. A ``title`` write keeps the
+  leading ``[Verb/Substrate]`` / ``[Operator]`` / ``Claude:`` token run;
+  changing it needs ``--retoken``.
 * ``priorities --updates FILE`` — a thin alias of ``fields`` for the
   priority-only case, kept because a priority sweep is the common shape.
 * ``state --id ENG-### --state NAME`` — a thin alias of ``fields`` for the
@@ -167,6 +169,36 @@ SCALAR_FIELDS = {
 # refusal below must not apply to them. Kept as a named set rather than an
 # inline check so the asymmetry with `ID_ONLY_FIELDS` is visible.
 TEXT_FIELDS = ("title",)
+
+# A title's leading launch-line token run: any `[...]` tokens (`[Chore/Anthropic]`,
+# `[Operator]`) and then an optional `Claude:` prefix. A retitle rewrites the
+# subject the body outgrew; the token is the issue's launch line and its
+# meta-work signal, so a title write that changes it is refused unless
+# `--retoken` says that is the point. The curator never passes it: a token the
+# body contradicts is a comment to the operator, not a silent rewrite.
+_TITLE_TOKEN = re.compile(r"^\s*((?:\[[^\]]*\]\s*)*)(Claude:)?")
+
+
+def title_token(title: str) -> tuple[str, ...]:
+    """The leading token run of ``title``, one entry per token, whitespace
+    between them ignored."""
+    match = _TITLE_TOKEN.match(title)
+    tokens = tuple(re.findall(r"\[[^\]]*\]", match.group(1)))
+    return tokens + ((match.group(2),) if match.group(2) else ())
+
+
+def refuse_retoken(issue: dict, title: str) -> None:
+    """Refuse a title write whose leading token run differs from the current
+    title's."""
+    current = title_token(str(issue.get("title") or ""))
+    proposed = title_token(title)
+    if current != proposed:
+        raise BoardBatchError(
+            f"{issue.get('identifier')}: the title write changes the leading "
+            f"token {' '.join(current) or '(none)'!r} to "
+            f"{' '.join(proposed) or '(none)'!r} — a retitle keeps the token; "
+            "pass --retoken only when changing it is the point"
+        )
 
 
 class BoardBatchError(Exception):
@@ -764,9 +796,13 @@ def apply_fields(
     by_number: dict[int, dict],
     *,
     dry_run: bool = False,
+    retoken: bool = False,
     emit=None,
 ) -> list[str]:
     """Apply each issue's field map. Returns one report line per issue.
+
+    A ``title`` that changes the current title's leading token run is refused
+    in the pre-flight unless ``retoken`` (see :func:`refuse_retoken`).
 
     **Validates the whole batch before issuing any write.** Resolution and
     input-building are pure, so doing them up front means a typo in the fifth
@@ -785,6 +821,8 @@ def apply_fields(
     for raw_number, fields in updates.items():
         issue = resolve_issue(raw_number, by_number)
         update = build_update_input(fields)
+        if "title" in update and not retoken:
+            refuse_retoken(issue, update["title"])
         _resolve_field_values(api_key, issue, update, by_number, state_cache)
         summary = ", ".join(f"{k}={fields[k]!r}" for k in sorted(fields))
         planned.append((issue, update, summary))
@@ -1091,6 +1129,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--updates", required=True, help="path to the updates JSON")
         _add_dry_run(p, top_level=False)
+        if name == "fields":
+            p.add_argument(
+                "--retoken",
+                action="store_true",
+                help="allow a title write to change the leading [Verb/Substrate] "
+                "/ [Operator] / Claude: token run",
+            )
 
     state_cmd = sub.add_parser(
         "state",
@@ -1184,7 +1229,13 @@ def run(argv: list[str]) -> int:
         )
         # apply_fields reports each write as it lands (see its `emit`), so the
         # caller must not re-print the returned lines.
-        apply_fields(api_key, updates, by_number, dry_run=args.dry_run)
+        apply_fields(
+            api_key,
+            updates,
+            by_number,
+            dry_run=args.dry_run,
+            retoken=getattr(args, "retoken", False),
+        )
         return 0
 
     pairs = load_json_file(args.pairs)
