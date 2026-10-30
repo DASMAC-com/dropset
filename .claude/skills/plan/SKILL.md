@@ -142,7 +142,11 @@ The pre-launch ran `.claude/tools/upkeep.py` before this
 session started and spliced its report under the document's
 machine-written `Upkeep report` heading, so the fetch above holds
 it; never re-run the pass here. Say its `parked` line — each
-pool's count and direction (ruling 23) — what was pruned and dismissed
+pool's count and direction (ruling 23) — and the `Curator pending`
+count beside it with whether `curate-<day>` is live: a non-zero
+count with no live curator means it stopped mid-day and needs
+relaunching (its leftover is the curator's to clear, never
+promoted here — it is still inbox) — what was pruned and dismissed
 (or would have been, unarmed), each refusal (a live session
 lock, an open PR — reported, never retried) and each pruned
 name's ahead count, and any inert guard,
