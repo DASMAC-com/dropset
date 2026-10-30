@@ -150,13 +150,26 @@ class ApprovalTests(unittest.TestCase):
 class FakeLinear:
     """Answers ``board_batch._post`` by operation, recording every write."""
 
-    def __init__(self, issues, comments=None, more_comments=()):
+    def __init__(self, issues, comments=None, more_comments=(), parents=None):
         self.issues = {i["number"]: i for i in issues}
         self.comments = comments or {}
         self.more_comments = set(more_comments)
+        # Parent identifier -> the numbers of its sub-issues.
+        self.parents = parents or {}
         self.writes = []
 
     def __call__(self, api_key, query, variables):
+        if query == rs._PARENT_QUERY:
+            ident = variables["id"]
+            known = ident in self.parents
+            return {
+                "issue": {"id": f"uuid-{ident}", "identifier": ident} if known else None
+            }
+        parent = (variables.get("filter") or {}).get("parent")
+        if parent:
+            ident = parent["id"]["eq"].removeprefix("uuid-")
+            nodes = [self.issues[n] for n in self.parents[ident]]
+            return {"issues": {"pageInfo": {"hasNextPage": False}, "nodes": nodes}}
         if "issueUpdate" in query:
             self.writes.append((variables["id"], variables["input"]))
             return {"issueUpdate": {"success": True}}
@@ -181,7 +194,7 @@ class FakeLinear:
         return {"issues": {"pageInfo": {"hasNextPage": False}, "nodes": nodes}}
 
 
-class RunTests(unittest.TestCase):
+class _RunBase(unittest.TestCase):
     def setUp(self):
         env = {"LINEAR_API_KEY": "key", "LINEAR_PROJECT_ID": "proj"}
         patcher = mock.patch.dict(os.environ, env)
@@ -194,6 +207,8 @@ class RunTests(unittest.TestCase):
             code = rs.run(argv)
         return code, out.getvalue()
 
+
+class RunTests(_RunBase):
     def test_approve_writes_nothing_while_a_thread_is_open(self):
         thread = {"id": "t1", "parentId": None, "resolvedAt": None, "body": "fix"}
         fake = FakeLinear([_issue(1), _issue(2)], comments={"ENG-2": [thread]})
@@ -260,6 +275,65 @@ class RunTests(unittest.TestCase):
         code, out = self._run(fake, ["gate", "--ids", "ENG-1", "ENG-2", "ENG-3"])
         self.assertEqual(code, 0)
         self.assertIn("CLEAR", out)
+
+
+class ParentRunTests(_RunBase):
+    """``--parent`` names the set a seat session filed as sub-issues, so a
+    session that died mid-review resumes from its governing issue alone."""
+
+    def _set(self):
+        issues = [
+            _issue(1, milestone=None, state="Todo", state_type="unstarted"),
+            _issue(2),
+            _issue(3),
+        ]
+        return FakeLinear(issues, parents={"ENG-9": [1, 2, 3]})
+
+    def test_the_gate_resolves_the_same_set_as_the_ids(self):
+        for argv in (["--parent", "eng-9"], ["--ids", "ENG-1", "ENG-2", "ENG-3"]):
+            with self.subTest(argv=argv):
+                code, out = self._run(self._set(), ["gate", *argv])
+                self.assertEqual(code, 1)
+                self.assertEqual(
+                    out.strip(), f"OPEN — still under {rs.MILESTONE}: ENG-2, ENG-3"
+                )
+
+    def test_list_narrows_to_the_staged_sub_issues(self):
+        _, out = self._run(self._set(), ["list", "--parent", "ENG-9"])
+        self.assertNotIn("ENG-1", out)
+        self.assertIn("ENG-2", out)
+        self.assertIn("ENG-3", out)
+
+    def test_review_takes_only_the_sub_issues_still_staged(self):
+        _, out = self._run(self._set(), ["review", "--parent", "ENG-9"])
+        self.assertEqual(
+            out.splitlines(), ["APPROVED ENG-2 | Task 2", "APPROVED ENG-3 | Task 3"]
+        )
+
+    def test_approve_moves_every_staged_sub_issue_not_canceled(self):
+        fake = self._set()
+        code, _ = self._run(fake, ["approve", "--parent", "ENG-9", "--cancel", "ENG-3"])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.writes,
+            [
+                ("uuid-2", {"projectMilestoneId": None, "stateId": "s-Todo"}),
+                ("uuid-3", {"projectMilestoneId": None, "stateId": "s-Canceled"}),
+            ],
+        )
+
+    def test_an_unknown_or_childless_parent_is_refused(self):
+        with self.assertRaisesRegex(RatifyError, "no such issue"):
+            self._run(self._set(), ["gate", "--parent", "ENG-8"])
+        fake = FakeLinear([_issue(1)], parents={"ENG-9": []})
+        with self.assertRaisesRegex(RatifyError, "no sub-issues"):
+            self._run(fake, ["gate", "--parent", "ENG-9"])
+
+    def test_parent_and_ids_are_exclusive_and_inbox_refuses_parent(self):
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            rs._parse_args(["gate", "--parent", "ENG-9", "--ids", "ENG-1"])
+        with self.assertRaisesRegex(RatifyError, "inbox"):
+            self._run(self._set(), ["review", "--pool", "inbox", "--parent", "ENG-9"])
 
 
 def _inbox(number, title=None, priority=0, **kwargs):

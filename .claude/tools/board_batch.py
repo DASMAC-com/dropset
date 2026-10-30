@@ -917,6 +917,25 @@ def referenced_numbers(refs) -> list[int]:
     return numbers
 
 
+def update_refs(updates: dict) -> list:
+    """The issue references a ``fields`` payload names: every key, plus each
+    ``parent`` value that is not already a UUID.
+
+    The parent is a reference too, and :func:`_resolve_field_values` resolves
+    it through the same bounded lookup — so a read scoped to the keys alone
+    never fetched it, and every parent given as a number was refused as "not in
+    this project" while being exactly that.
+    """
+    refs: list = list(updates)
+    for fields in updates.values():
+        parent = fields.get("parent") if isinstance(fields, dict) else None
+        if parent is not None and not (
+            isinstance(parent, str) and UUID_RE.match(parent)
+        ):
+            refs.append(parent)
+    return refs
+
+
 #: The reference keys an ``edges`` pair carries. Named once so `pair_refs` and
 #: `place_edges` cannot disagree: a third key added to one and not the other
 #: would be silently under-fetched, surfacing as a spurious "not in this project"
@@ -1225,7 +1244,9 @@ def run(argv: list[str]) -> int:
         if not updates:
             raise BoardBatchError("nothing to update — the updates file is empty")
         by_number = index_by_number(
-            fetch_issues_by_number(api_key, project_id, referenced_numbers(updates))
+            fetch_issues_by_number(
+                api_key, project_id, referenced_numbers(update_refs(updates))
+            )
         )
         # apply_fields reports each write as it lands (see its `emit`), so the
         # caller must not re-print the returned lines.
