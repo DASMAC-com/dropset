@@ -41,10 +41,14 @@ or any tree whose tier cannot be read) keeps the full refusal below. An
 advisor worktree (``architect``, ``explore``) is read-only toward the repo, so
 its untracked spec file is expendable once the caller has confirmed its issue
 finished: it is removed with one ``--force``, which still refuses a **locked**
-tree. A live session's lock holds it; a Claude Code lock whose recorded pid is
-gone is stale (:func:`stale_lock`) and lifted first, since the CLI can leave
-one behind at exit. Only a commit of its own beyond ``origin/main`` holds it
-back otherwise — a read-only session never makes one, so one is worth a look.
+tree. Only a commit of its own beyond ``origin/main`` holds it back otherwise —
+a read-only session never makes one, so one is worth a look.
+
+**Locks are tier-blind.** A live session's lock holds every tree; a Claude Code
+lock whose recorded pid is gone is stale (:func:`stale_lock`) and lifted first
+on every tier, since the CLI can leave one behind at exit. An executor tree
+keeps its pre-flight and un-forced removal, so the lift frees it only when
+nothing else would have held it.
 
 The base worktree (``refs/heads/main``) is never a candidate. Stdlib only; a
 Python skill-tool under ``.claude/tools/`` — deliberately **not** a Cargo
@@ -333,13 +337,13 @@ def prune(
         else:
             reason = unsafe_reason(path, branch, git)
         lock = tree.get("locked")
-        # A live session's lock holds every tier. Only an advisor's or a closed
-        # name's STALE Claude Code lock — its holder gone — is lifted, since the
-        # CLI can leave one behind at exit; an executor keeps git's plain
-        # refusal.
+        # A live session's lock holds every tier. A STALE Claude Code lock —
+        # its holder gone — is lifted on every tier, since the CLI can leave one
+        # behind at exit; an executor's pre-flight and un-forced removal still
+        # refuse dirty or unpushed work once it is gone.
         forced = advisor or settled
-        unlock = forced and lock is not None and stale_lock(lock, alive)
-        if reason is None and lock is not None and forced and not unlock:
+        unlock = lock is not None and stale_lock(lock, alive)
+        if reason is None and lock is not None and not unlock:
             reason = f"locked by a live session ({lock or 'no reason'})"
         if reason is not None:
             skipped.append({"path": path, "branch": branch, "reason": reason})

@@ -399,9 +399,8 @@ LOCKED_PORCELAIN = ADVISOR_PORCELAIN.replace(
 
 
 class LockTests(unittest.TestCase):
-    """A live session's lock holds every tier; only an advisor's (or a closed
-    name's, see ``ClosedTests``) stale Claude Code lock — measured to outlive
-    its session — is lifted."""
+    """A live session's lock holds every tier; a stale Claude Code lock —
+    measured to outlive its session — is lifted on every tier."""
 
     TIERS = staticmethod(TierGateTests.TIERS)
 
@@ -439,12 +438,36 @@ class LockTests(unittest.TestCase):
         self.assertEqual([r["branch"] for r in out["removed"]], ["eng-1957"])
         self.assertNotIn(["worktree", "unlock", ADVISOR_PATH], git.calls)
 
-    def test_an_executor_stale_lock_is_never_lifted(self):
+    def test_a_stale_lock_is_lifted_and_the_executor_tree_removed_unforced(self):
+        """The lock's pid is dead: lifted as for an advisor, but the removal
+        stays un-forced, so the executor's own refusals still apply."""
         git = self.git()
         out = prune(
             {"eng-1958"}, False, git=git, tier=self.TIERS, alive=lambda p, s: False
         )
-        self.assertEqual([s["branch"] for s in out["skipped"]], ["eng-1958"])
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-1958"])
+        self.assertLess(
+            git.calls.index(["worktree", "unlock", EXECUTOR_PATH]),
+            git.calls.index(["worktree", "remove", EXECUTOR_PATH]),
+        )
+
+    def test_a_live_lock_holds_an_executor_tree(self):
+        git = self.git()
+        out = prune(
+            {"eng-1958"}, False, git=git, tier=self.TIERS, alive=lambda p, s: True
+        )
+        self.assertIn("live session", out["skipped"][0]["reason"])
+        self.assertNotIn(["worktree", "unlock", EXECUTOR_PATH], git.calls)
+        self.assertFalse(any(c[:2] == ["worktree", "remove"] for c in git.calls))
+
+    def test_a_stale_lock_on_dirty_executor_work_is_never_lifted(self):
+        git = FakeGit(
+            LOCKED_PORCELAIN, modified=[EXECUTOR_PATH], locked=[EXECUTOR_PATH]
+        )
+        out = prune(
+            {"eng-1958"}, False, git=git, tier=self.TIERS, alive=lambda p, s: False
+        )
+        self.assertIn("uncommitted", out["skipped"][0]["reason"])
         self.assertNotIn(["worktree", "unlock", EXECUTOR_PATH], git.calls)
 
     def test_stale_lock_reads_only_a_claude_session_lock(self):

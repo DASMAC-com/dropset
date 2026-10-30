@@ -66,8 +66,9 @@ marker (or an unrecognized one) is ``unattributed`` and is never priced into
 the Bedrock total — that is the share the bill comparison cannot account for,
 reported rather than guessed. ``explore`` landed here until it wrote a marker;
 an older explore worktree still does. A base-repo session with no record reads
-as ``seat``. A session launched before the record still classifies the old
-way.
+as ``seat`` — unless its bootstrap prompt names a ``chore`` whose tag marker
+carries the ``helper`` tier, which then decides. A session launched before the
+record still classifies the old way.
 
 **The bill is matched per service, not by a fixed list of names.** Cost
 Explorer files each model as its own Marketplace service, ``Claude <Family>
@@ -170,15 +171,24 @@ CLASSIFIER_OVERHEAD = 0.082
 # --------------------------------------------------------------------------- #
 
 
-def classify(cwd: str | None, session_id: str | None = None) -> str:
+def classify(
+    cwd: str | None, session_id: str | None = None, issue: str | None = None
+) -> str:
     """A session's substrate class, from its launch marker.
 
     Unlike ``session_metrics.resolve_substrate``, which degrades an unknown to
     seat because a single-session report must never invent a dollar figure, a
     fleet total needs the third answer: a worktree session with no marker is
     neither priced nor silently waved through as seat.
+
+    A base-checkout session with no record but an ``issue`` from its bootstrap
+    prompt reads that issue's tag marker when its tier is ``helper`` — the
+    marker a ``chore`` launch writes — so a Bedrock chore is not metered as
+    seat. A task's marker on the same number has no tier and is not read.
     """
     recorded = sm.read_substrate_marker(cwd, session_id)
+    if recorded is None and sm.base_repo_from_cwd(cwd) is None:
+        recorded = _chore_marker(cwd, issue)
     if recorded == sm.SUBSTRATE_BEDROCK:
         return BEDROCK
     if recorded in (sm.SUBSTRATE_SEAT, sm.SUBSTRATE_ANTHROPIC):
@@ -186,6 +196,22 @@ def classify(cwd: str | None, session_id: str | None = None) -> str:
     if recorded is None and sm.base_repo_from_cwd(cwd) is None:
         return SEAT
     return UNATTRIBUTED
+
+
+# The tier a `chore` launch writes beside its tag marker (`<n>.tier`).
+CHORE_TIER = "helper"
+
+
+def _chore_marker(cwd: str | None, issue: str | None) -> str | None:
+    """The substrate a base-checkout ``chore`` recorded under its tag, or
+    ``None`` when ``issue`` is not one or its marker is not a chore's."""
+    match = re.fullmatch(r"ENG-(\d+)", issue or "")
+    if not cwd or not match:
+        return None
+    marker = Path(cwd) / sm.SUBSTRATE_DIR / match.group(1)
+    if sm._read_marker(marker.with_name(f"{marker.name}.tier")) != CHORE_TIER:
+        return None
+    return sm._read_marker(marker)
 
 
 def issue_of(cwd: str | None) -> str | None:
@@ -475,7 +501,8 @@ def walk(
                 meter.unreadable += 1
                 continue
             session = transcript.stem
-            substrate, issue = classify(cwd, session), issue_of(cwd) or prompted
+            issue = issue_of(cwd) or prompted
+            substrate = classify(cwd, session, issue)
             files = [
                 transcript,
                 *sorted((project / session / "subagents").glob("*.jsonl")),
