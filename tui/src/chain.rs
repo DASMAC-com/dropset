@@ -293,12 +293,16 @@ pub fn build_set_vault_name_ix(
 }
 
 /// `override_vault_name` — a registry `admin` (signer) rewrites the name of
-/// the vault at sector `vault_idx` on `market` and sets its lock.
+/// the vault at sector `vault_idx` on `market` and sets its lock. The
+/// program refuses unless that sector still carries `expected_seq`, so a
+/// vault closed and its sector reused since the caller's read is never
+/// renamed by mistake.
 pub fn build_override_vault_name_ix(
     cluster: Cluster,
     admin: &Pubkey,
     market: &Pubkey,
     vault_idx: u32,
+    expected_seq: u64,
     name: &str,
     lock: bool,
 ) -> Instruction {
@@ -313,6 +317,7 @@ pub fn build_override_vault_name_ix(
         cluster.deployment(),
         OverrideVaultNameInstructionArgs {
             vault_idx,
+            expected_seq,
             name: name.to_string(),
             lock,
         },
@@ -1332,7 +1337,7 @@ mod tests {
                 "Desk",
             ),
             build_set_vault_name_ix(m, &k(6), &market, 0, "Desk"),
-            build_override_vault_name_ix(m, &a, &market, 0, "", true),
+            build_override_vault_name_ix(m, &a, &market, 0, 1, "", true),
             build_set_leader_ix(m, &k(6), &k(9), &market, 0),
             build_deposit_leader_ix(
                 m,

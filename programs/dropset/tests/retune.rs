@@ -104,6 +104,44 @@ fn min_leader_share_rejects_empty_sector() {
     common::assert_program_error(&err, dropset::DropsetError::VaultEmpty);
 }
 
+#[test]
+fn min_leader_share_rejects_stale_seq() {
+    let mut f = Fixture::with_vault();
+    let admin = f.authority.insecure_clone();
+    let seq = f.vault(0).seq.get();
+    let err = f
+        .set_min_leader_share_with_seq(&admin, 0, seq + 1, 100_000)
+        .expect_err("a seq the sector does not carry must reject");
+    common::assert_program_error(&err, dropset::DropsetError::VaultSeqMismatch);
+    assert_eq!(f.vault(0).min_leader_share.get(), 50_000);
+}
+
+#[test]
+fn min_leader_share_refuses_a_reused_sector() {
+    // The admin reads sector 0's vault, it closes and a stranger's vault
+    // reopens on the sector, then the retune arrives with the old seq.
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    let admin = f.authority.insecure_clone();
+    let read_seq = f.close_and_reuse_sector_0();
+    let floor = f.vault(0).min_leader_share.get();
+
+    let err = f
+        .set_min_leader_share_with_seq(&admin, 0, read_seq, 100_000)
+        .expect_err("the old vault's seq must not retune the new one");
+    common::assert_program_error(&err, dropset::DropsetError::VaultSeqMismatch);
+    assert_eq!(f.vault(0).min_leader_share.get(), floor);
+
+    let live_seq = f.vault(0).seq.get();
+    let meta = f
+        .set_min_leader_share_with_seq(&admin, 0, live_seq, 100_000)
+        .expect("the live seq retunes the vault the sector now holds");
+    assert_eq!(f.vault(0).min_leader_share.get(), 100_000);
+    assert_eq!(
+        common::events::set_min_leader_share(&meta).vault_seq,
+        live_seq
+    );
+}
+
 // ── set_market_fee_config (admin-only) ───────────────────────────────
 
 #[test]

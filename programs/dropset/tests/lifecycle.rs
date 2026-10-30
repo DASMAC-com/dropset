@@ -94,6 +94,40 @@ fn freeze_vault_rejects_non_admin() {
 }
 
 #[test]
+fn freeze_vault_rejects_stale_seq() {
+    let mut f = Fixture::seeded(1_000_000, 1_085_000);
+    let admin = f.authority.insecure_clone();
+    let seq = f.vault(0).seq.get();
+    let err = f
+        .freeze_vault_with_seq(&admin, 0, seq + 1)
+        .expect_err("a seq the sector does not carry must reject");
+    common::assert_program_error(&err, dropset::DropsetError::VaultSeqMismatch);
+    assert!(!f.vault(0).frozen.get());
+}
+
+#[test]
+fn freeze_vault_refuses_a_reused_sector() {
+    // The admin reads sector 0's vault, it closes and a stranger's vault
+    // reopens on the sector, then the freeze arrives with the old seq.
+    let mut f = Fixture::seeded(1_000_000, 1_000_000);
+    let admin = f.authority.insecure_clone();
+    let read_seq = f.close_and_reuse_sector_0();
+
+    let err = f
+        .freeze_vault_with_seq(&admin, 0, read_seq)
+        .expect_err("the old vault's seq must not freeze the new one");
+    common::assert_program_error(&err, dropset::DropsetError::VaultSeqMismatch);
+    assert!(!f.vault(0).frozen.get());
+
+    let live_seq = f.vault(0).seq.get();
+    let meta = f
+        .freeze_vault_with_seq(&admin, 0, live_seq)
+        .expect("the live seq freezes the vault the sector now holds");
+    assert!(f.vault(0).frozen.get());
+    assert_eq!(common::events::freeze_vault(&meta).vault_seq, live_seq);
+}
+
+#[test]
 fn close_vault_rejects_already_tombstoned() {
     let mut f = Fixture::seeded(1_000_000, 1_085_000);
     let leader = f.authority.insecure_clone();

@@ -1399,6 +1399,10 @@
         {
           "name": "vault_idx",
           "type": "u32"
+        },
+        {
+          "name": "expected_seq",
+          "type": "u64"
         }
       ]
     },
@@ -1583,6 +1587,10 @@
         {
           "name": "vault_idx",
           "type": "u32"
+        },
+        {
+          "name": "expected_seq",
+          "type": "u64"
         },
         {
           "name": "name",
@@ -2187,6 +2195,10 @@
         {
           "name": "vault_idx",
           "type": "u32"
+        },
+        {
+          "name": "expected_seq",
+          "type": "u64"
         },
         {
           "name": "min_leader_share",

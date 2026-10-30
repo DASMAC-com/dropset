@@ -48,21 +48,28 @@ impl FreezeVault {
     /// Returns the [`FreezeVaultEvent`] payload for `lib.rs` to dispatch
     /// through `emit_cpi!`.
     #[inline(always)]
-    pub fn freeze_vault(&mut self, vault_idx: u32) -> Result<FreezeVaultEvent> {
+    pub fn freeze_vault(&mut self, vault_idx: u32, expected_seq: u64) -> Result<FreezeVaultEvent> {
         // Admin-only — gated at the dispatcher via `#[access_control]`
         // (`lib.rs`), so the caller is already a known admin here.
         let market_addr = *self.market.address();
         let vault = self.market.mutate_vault(vault_idx)?;
         require!(vault.is_occupied(), DropsetError::VaultEmpty);
+        // The sector index alone does not name a vault: a close and a
+        // re-open between the admin's read and this write would freeze a
+        // stranger's vault. `seq` is the vault's identity, so pinning it
+        // refuses a reused sector.
+        require!(
+            vault.seq.get() == expected_seq,
+            DropsetError::VaultSeqMismatch
+        );
         let leader = vault.leader;
-        let vault_seq = vault.seq.get();
         vault.frozen = true.into();
         let name = vault.blank_name(true);
 
         Ok(FreezeVaultEvent {
             market: market_addr,
             sector_idx: vault_idx,
-            vault_seq,
+            vault_seq: expected_seq,
             leader,
             name,
         })

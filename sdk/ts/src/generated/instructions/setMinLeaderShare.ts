@@ -6,7 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
-import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
+import { combineCodec, fixDecoderSize, fixEncoderSize, getBytesDecoder, getBytesEncoder, getProgramDerivedAddress, getStructDecoder, getStructEncoder, getU32Decoder, getU32Encoder, getU64Decoder, getU64Encoder, transformEncoder, type AccountMeta, type AccountSignerMeta, type Address, type FixedSizeCodec, type FixedSizeDecoder, type FixedSizeEncoder, type Instruction, type InstructionWithAccounts, type InstructionWithData, type ReadonlyAccount, type ReadonlySignerAccount, type ReadonlyUint8Array, type TransactionSigner, type WritableAccount } from '@solana/kit';
 import { DROPSET_PROGRAM_ADDRESS } from '../programs';
 import { getAccountMetaFactory, type ResolvedAccount } from '../shared';
 
@@ -17,16 +17,16 @@ export function getSetMinLeaderShareDiscriminatorBytes() { return fixEncoderSize
 export type SetMinLeaderShareInstruction<TProgram extends string = typeof DROPSET_PROGRAM_ADDRESS, TAccountAdmin extends string | AccountMeta<string> = string, TAccountRegistry extends string | AccountMeta<string> = string, TAccountMarket extends string | AccountMeta<string> = string, TAccountEventAuthority extends string | AccountMeta<string> = string, TAccountProgram extends string | AccountMeta<string> = string, TRemainingAccounts extends readonly AccountMeta<string>[] = []> =
 Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array> & InstructionWithAccounts<[TAccountAdmin extends string ? ReadonlySignerAccount<TAccountAdmin> & AccountSignerMeta<TAccountAdmin> : TAccountAdmin, TAccountRegistry extends string ? ReadonlyAccount<TAccountRegistry> : TAccountRegistry, TAccountMarket extends string ? WritableAccount<TAccountMarket> : TAccountMarket, TAccountEventAuthority extends string ? ReadonlyAccount<TAccountEventAuthority> : TAccountEventAuthority, TAccountProgram extends string ? ReadonlyAccount<TAccountProgram> : TAccountProgram, ...TRemainingAccounts]>;
 
-export type SetMinLeaderShareInstructionData = { discriminator: ReadonlyUint8Array; vaultIdx: number; minLeaderShare: number;  };
+export type SetMinLeaderShareInstructionData = { discriminator: ReadonlyUint8Array; vaultIdx: number; expectedSeq: bigint; minLeaderShare: number;  };
 
-export type SetMinLeaderShareInstructionDataArgs = { vaultIdx: number; minLeaderShare: number;  };
+export type SetMinLeaderShareInstructionDataArgs = { vaultIdx: number; expectedSeq: number | bigint; minLeaderShare: number;  };
 
 export function getSetMinLeaderShareInstructionDataEncoder(): FixedSizeEncoder<SetMinLeaderShareInstructionDataArgs> {
-    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['vaultIdx', getU32Encoder()], ['minLeaderShare', getU32Encoder()]]), (value) => ({ ...value, discriminator: SET_MIN_LEADER_SHARE_DISCRIMINATOR }));
+    return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 1)], ['vaultIdx', getU32Encoder()], ['expectedSeq', getU64Encoder()], ['minLeaderShare', getU32Encoder()]]), (value) => ({ ...value, discriminator: SET_MIN_LEADER_SHARE_DISCRIMINATOR }));
 }
 
 export function getSetMinLeaderShareInstructionDataDecoder(): FixedSizeDecoder<SetMinLeaderShareInstructionData> {
-    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['vaultIdx', getU32Decoder()], ['minLeaderShare', getU32Decoder()]]);
+    return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 1)], ['vaultIdx', getU32Decoder()], ['expectedSeq', getU64Decoder()], ['minLeaderShare', getU32Decoder()]]);
 }
 
 export function getSetMinLeaderShareInstructionDataCodec(): FixedSizeCodec<SetMinLeaderShareInstructionDataArgs, SetMinLeaderShareInstructionData> {
@@ -45,6 +45,7 @@ eventAuthority?: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
 program: Address<TAccountProgram>;
 vaultIdx: SetMinLeaderShareInstructionDataArgs["vaultIdx"];
+expectedSeq: SetMinLeaderShareInstructionDataArgs["expectedSeq"];
 minLeaderShare: SetMinLeaderShareInstructionDataArgs["minLeaderShare"];
 }
 
@@ -82,6 +83,7 @@ eventAuthority: Address<TAccountEventAuthority>;
 /** CHECK: Kept for v1-compatible account ordering and IDL shape */
 program: Address<TAccountProgram>;
 vaultIdx: SetMinLeaderShareInstructionDataArgs["vaultIdx"];
+expectedSeq: SetMinLeaderShareInstructionDataArgs["expectedSeq"];
 minLeaderShare: SetMinLeaderShareInstructionDataArgs["minLeaderShare"];
 }
 

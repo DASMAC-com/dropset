@@ -101,6 +101,7 @@ impl Default for SetMinLeaderShareInstructionData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SetMinLeaderShareInstructionArgs {
     pub vault_idx: u32,
+    pub expected_seq: u64,
     pub min_leader_share: u32,
 }
 
@@ -127,6 +128,7 @@ pub struct SetMinLeaderShareBuilder {
     event_authority: Option<solana_pubkey::Pubkey>,
     program: Option<solana_pubkey::Pubkey>,
     vault_idx: Option<u32>,
+    expected_seq: Option<u64>,
     min_leader_share: Option<u32>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
@@ -171,6 +173,11 @@ impl SetMinLeaderShareBuilder {
         self
     }
     #[inline(always)]
+    pub fn expected_seq(&mut self, expected_seq: u64) -> &mut Self {
+        self.expected_seq = Some(expected_seq);
+        self
+    }
+    #[inline(always)]
     pub fn min_leader_share(&mut self, min_leader_share: u32) -> &mut Self {
         self.min_leader_share = Some(min_leader_share);
         self
@@ -201,6 +208,7 @@ impl SetMinLeaderShareBuilder {
         };
         let args = SetMinLeaderShareInstructionArgs {
             vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
+            expected_seq: self.expected_seq.clone().expect("expected_seq is not set"),
             min_leader_share: self
                 .min_leader_share
                 .clone()
@@ -364,6 +372,7 @@ impl<'a, 'b> SetMinLeaderShareCpiBuilder<'a, 'b> {
             event_authority: None,
             program: None,
             vault_idx: None,
+            expected_seq: None,
             min_leader_share: None,
             __remaining_accounts: Vec::new(),
         });
@@ -405,6 +414,11 @@ impl<'a, 'b> SetMinLeaderShareCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn vault_idx(&mut self, vault_idx: u32) -> &mut Self {
         self.instruction.vault_idx = Some(vault_idx);
+        self
+    }
+    #[inline(always)]
+    pub fn expected_seq(&mut self, expected_seq: u64) -> &mut Self {
+        self.instruction.expected_seq = Some(expected_seq);
         self
     }
     #[inline(always)]
@@ -452,6 +466,11 @@ impl<'a, 'b> SetMinLeaderShareCpiBuilder<'a, 'b> {
                 .vault_idx
                 .clone()
                 .expect("vault_idx is not set"),
+            expected_seq: self
+                .instruction
+                .expected_seq
+                .clone()
+                .expect("expected_seq is not set"),
             min_leader_share: self
                 .instruction
                 .min_leader_share
@@ -491,6 +510,7 @@ struct SetMinLeaderShareCpiBuilderInstruction<'a, 'b> {
     event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
     program: Option<&'b solana_account_info::AccountInfo<'a>>,
     vault_idx: Option<u32>,
+    expected_seq: Option<u64>,
     min_leader_share: Option<u32>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,

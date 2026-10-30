@@ -38,16 +38,23 @@ impl OverrideVaultName {
     pub fn override_vault_name(
         &mut self,
         vault_idx: u32,
+        expected_seq: u64,
         name: String,
         lock: bool,
     ) -> Result<OverrideVaultNameEvent> {
         // Admin-only — gated at the dispatcher via `#[access_control]`
         // (`lib.rs`), so the caller is already a known admin here.
         let packed = encode_vault_name(&name)?;
-        let (vault_seq, old_name) = {
+        let old_name = {
             let vault = self.market.read_vault(vault_idx)?;
             require!(vault.is_occupied(), DropsetError::VaultEmpty);
-            (vault.seq.get(), decode_vault_name(&vault.name))
+            // Pinned like `freeze_vault`: a sector closed and reused since
+            // the admin's read must not have a stranger's vault renamed.
+            require!(
+                vault.seq.get() == expected_seq,
+                DropsetError::VaultSeqMismatch
+            );
+            decode_vault_name(&vault.name)
         };
         require!(
             !self.market.name_taken(&packed, vault_idx),
@@ -61,7 +68,7 @@ impl OverrideVaultName {
         Ok(OverrideVaultNameEvent {
             market: *self.market.address(),
             sector_idx: vault_idx,
-            vault_seq,
+            vault_seq: expected_seq,
             admin: *self.admin.address(),
             lock,
             old_name,

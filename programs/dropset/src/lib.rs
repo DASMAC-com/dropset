@@ -266,8 +266,12 @@ pub mod dropset {
 
     #[discrim = 15]
     #[access_control(require_registry_admin(&ctx.accounts.registry, &ctx.accounts.admin))]
-    pub fn freeze_vault(ctx: &mut Context<FreezeVault>, vault_idx: u32) -> Result<()> {
-        let event = ctx.accounts.freeze_vault(vault_idx)?;
+    pub fn freeze_vault(
+        ctx: &mut Context<FreezeVault>,
+        vault_idx: u32,
+        expected_seq: u64,
+    ) -> Result<()> {
+        let event = ctx.accounts.freeze_vault(vault_idx, expected_seq)?;
         emit_cpi!(event);
         Ok(())
     }
@@ -412,11 +416,12 @@ pub mod dropset {
     pub fn set_min_leader_share(
         ctx: &mut Context<SetMinLeaderShare>,
         vault_idx: u32,
+        expected_seq: u64,
         min_leader_share: u32,
     ) -> Result<()> {
         let event = ctx
             .accounts
-            .set_min_leader_share(vault_idx, min_leader_share)?;
+            .set_min_leader_share(vault_idx, expected_seq, min_leader_share)?;
         emit_cpi!(event);
         Ok(())
     }
@@ -546,10 +551,13 @@ pub mod dropset {
     pub fn override_vault_name(
         ctx: &mut Context<OverrideVaultName>,
         vault_idx: u32,
+        expected_seq: u64,
         name: String,
         lock: bool,
     ) -> Result<()> {
-        let event = ctx.accounts.override_vault_name(vault_idx, name, lock)?;
+        let event = ctx
+            .accounts
+            .override_vault_name(vault_idx, expected_seq, name, lock)?;
         emit_cpi!(event);
         Ok(())
     }

@@ -101,6 +101,7 @@ impl Default for OverrideVaultNameInstructionData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OverrideVaultNameInstructionArgs {
     pub vault_idx: u32,
+    pub expected_seq: u64,
     pub name: String,
     pub lock: bool,
 }
@@ -128,6 +129,7 @@ pub struct OverrideVaultNameBuilder {
     event_authority: Option<solana_pubkey::Pubkey>,
     program: Option<solana_pubkey::Pubkey>,
     vault_idx: Option<u32>,
+    expected_seq: Option<u64>,
     name: Option<String>,
     lock: Option<bool>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
@@ -173,6 +175,11 @@ impl OverrideVaultNameBuilder {
         self
     }
     #[inline(always)]
+    pub fn expected_seq(&mut self, expected_seq: u64) -> &mut Self {
+        self.expected_seq = Some(expected_seq);
+        self
+    }
+    #[inline(always)]
     pub fn name(&mut self, name: String) -> &mut Self {
         self.name = Some(name);
         self
@@ -208,6 +215,7 @@ impl OverrideVaultNameBuilder {
         };
         let args = OverrideVaultNameInstructionArgs {
             vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
+            expected_seq: self.expected_seq.clone().expect("expected_seq is not set"),
             name: self.name.clone().expect("name is not set"),
             lock: self.lock.clone().expect("lock is not set"),
         };
@@ -369,6 +377,7 @@ impl<'a, 'b> OverrideVaultNameCpiBuilder<'a, 'b> {
             event_authority: None,
             program: None,
             vault_idx: None,
+            expected_seq: None,
             name: None,
             lock: None,
             __remaining_accounts: Vec::new(),
@@ -411,6 +420,11 @@ impl<'a, 'b> OverrideVaultNameCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn vault_idx(&mut self, vault_idx: u32) -> &mut Self {
         self.instruction.vault_idx = Some(vault_idx);
+        self
+    }
+    #[inline(always)]
+    pub fn expected_seq(&mut self, expected_seq: u64) -> &mut Self {
+        self.instruction.expected_seq = Some(expected_seq);
         self
     }
     #[inline(always)]
@@ -463,6 +477,11 @@ impl<'a, 'b> OverrideVaultNameCpiBuilder<'a, 'b> {
                 .vault_idx
                 .clone()
                 .expect("vault_idx is not set"),
+            expected_seq: self
+                .instruction
+                .expected_seq
+                .clone()
+                .expect("expected_seq is not set"),
             name: self.instruction.name.clone().expect("name is not set"),
             lock: self.instruction.lock.clone().expect("lock is not set"),
         };
@@ -499,6 +518,7 @@ struct OverrideVaultNameCpiBuilderInstruction<'a, 'b> {
     event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
     program: Option<&'b solana_account_info::AccountInfo<'a>>,
     vault_idx: Option<u32>,
+    expected_seq: Option<u64>,
     name: Option<String>,
     lock: Option<bool>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
