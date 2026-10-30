@@ -283,8 +283,12 @@ Concrete rules:
   startup). The rule worth firming names the exact worktree path,
   and under the auto permission mode usually none is needed.
   `allowlist.py add` refuses the mid-pattern form, and `prune-dead`
-  removes any that reach the file. (File-access rules differ:
-  `Read(…/worktrees/*/…)` really does glob.)
+  removes any that reach the file. A stored one covers **nothing**
+  in a `covers` check (`firm_core.is_covered` drops every
+  `is_dead_glob` rule first), not even its exact twin, so `covers`
+  reports a miss for a rule it appears to grant; firm the exact path
+  instead. (File-access rules differ: `Read(…/worktrees/*/…)` really
+  does glob.)
 
 - To memorialize an approved command, write the generalized rule
   directly:
