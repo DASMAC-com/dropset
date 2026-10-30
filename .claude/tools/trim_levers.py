@@ -258,11 +258,16 @@ def probe_many(
     candidates: dict[str, dict] = {}
     for start in range(0, len(keys), PROBE_CHUNK):
         chunk = keys[start : start + PROBE_CHUNK]
+        # The project constraint sits inside every branch, so the read stays
+        # project-scoped whatever Linear makes of a sibling `or`.
+        project = {"id": {"eq": project_id}}
         for node in _paged(
             api_key,
             {
-                "project": {"id": {"eq": project_id}},
-                "or": [{"description": {"contains": key}} for key in chunk],
+                "or": [
+                    {"project": project, "description": {"contains": key}}
+                    for key in chunk
+                ]
             },
         ):
             # Keyed by identifier: one issue can match keys in two chunks.
@@ -732,6 +737,10 @@ def run(argv: list[str]) -> int:
     # Every key is validated before the first request, so one bad key never
     # leaves a half-probed set.
     fingerprints = list(dict.fromkeys(validate_fingerprint(k) for k in raw))
+    if not fingerprints:
+        # Zero keys would print nothing and exit 0 — "every key matched" for
+        # a keys file written empty by mistake.
+        raise TrimLeversError("no fingerprints to probe — the keys file is empty")
     results = probe_many(
         env_var("LINEAR_API_KEY"), env_var("LINEAR_PROJECT_ID"), fingerprints
     )

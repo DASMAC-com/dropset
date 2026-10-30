@@ -103,10 +103,19 @@ class ProbeTests(unittest.TestCase):
 
         with mock.patch.object(tl, "_post", side_effect=fake):
             tl.probe("k", "proj", "a:b")
+        # The project constraint rides inside every branch, so the read stays
+        # project-scoped however Linear combines a sibling `or`.
         self.assertEqual(
-            seen[0]["filter"]["or"], [{"description": {"contains": "a:b"}}]
+            seen[0]["filter"],
+            {
+                "or": [
+                    {
+                        "project": {"id": {"eq": "proj"}},
+                        "description": {"contains": "a:b"},
+                    }
+                ]
+            },
         )
-        self.assertEqual(seen[0]["filter"]["project"], {"id": {"eq": "proj"}})
 
     def test_many_keys_share_one_read_and_split_their_matches(self):
         nodes = [
@@ -226,6 +235,20 @@ class ProbeCliTests(unittest.TestCase):
                 ["probe", "--fingerprint", "a:b", "--fingerprint", "http.rs:x"]
             )
         self.assertEqual(code, 2)
+        post.assert_not_called()
+
+    def test_an_empty_keys_file_is_refused_not_read_as_all_matched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            keys = os.path.join(tmp, "keys.txt")
+            with open(keys, "w", encoding="utf-8") as fh:
+                fh.write("\n  \n")
+            with (
+                mock.patch.dict(os.environ, ENV),
+                mock.patch.object(tl, "_post") as post,
+            ):
+                code, out, err = _run(["probe", "--fingerprints-file", keys])
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("empty", err)
         post.assert_not_called()
 
     def test_probe_with_no_key_is_refused(self):

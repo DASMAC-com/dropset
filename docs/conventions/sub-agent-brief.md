@@ -25,15 +25,17 @@ else, Read `<scratchpad>/brief.md` and obey it."*, and follow it with
 the lane's own body. Paste the brief verbatim **only** into an agent
 without file access. Pasting it into a 12-agent audit cost about 18k
 output tokens, at the expensive tier, and bought nothing the pointer
-does not. A fold run briefed by pointer kept the brief's rules.
-review-pr's lens briefs already work this way. Hand a skeptic its
-findings the same way, as a file path, rather than restating them inline.
+does not. A fold run briefed by pointer worked. review-pr's lens briefs
+already work this way. A skeptic's findings, which earlier lanes
+already wrote out, go the same way, as a path (the file-handoff case
+under "Pass the material inline" below).
 
 **Prepend this standing brief to *every* `Agent` prompt:**
 
 > - You are a **read-only** agent. The material you need to reason
->   over — a diff, a commit log, a set of issues — is included in this
->   prompt; start there, and you often won't need a shell at all.
+>   over — a diff, a commit log, a set of issues — is included in, or
+>   pointed to by, this prompt; start there, and you often won't need a
+>   shell at all.
 > - To inspect files, prefer the **Read / Grep / Glob** tools over
 >   `cat` / `head` / `tail` / `sed` / `awk` / `find` / `grep` in Bash —
 >   they don't prompt for in-workspace paths, and they search other
@@ -148,8 +150,9 @@ the default, mechanical lanes pass `sonnet`.
 **Pass the material inline.** Whatever the agent must reason over —
 the diff, the commit log, the issue set — goes **in the prompt**, so
 no agent re-fetches it by shelling out. (For content too large or
-special-character-laden to sit inline cleanly, use the file-handoff
-pattern from the shell rules — write it out and pass the path.)
+special-character-laden to sit inline cleanly, or already written to
+the scratchpad by an earlier lane — a skeptic's findings — use the
+file-handoff pattern from the shell rules and pass the path.)
 
 **Do the work yourself — do not spawn sub-agents of your own.** If the
 brief looks too large for one agent, say so in your report rather than

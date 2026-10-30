@@ -211,7 +211,7 @@ Optional (ask on a scoped run if not provided):
    via the `Agent` tool (single message, multiple calls),
    each scoped to the subject. **Prepend the standing
    sub-agent brief from `docs/conventions/sub-agent-brief.md`**
-   to every one **by pointer** (that doc's opening; never
+   to every one **by pointer** (that doc's pointer paragraph; never
    pasted per lane), and hand the step 4 skeptics their
    findings as a file path. These agents don't inherit that brief (or
    `CLAUDE.md`), and an audit legitimately ranges across
