@@ -45,8 +45,8 @@ the document's state sections.
    blocking edge the operator can see, never prose-only state.
    Automated filers never place an edge; the human sources are a
    planning session, a seat session's filing yes in the operator's
-   tab (`ratify-staged`), and the curator under the coordination
-   rule below. (`SKILL.md` step 2.)
+   tab (`ratify-staged`), and an edge the operator ticks in the
+   curator's tab (ruling 12). (`SKILL.md` step 2.)
    **The coordination rule** (2026-10-26, amended 2026-10-28): the
    curator judges — promote, kill, merge; the scheduler schedules,
    owns priorities, the direction and the Planning document; the
@@ -238,7 +238,8 @@ the document's state sections.
    the same PR; every dispatch carries that line in its kick-off
    (2026-10-26).
 
-1. **A localnet execute rehearsal precedes the publish** as
+1. **A first execute rehearsal, on localnet, precedes the
+   publish** as
    ceremony precondition 7: kill the ladders, close the vault,
    drain the leader through the confirm path. The C4 real-vault
    rehearsal stays (2026-10-26).
@@ -252,7 +253,8 @@ the document's state sections.
    funds (2026-10-26).
 
 1. **A fix that shortens every in-flight PR's path jumps the
-   queue.** PR-throughput tasks get held slots ahead of it; the
+   queue.** PR-throughput tasks get held fleet slots ahead of the
+   dispatch queue; the
    fleet is not resumed while a shared build lock makes every lint
    wait; every resumed or dispatched session is told to rebase
    onto current main first (2026-10-27).
@@ -264,8 +266,8 @@ the document's state sections.
 
 1. **Fleet limits are the runtime config's alone.** The fleet
    total and the load gate (`DS_FLEET_TOTAL`,
-   `DS_FLEET_CPU_LOAD_MAX`) are read by the dispatcher and by
-   nothing else; no ruling, Planning-document line or scheduler
+   `DS_FLEET_CPU_LOAD_MAX`) are read by the dispatch tooling and
+   by nothing else; no ruling, Planning-document line or scheduler
    states a value. The scheduler simply dispatches, and the
    dispatcher's refusal is how it learns a limit is reached
    (2026-10-29).
