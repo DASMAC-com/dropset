@@ -211,13 +211,14 @@ claude mcp add aws-mcp --scope user -- uvx mcp-proxy-for-aws==1.6.3 \
 
 **Always log in with `--use-device-code --no-browser`**, for every
 profile — the same flags the `plan` login gate runs, against an SSO
-profile (one carrying `sso_session`; convert one with
-`aws configure sso`). The plain flow reuses whichever identity the
-default browser is signed into, so an admin login can complete as the
-PowerUser and then fail at role-credential fetch; the device-code flow
-with no auto-opened browser lets the operator pick the browser, and so
-the identity, and types a short code on the AWS page instead of pasting
-a long one back.
+profile (one carrying `sso_session`, or the legacy inline
+`sso_start_url`; convert one with `aws configure sso`). The plain flow
+reuses whichever identity the default browser is signed into, so an
+admin login can complete as the PowerUser and then fail at
+role-credential fetch; the device-code flow with no auto-opened browser
+lets the operator pick the browser, and so the identity, and the
+operator types a short code on the AWS page instead of pasting a long
+one back.
 
 `aws sso login` caches a short-lived SSO token from which the CLI
 derives role credentials; the proxy

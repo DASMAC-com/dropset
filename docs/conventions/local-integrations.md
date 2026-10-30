@@ -2207,10 +2207,11 @@ Three deliberate bounds on the gate:
 
 - **An `aws` too OLD for `sso login --use-device-code` takes that same
   branch.** It is the same "AWS is not set up here" shape, so it warns
-  and launches. Without this it would be strictly worse than having no
-  CLI at all: the login fails on the unknown option, the re-probe
-  fails, and the verb refuses to start — while a machine with no `aws`
-  starts fine.
+  and launches — on an SSO profile only, since a non-SSO profile is
+  refused first by the shape check above, old CLI or not. Without this
+  it would be strictly worse than having no CLI at all: the login fails
+  on the unknown option, the re-probe fails, and the verb refuses to
+  start — while a machine with no `aws` starts fine.
 
   **The gate detects this AFTER the failed re-probe, not before the
   login**, by looking for `--use-device-code` in

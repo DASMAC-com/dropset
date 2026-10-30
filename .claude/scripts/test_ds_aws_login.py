@@ -69,7 +69,8 @@ _NEEDS_ZSH = "the session helpers are zsh; no zsh on this machine"
 # `sso login help` is the flag-EXISTS probe and must be distinguished from a
 # real `sso login`, or the probe itself would trip the repair side-effect below
 # and every expired case would silently self-heal before logging in. It prints
-# the flag only when `LOGIN_HELP_RC` is 0, since the gate reads the TEXT.
+# `HELP_TEXT` (the bare flag by default) only when `LOGIN_HELP_RC` is 0, since
+# the gate reads the TEXT.
 # `configure get` models the SSO-shape check the way the real CLI answers it:
 # the value and exit 0 when the key is set, nothing and exit 1 when it is not.
 # `SSO_SESSION` / `SSO_START_URL` hold the profile's values; empty means unset.
@@ -80,7 +81,7 @@ _STUB = (
     '[[ "$3" == sso_start_url ]] && v="$SSO_START_URL"; '
     '[[ -n "$v" ]] && { print -r -- "$v"; return 0 }; return 1; fi; '
     'if [[ "$1" == sso && "$2" == login && "$3" == help ]]; then '
-    '(( LOGIN_HELP_RC == 0 )) && print -r -- "--use-device-code"; '
+    '(( LOGIN_HELP_RC == 0 )) && print -r -- "$HELP_TEXT"; '
     "return $LOGIN_HELP_RC; fi; "
     'case "$1" in '
     "sts) return $STS_RC ;; "
@@ -110,6 +111,7 @@ class GateHarness(unittest.TestCase):
         login_rc=0,
         post_login_sts_rc=0,
         login_help_rc=0,
+        help_text="--use-device-code",
         sso_session="dasmac",
         sso_start_url="",
         env=None,
@@ -126,6 +128,7 @@ class GateHarness(unittest.TestCase):
                 "LOGIN_RC": str(login_rc),
                 "POST_LOGIN_STS_RC": str(post_login_sts_rc),
                 "LOGIN_HELP_RC": str(login_help_rc),
+                "HELP_TEXT": help_text,
                 "SSO_SESSION": sso_session,
                 "SSO_START_URL": sso_start_url,
                 **(env or {}),
@@ -297,7 +300,8 @@ class AnOldCliWarnsRatherThanBlocking(GateHarness):
     The flag-exists probe deliberately runs AFTER the failed re-probe, so an
     old CLI is modelled as: probe fails, login is attempted and achieves
     nothing, re-probe fails, and only then does the gate ask whether the flag
-    exists at all.
+    exists at all. The escape is reachable only for an SSO-shaped profile
+    (the harness default); a non-SSO one is refused by the shape check first.
     """
 
     def _old_cli(self):
@@ -329,6 +333,25 @@ class AnOldCliWarnsRatherThanBlocking(GateHarness):
         # defect.
         result, _ = self._old_cli()
         self.assertIn("unknown-option", result.stderr)
+
+    def test_an_old_cli_on_a_non_sso_profile_is_refused_not_escaped(self):
+        # The shape check runs first, so no old-CLI escape is reached for a
+        # profile no login could refresh anyway.
+        result, recorded = self._gate(
+            sts_rc=1, post_login_sts_rc=1, login_help_rc=1, sso_session=""
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("aws configure sso", result.stderr)
+        self.assertEqual(_logins(recorded), [], recorded)
+
+    def test_bolded_help_on_a_current_cli_still_refuses(self):
+        # A renderer that bolds by backspace overstrike splits the flag into
+        # `-\b--\b-u\bu…`. Unstripped, a current CLI whose login failed would
+        # read as an old one and warn-and-launch instead of refusing.
+        bolded = "".join(f"{c}\b{c}" for c in "--use-device-code")
+        result, _ = self._gate(sts_rc=1, post_login_sts_rc=1, help_text=bolded)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("NOT launching", result.stderr)
 
     def test_a_current_cli_never_reaches_the_subcommand_probe(self):
         # The complement, and the one that pins the hot path: a session that
@@ -426,6 +449,7 @@ class TheGateActuallyGates(unittest.TestCase):
                 # branches, so the flag-exists probe always succeeds and the
                 # profile is SSO-shaped here.
                 "LOGIN_HELP_RC": "0",
+                "HELP_TEXT": "--use-device-code",
                 "SSO_SESSION": "dasmac",
                 "SSO_START_URL": "",
             },

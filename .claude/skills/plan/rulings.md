@@ -394,7 +394,8 @@ line here is struck.
   issue.
 - **AWS** (`docs/conventions/aws-infra.md`): identity
   `dropset-bedrock-agent`; CLI-first under SSO, logging in with
-  `aws sso login --use-device-code`; the credential gate precedes the morning
+  `aws sso login --use-device-code --no-browser`; the credential gate
+  precedes the morning
   dispatch; AWS reports in UTC, so cost reconciliation buckets by
   UTC day.
 - **CI** (`docs/ci.md`): the merge queue runs the full Rust suite

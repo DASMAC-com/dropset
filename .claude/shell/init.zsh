@@ -515,7 +515,8 @@ _ds_op_signout() {
 #   * It **probes before logging in**. The login stops for the operator, so
 #     a still-valid session must not pay for one. `sts get-caller-identity` is the
 #     cheapest call that actually proves the credentials resolve, and it is what
-#     fails with `Your session has expired` when they do not.
+#     fails with `Token has expired and refresh failed` when an SSO session
+#     has lapsed.
 #   * **The probe is what decides, not the login's exit status.** A login can
 #     exit 0 having left a profile that still cannot call STS, so the gate
 #     re-probes afterwards and trusts only that. The invariant defended is
@@ -602,6 +603,8 @@ _ds_aws_login() {
   # old to have `--use-device-code` at all, which is the same "AWS is not set
   # up here" shape as no `aws` and takes the same warn-and-launch branch.
   # Blocking it would be strictly worse than having no CLI, which launches fine.
+  # This escape is reachable only for an SSO-shaped profile: a non-SSO one was
+  # already refused above, old CLI or not, since no login can refresh it.
   #
   # **This check sits here, on the already-failing path, and not before the
   # login where it reads more naturally.** The placement IS the safety property.
@@ -617,9 +620,12 @@ _ds_aws_login() {
   # The cost of the later placement is one stray unknown-option error from the
   # attempted login on a genuinely old CLI — worth paying to keep a fragile
   # call off the path that matters, and the message below says to ignore it.
-  # An unreadable help reads as "no flag", which only widens a refusal.
+  # An unreadable help reads as "no flag", which only widens a refusal. The
+  # match is on rendered text, so a renderer's backspace overstrike (bold as
+  # `-\b-`) is stripped first, or a current CLI would read as an old one.
   local sso_help
   sso_help="$(AWS_PAGER= aws sso login help 2>/dev/null)"
+  sso_help="${sso_help//?$'\b'/}"
   if [[ "$sso_help" != *--use-device-code* ]]; then
     print -u2 "$verb: this \`aws\` has no \`sso login --use-device-code\`" \
       "(needs a recent AWS CLI v2; measured on 2.38.4) — launching WITHOUT" \
