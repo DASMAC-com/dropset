@@ -179,7 +179,11 @@ const untilAborted = <T>(promise: Promise<T>, signal?: AbortSignal) =>
   signal
     ? new Promise<T>((resolve, reject) => {
         const onAbort = () => reject(signal.reason);
-        if (signal.aborted) return onAbort();
+        if (signal.aborted) {
+          // The shared promise still settles later; nobody else may await it.
+          promise.catch(() => {});
+          return onAbort();
+        }
         signal.addEventListener("abort", onAbort, { once: true });
         promise
           .then(resolve, reject)

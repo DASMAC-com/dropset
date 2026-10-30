@@ -250,15 +250,18 @@ describe("cluster gate", () => {
     }) as unknown as RpcTransport & ReturnType<typeof vi.fn>;
     gate.guard(PRIMARY, raw);
     const unsubscribe = gate.subscribe(() => {});
-    await vi.advanceTimersByTimeAsync(0);
-    expect(raw).toHaveBeenCalledTimes(1);
-    up = true;
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(gate.status()).toBe("verified");
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(raw).toHaveBeenCalledTimes(2);
-    unsubscribe();
-    vi.useRealTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(raw).toHaveBeenCalledTimes(1);
+      up = true;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(gate.status()).toBe("verified");
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(raw).toHaveBeenCalledTimes(2);
+    } finally {
+      unsubscribe();
+      vi.useRealTimers();
+    }
   });
 });
 
