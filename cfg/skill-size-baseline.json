@@ -3,10 +3,6 @@
     ".claude/skills/review-pr/SKILL.md": {
       "ceiling": 99120,
       "issue": "ENG-1981"
-    },
-    "CLAUDE.md": {
-      "ceiling": 35482,
-      "issue": "ENG-1392"
     }
   }
 }
