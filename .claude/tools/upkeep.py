@@ -1128,7 +1128,9 @@ PRUNE_STEPS = ("prs", "board", "prune", "notifications")
 # the rest of the step needs no credential: `gh` drops the digest's CI section
 # (`step_digest`), and AWS drops the fleet-cost reconcile while the local-day
 # table, read from transcripts, still prints (`step_cost`).
-GH_STEPS = ("prs", "notifications", "deps")
+# `board` judges the PR set `prs` reads, so a gh failure skips it with gh's
+# reason rather than letting it report a second, misleading failure.
+GH_STEPS = ("prs", "board", "notifications", "deps")
 LINEAR_STEPS = ("board", "parked")
 REAUTH = {
     "gh": "gh auth login",

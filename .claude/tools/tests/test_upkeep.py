@@ -1465,13 +1465,14 @@ class PreflightTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
             ctx = make_ctx(run)
             ctx.preflight = True
-            result = run_pass(ctx, ("prs", "notifications", "deps", "digest"))
+            result = run_pass(ctx, ("prs", "board", "notifications", "deps", "digest"))
         auth = ctx.steps[0]
         self.assertFalse(auth["ok"])
         self.assertIn("token is invalid", auth["line"])
         self.assertIn("gh auth login", auth["line"])
         skipped = {s["step"] for s in ctx.steps if s["line"].startswith("skipped")}
-        self.assertEqual(set(skipped), {"prs", "notifications", "deps"})
+        # `board` skips with gh's reason, not its own "no PR set" failure.
+        self.assertEqual(set(skipped), {"prs", "board", "notifications", "deps"})
         # No gated step ever reached its tool.
         self.assertFalse([c for c in calls if c[:3] == ["gh", "pr", "list"]])
         digests = [
