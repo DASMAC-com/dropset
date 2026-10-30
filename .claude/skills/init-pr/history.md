@@ -39,6 +39,10 @@ is not repeated here.
 - **Disposition first.** One session spent ≈3.5k mapping every
   reference for a tier deletion; a planning ruling minutes later
   reversed the premise and the map was reverted.
+- **Measured premise.** An issue's 285k-CU "cold flush" was a
+  one-atom priming sell, found only after the SDK and three clients
+  were built against it (≈\$25, 239 turns, most traced to it); a probe
+  test up front was ≈5 turns.
 - **Scoped surveys.** A `general-purpose` survey of reference repos
   pulled 2–2.5M input each; an open-ended in-repo "map the TUI and the
   bots" survey was the top sink of three consecutive sessions, each
@@ -53,7 +57,9 @@ is not repeated here.
 - **Planning document.** A whole-document read cost ≈9.6k (2.4× the
   next result) to answer a ~six-line question; the live
   scheduler then answered better, correcting a stale fact the document
-  still carried.
+  still carried. A worker that needed it as source material took it
+  through `get_document` (≈9.1k, its largest result, replayed for
+  ~120 turns) where `planning_doc.py --out` prints only a heading map.
 - **Whole reads.** Router modules read whole after a map (≈8.6k, 62%
   of a session's Read cost).
 - **Section maps.** `^///` over `schema_fence.rs` cost ≈1.8k.
@@ -98,6 +104,15 @@ is not repeated here.
 - **Stale citations (step 12).** All four `(§4 row 5)` citations in
   one spec had been rewritten away by an unrelated PR, making the item
   moot, established via four greps including a ≈1.1k sweep.
+- **Subject re-scope (step 1).** A wallet-bug issue carried a
+  same-day re-scope to a different feature; the session built both
+  under the old issue, and the split (new issue, retitle, strip,
+  recommit, rebase, force-push, second preview) cost ≈30 turns at a
+  200k+ prefix.
+- **Scope pre-flight (step 1).** An issue named two conformance
+  suites; the implement phase covered one, and the gap surfaced at
+  `review-pr`'s grading — a fix commit, a second rebase and re-run
+  gates at a ≈300k+ prefix (189 turns, ≈\$21).
 - **Scope sizing (step 1).** A TUI feature estimated at ≈550 lines
   landed +1,261 / −137 (\$29, 193 turns): rustfmt expanded the new
   module ≈1.4×, and each new `Action` variant touched ≈10 match tables
