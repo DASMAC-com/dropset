@@ -612,8 +612,9 @@ to resume the fleet (N sessions) and dispatch the first wave
 (the file-disjoint set, named)?", answered **"Start now and dispatch at
 will today (Recommended)"**, **"Start now, this wave only; ask
 before later waves"** or **"Not yet"**, the question naming the
-count of Todo `[Operator]` items so the operator can send the
-curator to them first (step 5 runs each answer). Then the
+count of Todo `[Operator]` items
+(`ratify_staged.py list --pool operator`), which the curator
+carries one per batch until Done (step 5 runs each answer). Then the
 `Audit findings` kill list, the holds' edges and Discuss items.
 
 **`Audit findings` is a legacy pool, drained one finding at a

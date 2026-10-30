@@ -46,10 +46,15 @@ its own and has no close tool.
 
 1. The rulings file, `.claude/skills/plan/rulings.md`.
 
-1. One compact listing of the pool:
+1. One compact listing of each pool, the inbox and the operator
+   items:
 
    ```sh
    python3 .claude/tools/ratify_staged.py list --pool inbox
+   ```
+
+   ```sh
+   python3 .claude/tools/ratify_staged.py list --pool operator
    ```
 
    A row marked `[curator pending]` is a **leftover** from a curator
@@ -91,11 +96,11 @@ The **un-parked Backlog**: state Backlog, no milestone,
 (below) is counted with the parking milestones but keeps a task in
 your pool. An operator item is filed at
 Urgent,
-so it leads the ranking in priority order, and is **surfaced once**:
-a tick moves it to Todo, where the Next view holds it until the
-operator's Done, and dispatch refuses it downstream. Once
-ticked, nothing recites it again — no list, no re-ask; an
-unticked one carries like any unticked task.
+so it leads the ranking in priority order, and is **surfaced once
+in review, then carried on every batch until Done**: a tick moves
+it to Todo, where dispatch refuses it, and from there it is the
+**operator pool** — the Todo `[Operator]` items, which the fifth
+box walks (below). An unticked one carries like any unticked task.
 
 Out of the pool, never shown:
 
@@ -159,7 +164,8 @@ The commentary line, by case:
 - **A carried task**: what happened — "your comment was folded into
   Part 2 and the thread resolved".
 - **An `[Operator]` item**: "yours to do; a tick moves it to Todo,
-  where it waits for your Done" — what it unblocks, and why now.
+  and I carry it in the fifth box until your Done" — what it
+  unblocks, and why now.
 - **A spec awaiting design**: "awaiting design in" the architect
   task's title.
 
@@ -184,6 +190,40 @@ proposal is executed after the ticks (below). An unticked one is
 A tick on an edge is the operator placing it through an explicit
 in-tab instruction — ruling 2's human-placed form
 (`docs/conventions/linear-automation.md` → "Blocking relations").
+
+## The fifth box: one operator item
+
+Every batch ask carries, after its review ticks, **one operator
+item** as its own question — the first line of
+`list --pool operator`, which ranks Urgent first, then oldest. Pass
+it as `--operator <id>` on the same `ask` call, its line in
+`--notes` like any other:
+
+```sh
+python3 .claude/tools/ratify_staged.py ask --pool inbox \
+  --ids <the four …> --operator <id> \
+  --notes <scratchpad>/notes.json --out <scratchpad>/ask.json
+```
+
+Read its body first. **The commentary line** is the item and its
+concrete steps — what to open, what to run, what Done looks like —
+in one line. The tool appends the deferral history it counts from
+the item's thread ("deferred 2 times since …, waited N days"), and
+from the third deferral on it adds the cancel recommendation under
+the necessity gate (ruling 3). Do not restate either.
+
+A `[Chore/…]` item is never in the box: it is Todo work the
+scheduler dispatches under the fleet gate, and **the curator
+dispatches nothing**. The walk is **asked, never pushed** — no
+message, no reminder outside the ask.
+
+**When the inbox is empty**, keep asking one operator item per ask,
+`--operator` alone with no `--ids`, until the operator pool is
+empty or the operator answers **"stop for today"** (in the
+question's free-text answer). After a stop, no operator-only ask
+runs again today; an inbox batch that arrives later still carries
+the fifth box. **When the operator pool is
+empty**, the ask is the review ticks alone, as before.
 
 ## After the ticks
 
@@ -245,6 +285,40 @@ follow. Then, per ticked task:
 
 An unticked task approves nothing, and stays in the ranking.
 
+**Then the fifth box**, ticked or not — a comment is the operator's
+answer either way:
+
+```sh
+python3 .claude/tools/ratify_staged.py review --pool operator --ids <id>
+```
+
+- **Ticked, no thread** (`APPROVED`): write its Done now —
+  `approve --pool operator --ids <id>`.
+
+- **`attended chore`**: reply and resolve the thread as above, then
+  retoken it, the one token change the curator writes, licensed by
+  that comment:
+
+  ```sh
+  python3 .claude/tools/ratify_staged.py approve --chore <id>
+  ```
+
+  It becomes `[Chore/Bedrock]` with its body kept and stays in
+  Todo; the scheduler dispatches it when the fleet admits it.
+
+- **`drop`**: cancel it (`approve --pool operator --cancel <id>`),
+  the reason in the reply.
+
+- **Any other comment is a deferral**: reply in its thread with
+  the line `Deferred <YYYY-MM-DD>: <the operator's reason>` (the
+  tool counts exactly that prefix) and resolve it. It stays in Todo
+  and leads the next ask. On the **third** deferral the reply also
+  recommends cancel under the necessity gate; only the operator's
+  `drop` executes it.
+
+- **Unticked, no thread**: nothing is written; it leads the next
+  ask.
+
 **Then execute the ticked proposals** from question 2:
 
 - **An edge**: `board_batch.py edges --pairs <file>`, rehearsed
@@ -262,7 +336,9 @@ An unticked task approves nothing, and stays in the ranking.
 
 **Then one message to the scheduler for the batch** (`ListAgents`,
 then `SendMessage`), sent in the turn the writes land: every Todo
-move, every cancel, every merge, every edge placed, and any kill
+move, every operator Done, every item handed over as a chore (now
+the scheduler's to dispatch), every cancel, every merge, every
+edge placed, and any kill
 or merge handed over. No live scheduler: the moves are on the
 board — except a change to an edge **the scheduler placed**, or a
 handed-over kill or merge, which waits until a scheduler is live
@@ -292,9 +368,14 @@ lacks. So:
 - an edge, kill or merge the operator did not tick;
 - a milestone, except `Post-validation` when a comment names it
   and its own `Curator pending` mark;
-- a title's leading token: a retitle keeps it;
+- a title's leading token: a retitle keeps it, and the one
+  exception is `approve --chore` on the operator's
+  `attended chore` comment;
 - any other issue's state or body beyond the fold, a ticked kill
-  or merge, and the ticked task's Todo move or cancel.
+  or merge, the ticked task's Todo move or cancel, and the fifth
+  box's Done, cancel or deferral reply;
+- a chore's dispatch: a chore-token item in Todo is the
+  scheduler's.
 
 The one filing it makes is the architect task below, drafted with
 the operator in the tab; its Urgent priority and Backlog state are
@@ -361,7 +442,8 @@ for the day". On it:
    python3 .claude/tools/ratify_staged.py unmark --all
    ```
 
-1. State the **inbox remaining**: the count and the ids.
+1. State the **inbox remaining** and the **operator items
+   remaining**: each count and its ids.
 
 1. Session metrics, unprompted (`session-metrics`), and the day's
    cost in one line.

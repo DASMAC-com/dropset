@@ -170,7 +170,7 @@ class FakeLinear:
             nodes = [{"id": f"m-{n.split()[0]}", "name": n} for n in names]
             return {"project": {"projectMilestones": {"nodes": nodes}}}
         if "TeamStates" in query:
-            names = ("Backlog", "Todo", "Canceled")
+            names = ("Backlog", "Todo", "Done", "Canceled")
             return {
                 "team": {
                     "states": {"nodes": [{"id": f"s-{n}", "name": n} for n in names]}
@@ -623,6 +623,166 @@ class InboxRunTests(unittest.TestCase):
         edge = {"edge": {"blocker": "ENG-1", "blocked": "ENG-2"}, "reason": "a"}
         with self.assertRaisesRegex(RatifyError, "repeats: ENG-1 blocks ENG-2"):
             rs.parse_proposals([edge, {**edge, "reason": "b"}])
+
+
+def _operator(number, title=None, priority=1, state_type="unstarted", state="Todo"):
+    issue = _issue(number, milestone=None, state_type=state_type, state=state)
+    issue["priority"] = priority
+    issue["title"] = title or f"[Operator] Hand step {number}"
+    return issue
+
+
+def _deferral(day, ident="d"):
+    return {
+        "id": ident,
+        "parentId": "t",
+        "resolvedAt": None,
+        "body": f"Deferred {day}: later",
+    }
+
+
+class OperatorPoolTests(unittest.TestCase):
+    def test_membership_is_a_todo_operator_item_never_a_chore(self):
+        self.assertTrue(rs.in_pool(_operator(1), "operator"))
+        self.assertFalse(rs.in_pool(_inbox(2, title="[Operator] Backlog"), "operator"))
+        self.assertFalse(
+            rs.in_pool(_operator(3, title="[Chore/Bedrock] Was operator"), "operator")
+        )
+        self.assertFalse(
+            rs.in_pool(_operator(4, title="Mentions [Operator] later"), "operator")
+        )
+        parked = _operator(5)
+        parked["projectMilestone"] = {"name": rs.MILESTONE}
+        self.assertFalse(rs.in_pool(parked, "operator"))
+        self.assertFalse(rs.in_pool(_operator(6, state_type="completed"), "operator"))
+
+    def test_the_chore_title_swaps_only_the_operator_token(self):
+        self.assertEqual(
+            rs.chore_title(_operator(1, title="[Operator] Claude: Rotate the key")),
+            "[Chore/Bedrock] Claude: Rotate the key",
+        )
+        with self.assertRaisesRegex(RatifyError, "no leading \\[Operator\\]"):
+            rs.chore_title(_operator(2, title="Rotate the [Operator] key"))
+
+    def test_the_deferral_history_and_the_third_deferral_recommendation(self):
+        today = rs.datetime.date(2026, 10, 30)
+        comments = [
+            _deferral("2026-10-29"),
+            {"id": "x", "body": "Not a deferral"},
+            _deferral("2026-10-27"),
+        ]
+        dates = rs.deferrals(comments)
+        self.assertEqual([d.isoformat() for d in dates], ["2026-10-27", "2026-10-29"])
+        self.assertEqual(rs.operator_note("Step", [], today), "Step")
+        note = rs.operator_note("Step", dates, today)
+        self.assertIn("deferred 2 times since 2026-10-27 (waited 3 days)", note)
+        self.assertNotIn("recommend cancel", note)
+        dates.append(rs.datetime.date(2026, 10, 30))
+        self.assertIn("recommend cancel", rs.operator_note("Step", dates, today))
+
+    def test_the_fifth_box_is_its_own_question_after_the_four(self):
+        operator = {"label": "ENG-9", "description": "Do it"}
+        ask = build_ask([_inbox(n) for n in (1, 2, 3, 4)], operator=operator)
+        questions = ask["calls"][0]["questions"]
+        self.assertEqual([q["header"] for q in questions], ["Reviewed", "Operator"])
+        self.assertEqual(len(questions[0]["options"]), 4)
+        self.assertEqual(
+            [o["label"] for o in questions[1]["options"]], ["ENG-9", "Not today"]
+        )
+        alone = build_ask([], operator=operator)["calls"][0]["questions"]
+        self.assertEqual([q["header"] for q in alone], ["Operator"])
+
+
+class OperatorRunTests(unittest.TestCase):
+    setUp = RunTests.setUp
+    _run = RunTests._run
+
+    def test_list_is_urgent_first_then_oldest(self):
+        fake = FakeLinear(
+            [
+                _operator(7, priority=2),
+                _operator(5, priority=1),
+                _operator(3, priority=2),
+                _operator(4, title="[Chore/Bedrock] Handed over"),
+                _inbox(2, title="[Operator] Not yet ticked"),
+            ]
+        )
+        code, out = self._run(fake, ["list", "--pool", "operator"])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [line.split(" | ")[0] for line in out.splitlines()],
+            ["ENG-5", "ENG-3", "ENG-7"],
+        )
+
+    def test_ask_carries_the_operator_item_with_its_deferrals(self):
+        fake = FakeLinear(
+            [_inbox(1), _operator(9)],
+            comments={"ENG-9": [_deferral("2026-10-01")]},
+        )
+        code, out = self._run(
+            fake,
+            ["ask", "--pool", "inbox", "--ids", "ENG-1", "--operator", "ENG-9"]
+            + ["--notes", '{"ENG-9": "Rotate it in the dashboard"}'],
+        )
+        self.assertEqual(code, 0)
+        questions = json.loads(out)["calls"][0]["questions"]
+        self.assertEqual([q["header"] for q in questions], ["Reviewed", "Operator"])
+        box = questions[1]["options"][0]
+        self.assertEqual(box["label"], "ENG-9")
+        self.assertTrue(box["description"].startswith("Rotate it in the dashboard"))
+        self.assertIn("deferred 1 time since 2026-10-01", box["description"])
+
+    def test_the_operator_items_only_ask(self):
+        fake = FakeLinear([_operator(9)])
+        code, out = self._run(fake, ["ask", "--pool", "inbox", "--operator", "ENG-9"])
+        self.assertEqual(code, 0)
+        questions = json.loads(out)["calls"][0]["questions"]
+        self.assertEqual([q["header"] for q in questions], ["Operator"])
+        with self.assertRaisesRegex(RatifyError, "nothing to ask"):
+            self._run(fake, ["ask", "--pool", "inbox"])
+
+    def test_ask_refuses_an_item_outside_the_operator_pool(self):
+        fake = FakeLinear([_operator(9, title="[Chore/Bedrock] Handed over")])
+        with self.assertRaisesRegex(RatifyError, "ENG-9 is not an \\[Operator\\]"):
+            self._run(fake, ["ask", "--pool", "inbox", "--operator", "ENG-9"])
+        with self.assertRaisesRegex(RatifyError, "rides --operator"):
+            self._run(fake, ["ask", "--pool", "operator", "--ids", "ENG-9"])
+
+    def test_a_tick_writes_done_one_at_a_time(self):
+        fake = FakeLinear([_operator(9), _operator(8)])
+        code, _ = self._run(fake, ["approve", "--pool", "operator", "--ids", "ENG-9"])
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.writes, [("uuid-9", {"stateId": "s-Done"})])
+        with self.assertRaisesRegex(RatifyError, "one task at a time"):
+            self._run(fake, ["approve", "--pool", "operator", "--ids", "ENG-9,ENG-8"])
+        done = _operator(7, state_type="completed", state="Done")
+        code, out = self._run(
+            FakeLinear([done]), ["approve", "--pool", "operator", "--ids", "ENG-7"]
+        )
+        self.assertIn("ALREADY ENG-7", out)
+
+    def test_a_held_operator_item_is_not_marked_done(self):
+        thread = {"id": "t1", "parentId": None, "resolvedAt": None, "body": "later"}
+        fake = FakeLinear([_operator(9)], comments={"ENG-9": [thread]})
+        with self.assertRaisesRegex(RatifyError, "still held by an open thread"):
+            self._run(fake, ["approve", "--pool", "operator", "--ids", "ENG-9"])
+        self.assertEqual(fake.writes, [])
+
+    def test_attended_chore_swaps_the_token_and_leaves_it_in_todo(self):
+        fake = FakeLinear([_operator(9, title="[Operator] Rotate the key")])
+        code, _ = self._run(fake, ["approve", "--chore", "ENG-9"])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.writes, [("uuid-9", {"title": "[Chore/Bedrock] Rotate the key"})]
+        )
+        with self.assertRaisesRegex(RatifyError, "is its own write"):
+            self._run(fake, ["approve", "--chore", "ENG-9", "--ids", "ENG-9"])
+        with self.assertRaisesRegex(RatifyError, "is not an \\[Operator\\]"):
+            self._run(FakeLinear([_inbox(3)]), ["approve", "--chore", "ENG-3"])
+
+    def test_the_gate_is_refused_for_the_operator_pool(self):
+        with self.assertRaisesRegex(RatifyError, "gate is for the staged pool"):
+            self._run(FakeLinear([]), ["gate", "--pool", "operator", "--ids", "ENG-1"])
 
 
 if __name__ == "__main__":
