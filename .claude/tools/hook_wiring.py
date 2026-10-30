@@ -621,12 +621,13 @@ def guard_env(env) -> dict | None:
         sys.path.insert(0, hooks)
     try:
         import no_private_key_access as guard
+
+        return {
+            guard.VAULT_ENV: len(guard._vaults(env)),
+            guard.KEY_ITEMS_ENV: len(guard._key_titles(env)),
+        }
     except Exception:
         return None
-    return {
-        guard.VAULT_ENV: len(guard._vaults(env)),
-        guard.KEY_ITEMS_ENV: len(guard._key_titles(env)),
-    }
 
 
 def inert_count(result: dict) -> int:
@@ -716,8 +717,9 @@ def render(result: dict) -> str:
             lines.append(f"  {state:<10} {name}")
         off = [name for name, count in counts.items() if not count]
         lines.append(
-            f"guard-env | {', '.join(off)} parse(s) to nothing in this session, so "
-            "that private-key name check is off; set it in the runtime init"
+            f"guard-env | {len(off)} private-key guard variable(s) parse to "
+            "nothing in this session, so the name check each feeds is off; "
+            "set them in the runtime init"
             if off
             else "guard-env | every private-key guard variable is set"
         )

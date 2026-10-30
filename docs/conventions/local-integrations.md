@@ -789,7 +789,7 @@ takes three things.
 First, set `DS_OP_PRIVATE_KEYS_VAULT` (the vault's name, its id, or
 both comma separated) in the runtime init the session helpers source,
 so every session inherits it. Unset, the hook's vault-name check is
-silently off; the other four groups still hold. Beside it, set
+off; the other four groups still hold. Beside it, set
 `DS_OP_PRIVATE_KEY_ITEMS` to the key items' titles, comma separated,
 and update it whenever an item is renamed: a title missing from the
 list is a key the item check cannot see, while an extra or superseded

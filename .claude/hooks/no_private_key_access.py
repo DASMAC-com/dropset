@@ -118,8 +118,9 @@ TITLE_SEP_RE = re.compile(r"[,;\n]")
 # following reference (`op://a/b op://v/Key title/k` is two references). The
 # references are read from text with quotes and backslashes removed and percent
 # escapes decoded, so `'Key'' title'`, `Key\ title` and `Key%20title` all read
-# as `Key title`.
-OP_REF_RE = re.compile(r"op://((?:(?!op://)[^/\n])+)/((?:(?!op://)[^/\n])+)")
+# as `Key title`. The vault segment never starts with whitespace, so a bare
+# `op://` (`grep -rn 'op://' dir/ other/`) reads as no reference at all.
+OP_REF_RE = re.compile(r"op://([^/\s](?:(?!op://)[^/\n])*)/((?:(?!op://)[^/\n])+)")
 UNQUOTE_RE = re.compile(r"[\\'\"]")
 ITEM_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 
@@ -556,6 +557,7 @@ BASH_CASES = [
     ("echo op://Other/Example\\ Signer/k", True),
     ("echo op://Other/Example%20Signer/k", True),
     ("echo 'op://Other/Old Example Signer/k'", False),
+    ("grep -rn 'op://' docs/ Example\\ Signer/", False),
     # Rule 2: op at any command position.
     ("op read op://x/y/z", True),
     ("op item list", True),

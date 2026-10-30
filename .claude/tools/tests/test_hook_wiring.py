@@ -1025,7 +1025,7 @@ class GuardEnvTests(unittest.TestCase):
     def test_an_unset_variable_is_named_but_is_no_gap(self):
         report = self._render(hw.guard_env({self.VAULT: "Example Vault"}))
         self.assertIn(f"UNSET      {self.ITEMS}", report)
-        self.assertIn("name check is off", report)
+        self.assertIn("1 private-key guard variable(s) parse to nothing", report)
 
     def test_no_section_when_the_guard_cannot_load(self):
         self.assertNotIn("guard-env", self._render(None))
