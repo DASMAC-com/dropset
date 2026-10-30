@@ -981,6 +981,20 @@ class BodyDir(_Stubbed):
         self.assertIn("a.md: WOULD FILE A", out)
         self.assertIn("milestone Session pending", out)
 
+    def test_one_parent_flag_files_the_whole_directory_under_it(self):
+        # A seat session files its set as sub-issues of the governing issue,
+        # so `--parent` is the batch default and a header may override it.
+        tmp = self.write_dir(
+            {"a.md": "title: A\n\nb", "b.md": "title: B\nparent: ENG-9\n\nb"}
+        )
+        with mock.patch.object(li, "create_many", return_value=2) as many:
+            self.run_cli(["create", "--body-dir", tmp, "--parent", "ENG-7"])
+        entries = many.call_args.args[1]
+        defaults = many.call_args.kwargs["defaults"]
+        self.assertEqual(defaults["parent"], "ENG-7")
+        self.assertEqual(entries[1][1]["parent"], "ENG-9")
+        self.assertNotIn("parent", entries[0][1])
+
     def test_the_cli_refuses_a_mixed_title_and_body_form(self):
         tmp = self.write_dir({"a.md": "title: A\n\nb"})
         with self.assertRaisesRegex(li.LinearIssueError, "header"):
