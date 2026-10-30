@@ -13,10 +13,12 @@ operator finished by hand, in whichever order they happened to reach for.
 
 Usage (run from inside the worktree being closed):
 
-    python3 .claude/tools/close_session.py --state Done
-    python3 .claude/tools/close_session.py --state Done --issue ENG-1571
+    python3 .claude/tools/close_session.py --state Done --leftovers-file L.json
+    python3 .claude/tools/close_session.py --state Done --leftovers-file L.json \
+        --issue ENG-1571
     python3 .claude/tools/close_session.py --state 'In Review' --keep-worktree
-    python3 .claude/tools/close_session.py --state Done --dry-run
+    python3 .claude/tools/close_session.py --state Done --leftovers-file L.json \
+        --dry-run
 
 ``--state`` is required and never guessed: an implementation session closes to
 Done, an ``architect`` / ``explore`` session hands off at In Review. The issue
@@ -50,6 +52,18 @@ no upstream and unpushed work no longer hold it, and the restored lock goes
 stale once this session exits, so the next pass collects it. The exit-2 note
 says so, and how to remove it by hand sooner.
 
+``--leftovers-file <path>`` is the **leftover ledger**, and a Done or Canceled
+close requires it: a JSON array with one ``{"item", "disposition", "ref"}``
+object per warning, nit or "left for human review" item the session surfaced
+and did not do — ``[]`` when there were none. Each disposition is ``filed``
+(``ref`` the follow-up's ``ENG-###``), ``handed`` (``ref`` the live session it
+was messaged to) or ``dropped`` (``ref`` the reason). Anything else refuses
+before any write — "noted in the PR body" above all, which is a record, not a
+disposition: once the worktree goes the session has no shell left to file
+with. The gate is mechanical so the close question can run it first, as a
+``--dry-run``, and ask only once it passes. An In Review handoff carries its
+leftovers on the live issue and needs no ledger.
+
 ``--session-id <uuid>`` adds the session's one-line cost estimate
 (``session_metrics.cost_line``) to the issue body, appended zero-echo once the
 state write is confirmed and before the removal. It is priced before the write,
@@ -61,8 +75,9 @@ would be. A re-run after an exit 2 appends a second line; remove the tree by
 hand instead.
 
 Prints one JSON object ``{issue, state, worktree, branch, pr, dry_run,
-keep_worktree, refused, state_written, notifications, removed, cost_line,
-notes}`` (``notifications`` the dismissal's one-line summary, ``None`` when no
+keep_worktree, refused, leftovers, state_written, notifications, removed,
+cost_line, notes}`` (``leftovers`` the ledger's item count, ``None`` when none
+was read; ``notifications`` the dismissal's one-line summary, ``None`` when no
 PR or no write). Exit 0 on a complete
 close; 1 on a refusal or error before any removal — a gate refusal changes
 nothing, while a write reported "unconfirmed" may have landed; 2 when the state
@@ -109,6 +124,9 @@ MAX_ANCESTRY = 64
 # Matched by name, lowercased: an unrecognized name fails closed into
 # requiring --keep-worktree.
 REMOVABLE_STATES = ("done", "canceled", "cancelled")
+# A leftover's disposition, and what its `ref` must be: a filed follow-up's
+# number, the session it was handed to, or the reason it was dropped.
+DISPOSITIONS = ("filed", "handed", "dropped")
 
 Runner = Callable[[list[str], "str | None"], "tuple[int, str, str]"]
 
@@ -204,6 +222,60 @@ def lock_verdict(
             "running; unlock it by hand if no session owns this tree"
         )
     return True
+
+
+def leftover_gaps(ledger: object) -> list[str]:
+    """Why each leftover in a parsed ledger lacks a disposition; ``[]`` when
+    every item has one. A ledger that is not a list is one gap."""
+    if not isinstance(ledger, list):
+        return ["the ledger is not a JSON array"]
+    gaps: list[str] = []
+    for n, entry in enumerate(ledger, 1):
+        if not isinstance(entry, dict):
+            gaps.append(f"#{n} is not an object")
+            continue
+        item = str(entry.get("item") or "").strip()
+        label = f"#{n} ({item[:60]!r})" if item else f"#{n}"
+        raw = str(entry.get("disposition") or "").strip()
+        disposition = raw.lower()
+        ref = str(entry.get("ref") or "").strip()
+        if not item:
+            gaps.append(f"{label} names no item")
+        elif disposition not in DISPOSITIONS:
+            gaps.append(
+                f"{label} has disposition {raw or 'none'!r}; "
+                f"want one of {', '.join(DISPOSITIONS)}"
+            )
+        elif disposition == "filed" and not ISSUE_RE.match(ref.upper()):
+            gaps.append(f"{label} is filed but its ref {ref!r} is no ENG-###")
+        elif not ref:
+            gaps.append(f"{label} is {disposition} with no ref")
+    return gaps
+
+
+def read_leftovers(path: str | None, state: str) -> int | None:
+    """The ledger's item count, after its gate. Raises :class:`Refusal` on a
+    removable state with no ledger, an unreadable one, or any item without a
+    disposition; a live state reads no ledger and returns ``None``."""
+    if path is None:
+        if state.strip().lower() in REMOVABLE_STATES:
+            raise Refusal(
+                f"a {state} close needs --leftovers-file (a JSON array, [] when "
+                "nothing was left over): every leftover filed, handed or "
+                "dropped before the close"
+            )
+        return None
+    try:
+        ledger = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise Refusal(f"unreadable --leftovers-file {path}: {e}") from e
+    gaps = leftover_gaps(ledger)
+    if gaps:
+        raise Refusal(
+            f"{len(gaps)} leftover(s) have no disposition — file, hand off or "
+            f"drop each before the close: {'; '.join(gaps)}"
+        )
+    return len(ledger)
 
 
 def pr_verdict(prs: list[dict]) -> dict | None:
@@ -422,6 +494,7 @@ def close(
         "dry_run": args.dry_run,
         "keep_worktree": args.keep_worktree,
         "refused": None,
+        "leftovers": None,
         "state_written": False,
         "notifications": None,
         "removed": False,
@@ -440,6 +513,7 @@ def close(
                 f"state {args.state!r} leaves the issue live, so the worktree "
                 "must stay — pass --keep-worktree"
             )
+        result["leftovers"] = read_leftovers(args.leftovers_file, args.state)
         prs = read_prs(run, branch)
         git_safety(run, worktree, branch, prs)
         result["pr"] = pr_verdict(prs)
@@ -497,6 +571,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--keep-worktree",
         action="store_true",
         help="write the state but leave the worktree for the operator",
+    )
+    parser.add_argument(
+        "--leftovers-file",
+        default=None,
+        help="JSON leftover ledger; required for a Done or Canceled close",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="run every gate, write nothing"

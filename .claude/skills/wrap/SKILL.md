@@ -146,7 +146,16 @@ everything below it is recoverable and that one is not.
 
    The failure this catches is specific: a finding raised
    mid-session, acknowledged, and then carried only in the
-   transcript — which the prune deletes.
+   transcript — which the prune deletes — or only in the PR
+   body, which is a record, not a disposition. Every warning,
+   nit and "left for human review" item, the PR body's
+   included, is **filed**, **handed** or **dropped** with a
+   reason by this session, never listed for the operator to
+   decide, and goes into the ledger the close takes
+   (`<scratchpad>/leftovers.json`; the format is
+   `docs/conventions/linear-automation.md` → "Every leftover has
+   a disposition before the close"). An undisposed one is a
+   NOT CLEAR item.
 
 1. **Cross-session obligations.** Every message this session
    promised to send has been sent, and every question it asked
@@ -198,14 +207,19 @@ verb worth having — **each item is actioned or handed off
 before re-answering.** A wrap that reports the same list twice
 has become a status printer.
 
-Once the verdict is CLEAR, close through one `AskUserQuestion`
-— the operator's answer in this tab is the ratification.
-Offer **"Mark Done and remove the worktree (Recommended)"**,
-then **"Mark Done, keep the worktree"**, then **"Not yet"**.
-Either yes runs one tool as the session's **last** tool call:
+Once the verdict is CLEAR, run the close below with
+`--dry-run`, and only once it passes close through one
+`AskUserQuestion` — the operator's answer in this tab is the
+ratification. The question says that removing the worktree
+ends shell, file writes and memory saves for the rest of the
+session. Offer **"Mark Done and remove the worktree
+(Recommended)"**, then **"Mark Done, keep the worktree"**, then
+**"Not yet"**. Either yes runs one tool as the session's
+**last** tool call:
 
 ```sh
-python3 .claude/tools/close_session.py --state Done --session-id <uuid>
+python3 .claude/tools/close_session.py --state Done --session-id <uuid> \
+  --leftovers-file <scratchpad>/leftovers.json
 ```
 
 with `--keep-worktree` for the second option, and
@@ -214,7 +228,7 @@ write lands before any removal, never the reverse** — a
 worktree removed while its issue still reads In Review
 strands the session, which a later resume cannot recover.
 Never remove the worktree any other way. The tool re-checks
-git safety, the PR, and the worktree lock before writing
+the leftover ledger, git safety, the PR, and the worktree lock before writing
 anything, and removes only after Done or Canceled; on a
 refusal, report its `refused` line as a
 NOT CLEAR item. Exit 2 means Done landed but the removal did

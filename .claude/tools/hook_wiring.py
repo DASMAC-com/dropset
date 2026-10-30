@@ -66,7 +66,7 @@ Usage::
 Exit status is grep-shaped, so a caller can branch on it without parsing:
 ``0`` when every committed guard hook can fire and no iTerm file has drifted,
 ``1`` when at least one guard cannot (unwired, mismatched, or misdirected), a
-private-key ``permissions.deny`` rule is in no settings file, or an iTerm file
+wired guard fails closed (see :func:`fails_open`), a private-key ``permissions.deny`` rule is in no settings file, or an iTerm file
 has drifted, and ``2`` when the scan itself could
 not run (no main checkout, unreadable settings). A clean scan and a broken
 scan must never look alike — that is the failure this tool exists to prevent,
@@ -307,6 +307,37 @@ def script_reference(command: str, script: str, _depth: int = 0) -> str | None:
     return None
 
 
+def fails_open(command: str, token: str) -> bool:
+    """Whether ``command`` exits 0 when the script ``token`` names is gone.
+
+    ``python3 <missing path>`` exits 2, and 2 is the code a ``PreToolUse`` hook
+    blocks with — so a bare ``python3 "$CLAUDE_PROJECT_DIR/…"`` wiring blocks
+    **every** call once ``$CLAUDE_PROJECT_DIR`` is a removed worktree, ``Write``
+    and a bare ``printenv`` included. The fail-open spelling probes first:
+    ``test -f "<path>" || exit 0 ; python3 "<path>"`` (``[ -f … ]`` and a braced
+    ``|| { echo … >&2 ; exit 0 ; }`` count too), the probe naming the same
+    path token as the execution.
+    """
+    try:
+        tokens = shlex.split(command, comments=False)
+    except ValueError:
+        return False
+    for i in range(len(tokens) - 2):
+        if tokens[i] not in ("test", "[") or tokens[i + 1 : i + 3] != ["-f", token]:
+            continue
+        rest = tokens[i + 3 :]
+        if tokens[i] == "[" and rest[:1] == ["]"]:
+            rest = rest[1:]
+        if rest[:1] != ["||"]:
+            continue
+        for j, word in enumerate(rest[1:], 1):
+            if word == token:
+                break
+            if word == "exit" and rest[j + 1 : j + 2] in (["0"], ["0;"]):
+                return True
+    return False
+
+
 def path_status(token: str, repo: Path) -> str:
     """``ok`` / ``missing`` / ``unknown`` for the script path a command names.
 
@@ -510,10 +541,12 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
     misdirected: dict[str, list[str]] = {}
     unwired: list[str] = []
     uncovered: dict[str, list[str]] = {}
+    fail_closed: dict[str, list[str]] = {}
 
     for script in committed_hooks(repo):
         expected = EXPECTED_TOOLS.get(script, frozenset())
         ok: list[str] = []
+        closed: list[str] = []
         bad_path: list[str] = []
         bad_matcher: list[str] = []
         covered: set[str] = set()
@@ -529,6 +562,12 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
                 else:
                     ok.append(source)
                     covered.update(t for t in expected if matcher_selects(matcher, [t]))
+                    if not fails_open(command, token):
+                        closed.append(source)
+        # A guard that fires is still a hazard when any of its references
+        # would block every call once its script path is gone.
+        if closed:
+            fail_closed[script] = sorted(set(closed))
         partial = script in REQUIRE_ALL_TOOLS and bool(ok) and covered != expected
         # One good reference is enough — a guard wired correctly once fires,
         # whatever else also names it — unless the guard needs every tool and
@@ -559,6 +598,7 @@ def scan(repo: Path, user_settings: Path = USER_SETTINGS) -> dict:
         "misdirected": misdirected,
         "unwired": unwired,
         "uncovered": uncovered,
+        "fail_closed": fail_closed,
         "deny_missing": deny_missing,
         "scanned_settings": [source for source, entries in sources.items() if entries],
         "iterm": iterm,
@@ -615,6 +655,20 @@ def render(result: dict) -> str:
     else:
         lines.append("")
         lines.append("hook-wiring | every committed guard hook is wired")
+
+    lines.append("")
+    if result["fail_closed"]:
+        for script, sources in sorted(result["fail_closed"].items()):
+            lines.append(f"  FAIL-CLOSED {script}  ({', '.join(sources)})")
+        lines.append("")
+        lines.append(
+            f"fail-open | {len(result['fail_closed'])} guard(s) block every call "
+            "once their script path is gone (a removed worktree). Prefix each "
+            "command with the probe in docs/conventions/local-integrations.md → "
+            '"Wiring fails open"; nothing was written.'
+        )
+    else:
+        lines.append("fail-open | every wired guard fails open on a missing script")
 
     lines.append("")
     if result["deny_missing"]:
@@ -692,7 +746,12 @@ def run(argv: list[str]) -> int:
         print(json.dumps(result, indent=2))
     else:
         print(render(result))
-    gap = inert_count(result) or result["deny_missing"] or result["iterm"]["drift"]
+    gap = (
+        inert_count(result)
+        or result["fail_closed"]
+        or result["deny_missing"]
+        or result["iterm"]["drift"]
+    )
     return 1 if gap else 0
 
 
