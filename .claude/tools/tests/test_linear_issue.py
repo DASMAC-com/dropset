@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -825,6 +826,143 @@ class Tick(_Stubbed):
         recorder = self.install([self.issue(), self.ok()])
         li.tick("k", "ENG-1", ["One"], state=None)
         self.assertNotIn("stateId", recorder.calls[-1][1]["input"])
+
+
+class BodyDir(_Stubbed):
+    """``create --body-dir``: N filings in one tool run, one line each, and a
+    malformed file refusing the run before anything lands."""
+
+    @staticmethod
+    def created(n):
+        return {
+            "issueCreate": {
+                "success": True,
+                "issue": {"identifier": f"ENG-{n}", "url": f"https://x/ENG-{n}"},
+            }
+        }
+
+    def write_dir(self, files):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        for name, text in files.items():
+            with open(os.path.join(tmp, name), "w", encoding="utf-8") as handle:
+                handle.write(text)
+        return tmp
+
+    DEFAULTS = {"team_id": "t", "project_id": "p", "dry_run": False}
+
+    def test_the_header_sets_title_and_overrides_and_the_body_follows(self):
+        fields, body = li.parse_body_file(
+            "title: Claude: Do X\npriority: 2\n\n# Part 1\n\nBODY\n", "f.md"
+        )
+        self.assertEqual(fields, {"title": "Claude: Do X", "priority": 2})
+        self.assertEqual(body, "# Part 1\n\nBODY")
+
+    def test_a_file_without_a_title_line_is_refused(self):
+        with self.assertRaisesRegex(li.LinearIssueError, "title:"):
+            li.parse_body_file("# Part 1\n\nbody", "f.md")
+
+    def test_an_unknown_header_key_or_empty_body_is_refused(self):
+        with self.assertRaisesRegex(li.LinearIssueError, "not one of"):
+            li.parse_body_file("title: t\nlabel: x\n\nbody", "f.md")
+        with self.assertRaisesRegex(li.LinearIssueError, "empty"):
+            li.parse_body_file("title: t\n\n\n", "f.md")
+
+    def test_one_bad_file_refuses_before_any_filing(self):
+        tmp = self.write_dir({"a.md": "title: A\n\nbody", "b.md": "no header"})
+        rec = self.install([])
+        with self.assertRaisesRegex(li.LinearIssueError, "b.md"):
+            li.load_body_dir(tmp)
+        self.assertEqual(rec.calls, [])
+
+    def test_each_file_is_filed_in_name_order_with_one_line(self):
+        tmp = self.write_dir(
+            {
+                "2-b.md": "title: B\n\nSECRET-B",
+                "1-a.md": "title: A\n\nSECRET-A",
+                "notes.txt": "ignored",
+            }
+        )
+        rec = self.install([self.created(1), self.created(2)])
+        lines = []
+        filed = li.create_many(
+            "k", li.load_body_dir(tmp), defaults=self.DEFAULTS, emit=lines.append
+        )
+        self.assertEqual(filed, 2)
+        titles = [call[1]["input"]["title"] for call in rec.calls]
+        self.assertEqual(titles, ["A", "B"])
+        self.assertTrue(lines[0].startswith("1-a.md: FILED ENG-1"))
+        self.assertNotIn("SECRET", "\n".join(lines))
+
+    def test_a_header_field_wins_over_the_flag_default(self):
+        tmp = self.write_dir({"a.md": "title: A\npriority: 1\n\nbody"})
+        rec = self.install([self.created(1)])
+        li.create_many(
+            "k",
+            li.load_body_dir(tmp),
+            defaults={**self.DEFAULTS, "priority": 4},
+            emit=lambda _line: None,
+        )
+        self.assertEqual(rec.calls[0][1]["input"]["priority"], 1)
+
+    def test_the_curator_reminder_is_emitted_once(self):
+        states = {"team": {"states": {"nodes": [{"id": "s-b", "name": "Backlog"}]}}}
+        tmp = self.write_dir({"a.md": "title: A\n\nb", "b.md": "title: B\n\nb"})
+        self.install([states, self.created(1), states, self.created(2)])
+        lines = []
+        li.create_many(
+            "k",
+            li.load_body_dir(tmp),
+            defaults={**self.DEFAULTS, "state": "Backlog"},
+            emit=lines.append,
+        )
+        self.assertEqual(lines.count(li.CURATOR_REMINDER), 1)
+        self.assertEqual(lines[-1], li.CURATOR_REMINDER)
+
+    def test_a_mid_run_failure_names_what_already_landed(self):
+        tmp = self.write_dir({"a.md": "title: A\n\nb", "b.md": "title: B\n\nb"})
+        self.install([self.created(1), {"issueCreate": {"success": False}}])
+        with self.assertRaisesRegex(li.LinearIssueError, "1 of 2 filed"):
+            li.create_many(
+                "k", li.load_body_dir(tmp), defaults=self.DEFAULTS, emit=lambda _l: None
+            )
+
+    def test_the_cli_takes_body_dir_without_a_title(self):
+        args = li._parse_args(["prog", "create", "--body-dir", "d"])
+        self.assertEqual((args.body_dir, args.title), ("d", None))
+
+
+class Read(unittest.TestCase):
+    """``read`` is ``linear_patch.py read`` under the tool sessions reach for
+    first — one reader, two front doors."""
+
+    def setUp(self):
+        real = li.linear_patch._post
+        self.addCleanup(lambda: setattr(li.linear_patch, "_post", real))
+
+    def test_it_writes_the_body_and_prints_only_its_size(self):
+        li.linear_patch._post = lambda *_a: {
+            "issue": {"id": "u", "identifier": "ENG-7", "description": "SECRET body"}
+        }
+        out = os.path.join(tempfile.mkdtemp(), "sub", "body.md")
+        line = li.read_body("k", "ENG-7", out)
+        self.assertNotIn("SECRET", line)
+        self.assertIn("ENG-7", line)
+        with open(out, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "SECRET body")
+
+    def test_a_reader_failure_surfaces_as_this_tools_error(self):
+        li.linear_patch._post = lambda *_a: {"issue": None}
+        with self.assertRaises(li.LinearIssueError):
+            li.read_body("k", "ENG-404", os.path.join(tempfile.mkdtemp(), "b.md"))
+
+    def test_the_cli_takes_the_identifier_positionally_or_as_id(self):
+        for argv in (
+            ["read", "--out", "o", "ENG-1"],
+            ["read", "--id", "ENG-1", "--out", "o"],
+        ):
+            args = li._parse_args(["prog", *argv])
+            self.assertEqual(args.identifier or args.id, "ENG-1")
 
 
 if __name__ == "__main__":

@@ -1085,14 +1085,19 @@ failure, which is the worst moment for it:
 | -------------------------- | ---------------------------------------------- |
 | `board_batch.py state`     | `--id ENG-###`, `--state <name>`               |
 | `linear_issue.py append`   | `--id ENG-###`, one of `--file` / `--text`     |
+| `linear_issue.py read`     | `ENG-###` (positional or `--id`), `--out`      |
+| `linear_issue.py create`   | `--title` + `--body-file`, or `--body-dir`     |
 | `linear_patch.py read`     | `ENG-###` (positional), `--out <file>`         |
 | `linear_patch.py patch`    | `ENG-###` (positional), `--ops <file>`         |
 | `linear_patch.py comment`  | `ENG-###` (positional), `--body <file>`        |
 | `linear_gate.py resolve`   | comment id, optional resolving id (positional) |
 | `linear_gate.py approvals` | `ENG-###` … (positional, one or more)          |
 
-Every one takes `--dry-run` except `linear_patch.py read` and
-`linear_gate.py approvals`, a read. `linear_gate.py` covers the
+Every one takes `--dry-run` except the two `read`s and
+`linear_gate.py approvals`, also a read. `board_batch.py fields`,
+`priorities` and `edges` each take one write as flags in place of
+the file (`--id` with `--set FIELD=VALUE` / `--priority N`;
+`--blocker` with `--blocked`). `linear_gate.py` covers the
 dispatch gate's calls the MCP cannot reach: `approvals` is the
 gate's read half, exiting non-zero on any state other than Todo and
 printing each issue's open-thread count as information only, never a

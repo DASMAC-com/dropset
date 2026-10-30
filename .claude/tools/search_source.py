@@ -23,12 +23,15 @@ with the truncation stated out loud** rather than silently trimmed (per
 ``CLAUDE.md`` → "Context economy": a cap nobody is told about reads as
 "searched everything").
 
-**Prose is not in the default set.** Searching skill or convention text needs
-``--ext md`` (or ``--all-text``); a bare sweep looks only at the source
-extensions below, so a string that lives only in a ``.md`` comes back as a
-confident ``0 match(es)``. That zero now says so on stderr rather than reading
-as absence — one measured run took the bare zero at face value and fell back to
-a hand-rolled ``grep``, which is exactly what this tool exists to replace.
+**Prose is not in the default set**, except under a prose root. A ``--dir``
+scoped wholly under ``.claude/skills``, ``.claude/shared`` or ``docs`` adds
+``md`` and the other prose extensions on its own; anywhere else, searching
+markdown needs ``--ext md`` (or ``--all-text``), and a bare sweep looks only at
+the source extensions below, so a string that lives only in a ``.md`` comes
+back as a confident ``0 match(es)``. That zero now says so on stderr rather
+than reading as absence — one measured run took the bare zero at face value
+and fell back to a hand-rolled ``grep``, which is exactly what this tool
+exists to replace. An explicit ``--ext`` always wins.
 
 Usage::
 
@@ -96,6 +99,7 @@ tooling"). Tests live in ``tests/test_search_source.py``, run via
 from __future__ import annotations
 
 import argparse
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -402,6 +406,29 @@ COMMENT_MARKERS = ("///", "//!", "//", "%", ";")
 #: heading — the document's declaration shape — rather than a comment marker.
 PROSE_EXTENSIONS = ("md", "markdown", "txt", "rst")
 
+#: Trees whose files are prose by design. A ``--dir`` scoped wholly under them
+#: adds :data:`PROSE_EXTENSIONS` to the default set, so a skill or convention
+#: search finds its markdown without ``--ext md``: one session re-ran four
+#: such searches because the bare form skipped exactly the files it scoped to.
+PROSE_ROOTS = (".claude/skills", ".claude/shared", "docs")
+
+
+def in_prose_roots(dirs: tuple[str, ...] | list[str] | None) -> bool:
+    """Whether every ``--dir`` is a prose root or lies under one.
+
+    ``all``, not ``any``: a mixed scope (``docs,programs``) keeps the source
+    set, so markdown never leaks into a symbol sweep of the source half — and
+    that run's summary still says prose was skipped.
+    """
+    if not dirs:
+        return False
+    for name in dirs:
+        norm = posixpath.normpath(name)
+        if not any(norm == r or norm.startswith(r + "/") for r in PROSE_ROOTS):
+            return False
+    return True
+
+
 #: A branch shaped like a section map's — anchored at line start. Only anchored
 #: branches are judged, because an unanchored `#` is an ordinary substring search
 #: (a fragment, a channel name) and warning on those would fire constantly.
@@ -668,9 +695,16 @@ def search(
     # an empty result can distinguish "searched everywhere and found nothing"
     # from "never looked outside the source set".
     defaulted = extensions is DEFAULT_EXTENSIONS
+    prose_widened = False
     if extensions is DEFAULT_EXTENSIONS:
-        extensions = None if globs else SOURCE_EXTENSIONS
-    narrowed_by_default = defaulted and extensions is not None
+        if globs:
+            extensions = None
+        elif in_prose_roots(dirs):
+            extensions = SOURCE_EXTENSIONS + PROSE_EXTENSIONS
+            prose_widened = True
+        else:
+            extensions = SOURCE_EXTENSIONS
+    narrowed_by_default = defaulted and extensions is not None and not prose_widened
 
     matcher = build_matcher(pattern, fixed, ignore_case)
 
@@ -1211,7 +1245,9 @@ def run(argv: list[str]) -> int:
     # The rule this enforces is written in two places already and was violated by
     # sessions that had read it, which is what moved it into the tool.
     if not args.fixed and not args.force_comments:
-        prose = is_prose_scope(args.all_text, exts, globs)
+        prose = is_prose_scope(args.all_text, exts, globs) or (
+            not exts and in_prose_roots(dirs)
+        )
         offenders = comment_marker_branches(args.pattern, prose=prose)
         if offenders:
             raise SearchSourceError(

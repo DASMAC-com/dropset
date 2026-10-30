@@ -1225,5 +1225,83 @@ class FieldValueResolutionTests(unittest.TestCase):
         )
 
 
+class InlineFormTests(unittest.TestCase):
+    """One write as flags, beside the file form: the inline payload must be
+    exactly what the file would have carried, so both meet one validation."""
+
+    def _run(self, argv, *, target="apply_fields"):
+        env = {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"}
+        with (
+            mock.patch.object(bb, "env_var", side_effect=lambda n: env[n]),
+            mock.patch.object(bb, "load_json_file") as loaded,
+            mock.patch.object(
+                bb, "fetch_issues_by_number", return_value=[_issue(1), _issue(2)]
+            ),
+            mock.patch.object(bb, target) as applied,
+        ):
+            self.assertEqual(bb.run(["prog", *argv]), 0)
+        loaded.assert_not_called()
+        return applied.call_args.args[1]
+
+    def test_priorities_inline_widens_like_the_file(self):
+        self.assertEqual(
+            self._run(["priorities", "--id", "ENG-1", "--priority", "2"]),
+            {"ENG-1": {"priority": 2}},
+        )
+        self.assertEqual(
+            self._run(["priorities", "--id", "ENG-1", "--priority", "urgent"]),
+            {"ENG-1": {"priority": "urgent"}},
+        )
+
+    def test_fields_inline_decodes_json_and_keeps_strings(self):
+        got = self._run(
+            [
+                "fields",
+                "--id",
+                "ENG-1",
+                "--set",
+                "milestone=null",
+                "--set",
+                "state=In Review",
+            ]
+        )
+        self.assertEqual(got, {"ENG-1": {"milestone": None, "state": "In Review"}})
+
+    def test_edges_inline_is_a_one_pair_list(self):
+        got = self._run(
+            ["edges", "--blocker", "ENG-1", "--blocked", "ENG-2"], target="place_edges"
+        )
+        self.assertEqual(got, [{"blocker": "ENG-1", "blocked": "ENG-2"}])
+
+    def test_the_file_and_inline_forms_are_exclusive(self):
+        for argv in (
+            ["priorities", "--updates", "u.json", "--id", "ENG-1"],
+            ["edges", "--pairs", "p.json", "--blocker", "ENG-1"],
+            ["fields"],
+        ):
+            with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+                bb._parse_args(["prog", *argv])
+
+    def test_an_incomplete_or_stray_inline_flag_is_refused(self):
+        env = {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"}
+        cases = (
+            ["priorities", "--id", "ENG-1"],
+            ["fields", "--id", "ENG-1"],
+            ["fields", "--id", "ENG-1", "--set", "nonsense"],
+            ["edges", "--blocker", "ENG-1"],
+            ["edges", "--pairs", "p.json", "--blocked", "ENG-2"],
+            ["priorities", "--updates", "u.json", "--priority", "2"],
+        )
+        for argv in cases:
+            with (
+                self.subTest(argv=argv),
+                mock.patch.object(bb, "env_var", side_effect=lambda n: env[n]),
+                mock.patch.object(bb, "_post") as posted,
+            ):
+                with self.assertRaises(bb.BoardBatchError):
+                    bb.run(["prog", *argv])
+                posted.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

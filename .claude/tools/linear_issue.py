@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zero-echo Linear issue BODY operations: append, and a title-only search.
+"""Zero-echo Linear issue BODY operations: read, append, tick, file, search.
 
 **Why this exists.** The Linear MCP echoes the *entire stored issue body* on
 every write — including a write that sends no body at all. The cost is fixed
@@ -43,6 +43,7 @@ with the ``create`` path's resolver, not a third one.
 
 Subcommands::
 
+    linear_issue.py read   --out body.md ENG-123   # linear_patch.py's reader
     linear_issue.py append --id ENG-123 --file notes.md
     linear_issue.py tick   --id ENG-123 --box "Part 1 text" --box "Part 2 text"
     linear_issue.py tick   --id ENG-123 --box-file boxes.txt   # one per line
@@ -55,6 +56,15 @@ Subcommands::
         --verb chore --substrate anthropic     # → "[Chore/Anthropic] …"
     linear_issue.py create --title "…" --body-file body.md \
         --state Backlog --milestone "Session pending" --parent ENG-123
+    linear_issue.py create --body-dir bodies/ --parent ENG-123 \
+        --state Backlog --milestone "Session pending"   # one issue per *.md
+
+A ``--body-dir`` file opens with a header block, ended by a blank line::
+
+    title: Claude: Give the tool a read
+    priority: 3
+
+    **Lever**: …
 
 ``create`` is the filer for the **bulk** callers, whose bodies are long by
 design because the fold convention asks for a part and a fingerprint per
@@ -75,10 +85,12 @@ round per candidate.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 
 import linear_api
+import linear_patch
 
 #: Cap on a ``find`` page. A title-only projection is cheap in a way the MCP's
 #: full issue objects never are, but a cap still beats an unbounded scan.
@@ -634,6 +646,132 @@ def create_issue(
     return line
 
 
+#: The keys a ``--body-dir`` file's header block may set. ``title`` is required;
+#: the rest override the command line's flag of the same name for that file —
+#: ``parent`` included, though a seat session's set shares one ``--parent``.
+HEADER_KEYS = (
+    "title",
+    "state",
+    "milestone",
+    "priority",
+    "verb",
+    "substrate",
+    "parent",
+)
+
+
+def parse_body_file(text: str, path: str) -> tuple[dict, str]:
+    """Split one ``--body-dir`` file into its header fields and its body.
+
+    The header is the leading run of ``key: value`` lines up to the first blank
+    line, and must open with ``title:``. A front line rather than a JSON
+    manifest because the filer writes the body file anyway: one Write per issue
+    carries its own title, and no second file can drift out of step with it.
+    The bodies themselves open with markdown headings, so a ``#`` line is never
+    read as a title.
+    """
+    lines = text.splitlines()
+    if not lines or not lines[0].lower().startswith("title:"):
+        raise LinearIssueError(f"{path}: the first line must be 'title: <title>'")
+    fields: dict = {}
+    end = 0
+    for end, line in enumerate(lines):
+        if not line.strip():
+            break
+        key, sep, value = line.partition(":")
+        key = key.strip().lower()
+        if not sep or key not in HEADER_KEYS:
+            raise LinearIssueError(
+                f"{path}: header line {line!r} is not one of "
+                f"{', '.join(HEADER_KEYS)} — end the header with a blank line"
+            )
+        if key in fields:
+            raise LinearIssueError(f"{path}: header key {key!r} is repeated")
+        fields[key] = value.strip()
+    else:
+        end = len(lines)
+    if "priority" in fields:
+        try:
+            fields["priority"] = int(fields["priority"])
+        except ValueError as exc:
+            raise LinearIssueError(
+                f"{path}: priority {fields['priority']!r} is not 0-4"
+            ) from exc
+    body = "\n".join(lines[end + 1 :]).strip("\n")
+    if not fields["title"]:
+        raise LinearIssueError(f"{path}: the title is blank")
+    if not body.strip():
+        raise LinearIssueError(f"{path}: the body after the header is empty")
+    return fields, body
+
+
+def load_body_dir(directory: str) -> list[tuple[str, dict, str]]:
+    """Every ``*.md`` file in ``directory``, sorted by name, parsed and checked.
+
+    All of them are parsed **before** anything is filed, so a malformed file
+    refuses the whole run rather than landing the issues sorted ahead of it.
+    """
+    try:
+        names = sorted(n for n in os.listdir(directory) if n.endswith(".md"))
+    except OSError as exc:
+        raise LinearIssueError(f"could not list {directory}: {exc}") from exc
+    if not names:
+        raise LinearIssueError(f"{directory} holds no *.md body files")
+    loaded = []
+    for name in names:
+        path = os.path.join(directory, name)
+        fields, body = parse_body_file(_read_file(path), path)
+        loaded.append((name, fields, body))
+    return loaded
+
+
+def create_many(
+    api_key: str,
+    entries: list[tuple[str, dict, str]],
+    *,
+    defaults: dict,
+    emit=print,
+) -> int:
+    """File each loaded entry in order, emitting one line per issue.
+
+    A header field wins over its ``defaults`` (the command-line flags). A
+    failure part-way stops the run and names what already landed, since a
+    filing cannot be rolled back and a re-run would file those twice. The
+    curator reminder, when any filing earns it, is emitted once at the end.
+    """
+    filed = 0
+    remind = False
+    for name, fields, body in entries:
+        merged = {**defaults, **fields}
+        try:
+            line = create_issue(api_key, body=body, **merged)
+        except LinearIssueError as exc:
+            raise LinearIssueError(
+                f"{name}: {exc} — {filed} of {len(entries)} filed before it; "
+                "remove those files before re-running"
+            ) from exc
+        line, _, reminder = line.partition("\n")
+        remind = remind or reminder == CURATOR_REMINDER
+        emit(f"{name}: {line}")
+        filed += 1
+    if remind:
+        emit(CURATOR_REMINDER)
+    return filed
+
+
+def read_body(api_key: str, identifier: str, out: str) -> str:
+    """Write an issue's body to ``out`` and return one size-only line.
+
+    Delegates to ``linear_patch.py read`` so there is one reader: this is the
+    tool a session reaches for first, and before it had a ``read`` the
+    discovery cost several turns of help screens.
+    """
+    try:
+        return linear_patch.cmd_read(api_key, identifier, out)
+    except linear_patch.LinearPatchError as exc:
+        raise LinearIssueError(str(exc)) from exc
+
+
 def _read_file(path: str) -> str:
     try:
         with open(path, encoding="utf-8") as handle:
@@ -671,8 +809,8 @@ def _add_dry_run(parser: argparse.ArgumentParser, *, top_level: bool) -> None:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="linear_issue.py",
-        description="Zero-echo Linear issue body append, checklist tick, filing "
-        "and title-only search.",
+        description="Zero-echo Linear issue body read, append, checklist tick, "
+        "filing and title-only search.",
     )
     _add_dry_run(parser, top_level=True)
     subs = parser.add_subparsers(dest="command", required=True)
@@ -711,10 +849,25 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--keep-state", action="store_true", help="tick only; write no state"
     )
 
-    create = subs.add_parser("create", help="file one issue, zero echo")
+    read_cmd = subs.add_parser(
+        "read", help="fetch the body to a file; print its size only"
+    )
+    read_cmd.add_argument("identifier", nargs="?", help="ENG-### identifier")
+    read_cmd.add_argument("--id", default=None, help="ENG-### (or positional)")
+    read_cmd.add_argument("--out", required=True, help="file to write the body into")
+
+    create = subs.add_parser("create", help="file issues, zero echo")
     _add_dry_run(create, top_level=False)
-    create.add_argument("--title", required=True)
-    create.add_argument("--body-file", required=True, help="the issue description")
+    create.add_argument("--title", default=None, help="required with --body-file")
+    body_source = create.add_mutually_exclusive_group(required=True)
+    body_source.add_argument("--body-file", help="the issue description")
+    body_source.add_argument(
+        "--body-dir",
+        help="file one issue per *.md file here, in name order; each opens with "
+        "a 'title: …' header (optionally state/milestone/priority/verb/"
+        "substrate/parent lines overriding the flags), a blank line, then "
+        "the body",
+    )
     create.add_argument(
         "--team", default=None, help="team id (default $LINEAR_TEAM_ID)"
     )
@@ -779,7 +932,21 @@ def run(argv: list[str]) -> int:
         print(tick(api_key, args.id, boxes, state=state, dry_run=args.dry_run))
         return 0
 
+    if args.command == "read":
+        if (args.identifier is None) == (args.id is None):
+            raise LinearIssueError("read takes the identifier once: positional or --id")
+        print(read_body(api_key, args.identifier or args.id, args.out))
+        return 0
+
     if args.command == "create":
+        if args.body_file is not None and args.title is None:
+            raise LinearIssueError("--title is required with --body-file")
+        if args.body_dir is not None and args.title is not None:
+            raise LinearIssueError(
+                "--body-dir takes each title from its file's header, not --title"
+            )
+        # Parsed before the first write, so a malformed file files nothing.
+        entries = load_body_dir(args.body_dir) if args.body_dir else None
         # Resolved from the environment by default, per the standing rule that
         # team / project / assignee are never hard-coded — and each via its own
         # bare lookup, since a combined `printenv A B C` returns only the first
@@ -796,6 +963,23 @@ def run(argv: list[str]) -> int:
                 )
             except LinearIssueError:
                 assignee = None  # Unassigned is a legitimate filing.
+        if entries is not None:
+            defaults = {
+                "team_id": team,
+                "project_id": project,
+                "state": args.state,
+                "milestone": args.milestone,
+                "priority": args.priority,
+                "assignee_id": assignee,
+                "verb": args.verb,
+                "substrate": args.substrate,
+                "parent": args.parent,
+                "dry_run": args.dry_run,
+            }
+            filed = create_many(api_key, entries, defaults=defaults)
+            verb = "would file" if args.dry_run else "filed"
+            print(f"linear-issue | {verb} {filed} issue(s)", file=sys.stderr)
+            return 0
         print(
             create_issue(
                 api_key,

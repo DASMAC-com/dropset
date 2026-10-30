@@ -1455,6 +1455,46 @@ class ProseScopeTests(unittest.TestCase):
         self.assertFalse(ss.is_prose_scope(False, (), ()))
 
 
+class ProseRootTests(unittest.TestCase):
+    """A `--dir` wholly under a prose root searches markdown by default; one
+    session re-ran four searches because the bare form skipped it."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        for rel in ("docs/conventions/a.md", ".claude/skills/x/SKILL.md"):
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("needle here\n", encoding="utf-8")
+        (self.root / "programs").mkdir()
+        (self.root / "programs" / "notes.md").write_text("needle\n", encoding="utf-8")
+        (self.root / "programs" / "lib.rs").write_text("// needle\n", encoding="utf-8")
+
+    def test_the_roots_and_their_subtrees_count_and_others_do_not(self):
+        self.assertTrue(ss.in_prose_roots(["docs"]))
+        self.assertTrue(ss.in_prose_roots(["./docs/conventions/"]))
+        self.assertTrue(ss.in_prose_roots([".claude/skills", ".claude/shared"]))
+        self.assertFalse(ss.in_prose_roots(["docs-site"]))
+        self.assertFalse(ss.in_prose_roots([".claude/tools"]))
+        self.assertFalse(ss.in_prose_roots(["docs", "programs"]))
+        self.assertFalse(ss.in_prose_roots(None))
+
+    def test_a_prose_root_finds_markdown_without_ext_and_drops_the_note(self):
+        out = ss.search("needle", self.root, dirs=["docs", ".claude/skills"])
+        self.assertEqual(out["total"], 2)
+        self.assertFalse(out["narrowed_by_default"])
+
+    def test_a_mixed_scope_keeps_the_source_set(self):
+        out = ss.search("needle", self.root, dirs=["docs", "programs"])
+        self.assertEqual(out["files"], ["programs/lib.rs"])
+        self.assertTrue(out["narrowed_by_default"])
+
+    def test_an_explicit_ext_still_wins(self):
+        out = ss.search("needle", self.root, dirs=["docs"], extensions=("rs",))
+        self.assertEqual(out["total"], 0)
+
+
 class CommentMarkerRefusalTests(unittest.TestCase):
     """A section map with a comment-marker branch is refused BEFORE the search.
 
