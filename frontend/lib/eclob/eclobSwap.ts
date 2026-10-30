@@ -14,7 +14,7 @@ import {
 import { PLATFORM_FEE } from "../env";
 import type { SettlementRef } from "../swap/realizedFill";
 import { SwapError, type SwapOutcome } from "../swap/types";
-import { gateNowSlot, gateNowUnix, syncChainClock } from "./chainClock";
+import { readGateClocks } from "./chainClock";
 import { type EclobRoute, platformFeeBpsFor, resolveEclobRoute } from "./route";
 import { assertWalletCanSign, submitInstructions } from "./submit";
 
@@ -150,24 +150,6 @@ export async function executeEclobSwap(
     throw new SwapError("No Dropset market for this pair", "api");
   }
 
-  // Level expiry is dual-domain, so the re-simulation needs both clocks: the
-  // chain's slot and the wall clock each quote's datums are measured from. A
-  // level rests only inside both of its deadlines, and the engine measures the
-  // second against cluster time — so the device clock is checked against the
-  // chain here (lib/eclob/chainClock.ts) rather than trusted, and the slot,
-  // read at `finalized` and so already behind head, is nudged forward by the
-  // slot-domain margin. Both corrections point the same way, because this is
-  // the sizing that sets `minOut` below: gating against levels the engine has
-  // already dropped sizes a floor the fill cannot reach, and the swap
-  // soft-reverts — moving no funds, but still spending the network fee and the
-  // rent for a first-time output ATA (created by the separate instructions
-  // below, which the swap's own rollback does not reach).
-  //
-  // `syncChainClock` gets the RAW slot: it asks the node for that block's
-  // production time, and a slot nudged past head has no block.
-  const slot = await rpc.getSlot({ commitment: "finalized" }).send();
-  await syncChainClock(rpc, slot);
-
   // Declare the same configured rate the DFlow route declares, paid to the
   // same wallet DFlow's `feeAccount` names, so revenue from both routes lands
   // in one place and neither route is the cheap one to route around.
@@ -201,6 +183,20 @@ export async function executeEclobSwap(
     : [undefined];
 
   await initSimulator();
+  // Level expiry is dual-domain, so the re-simulation needs both clocks: the
+  // chain's slot and the wall clock each quote's datums are measured from. A
+  // level rests only inside both of its deadlines, and the engine measures the
+  // second against cluster time — so the device clock is checked against the
+  // chain (lib/eclob/chainClock.ts) rather than trusted, and the slot, read at
+  // `finalized` and so already behind head, is nudged forward by the
+  // slot-domain margin. Both corrections point the same way, because this is
+  // the sizing that sets `minOut` below: gating against levels the engine has
+  // already dropped sizes a floor the fill cannot reach, and the swap
+  // soft-reverts — moving no funds, but still spending the network fee and the
+  // rent for a first-time output ATA (created by the separate instructions
+  // below, which the swap's own rollback does not reach). Read after the
+  // simulator is up, so neither clock ages across its first instantiation.
+  const { nowSlot, nowUnix } = await readGateClocks(rpc);
   // Quote *with* the fee so `minOut` is a floor on what actually lands in the
   // taker's account. Passing 0 here and netting the fee off afterwards would
   // round differently from the engine (both fees truncate, in a fixed order)
@@ -210,8 +206,8 @@ export async function executeEclobSwap(
     route.side,
     atomicAmount,
     route.limitPriceBits,
-    gateNowSlot(slot),
-    gateNowUnix(),
+    nowSlot,
+    nowUnix,
     platformFeeBps,
   );
   if (quote.outAmount === 0n) {

@@ -22,12 +22,13 @@ import {
   projectedRemaining,
   recordResponse,
 } from "../dflow/rateLimitBudget";
-import { gateNowSlot, gateNowUnix, syncChainClock } from "../eclob/chainClock";
+import { readGateClocks } from "../eclob/chainClock";
 import { eclobRouteInput } from "../eclob/route";
 import { absoluteUrl, DFLOW_QUOTE_URL, PLATFORM_FEE } from "../env";
 import { parseAmountToBase } from "../format/balance";
 import { getErrorMessage } from "../guards";
 import { INITIAL_QUOTE, type QuoteState } from "../quote";
+import { type PollNext, startPollChain } from "./pollChain";
 
 // The "Best route" quote: ask the SDK router to price both our own book and
 // the DFlow aggregator, and report whichever wins. Replaces the app's former
@@ -40,9 +41,9 @@ import { INITIAL_QUOTE, type QuoteState } from "../quote";
 // rendered.
 const SLIPPAGE = "auto";
 
-// The timer mirrors the eCLOB hook: debounce on input change, then refresh on
-// a cadence so the quote tracks the book (and the aggregator's routes) while
-// the user just looks at the panel.
+// The same poll chain as the eCLOB hook (lib/hooks/pollChain.ts): debounce on
+// input change, then refresh on a cadence so the quote tracks the book (and
+// the aggregator's routes) while the user just looks at the panel.
 export const useRouterQuote = (
   inputMint: string,
   outputMint: string,
@@ -63,31 +64,10 @@ export const useRouterQuote = (
       setQuote({ ...INITIAL_QUOTE, status: "skipped" });
       return;
     }
-    let timer: number | undefined;
     const controller = new AbortController();
-    let cancelled = false;
-    // Only the current fire→schedule chain may reschedule; a fire superseded by
-    // a tab-refocus sees a stale generation and drops its reschedule, so
-    // exactly one timer stays live and the cadence can't double.
-    let generation = 0;
     const rpc = client.runtime.rpc;
 
-    const schedule = (delay: number, gen: number) => {
-      if (cancelled || gen !== generation) return;
-      if (timer !== undefined) window.clearTimeout(timer);
-      timer = window.setTimeout(() => void fire(gen), delay);
-    };
-
-    const fire = async (gen: number): Promise<void> => {
-      if (cancelled || gen !== generation) return;
-
-      // Pause-on-hidden: don't quote when the tab isn't visible, but keep the
-      // chain alive so we resume on visibility.
-      if (document.visibilityState !== "visible") {
-        schedule(QUOTE_REFRESH_MS, gen);
-        return;
-      }
-
+    const fire = async (isLive: () => boolean): Promise<PollNext> => {
       const atomic = parseAmountToBase(inputAmountDecimal, inputDecimals);
       if (
         !inputMint ||
@@ -97,7 +77,7 @@ export const useRouterQuote = (
       ) {
         // Nothing useful to quote; the effect re-runs when inputs change.
         setQuote({ ...INITIAL_QUOTE, status: "skipped" });
-        return;
+        return "stop";
       }
 
       // Respect the aggregator's rate-limit budget. Dormant on a direct call —
@@ -107,8 +87,7 @@ export const useRouterQuote = (
       // there may also be the proxy's own per-caller limit, which sends none.
       const projected = projectedRemaining(DFLOW_QUOTE);
       if (projected !== null && projected < MIN_TOKENS_TO_FETCH) {
-        schedule(QUOTE_REFRESH_MS, gen);
-        return;
+        return "again";
       }
 
       setQuote((q) => ({
@@ -136,7 +115,7 @@ export const useRouterQuote = (
         const feeAccount = PLATFORM_FEE
           ? await resolveFeeAccount(rpc, outputMint)
           : null;
-        if (cancelled || gen !== generation) return;
+        if (!isLive()) return "stop";
 
         // Only our own book needs the clocks, so an aggregator-only tick reads
         // neither — which on mainnet today, where we have no market yet, is
@@ -150,15 +129,9 @@ export const useRouterQuote = (
         // that gates it, and no clock to supply when there is no book.
         let gatedEclob: GatedEclobLeg | null = null;
         if (eclobLeg) {
-          const slot = await rpc.getSlot({ commitment: "finalized" }).send();
-          if (cancelled || gen !== generation) return;
-          await syncChainClock(rpc, slot);
-          if (cancelled || gen !== generation) return;
-          gatedEclob = {
-            leg: eclobLeg,
-            nowSlot: gateNowSlot(slot),
-            nowUnix: gateNowUnix(),
-          };
+          const { nowSlot, nowUnix } = await readGateClocks(rpc);
+          if (!isLive()) return "stop";
+          gatedEclob = { leg: eclobLeg, nowSlot, nowUnix };
         }
 
         const { best, aggregator } = await quoteBestRoute(rpc, {
@@ -184,7 +157,7 @@ export const useRouterQuote = (
             onResponse: (res) => recordResponse(DFLOW_QUOTE, res),
           },
         });
-        if (cancelled || gen !== generation) return;
+        if (!isLive()) return "stop";
 
         // Our own book can win while the aggregator is rate-limited, in which
         // case the router folds the 429 into a losing candidate and nothing
@@ -220,10 +193,10 @@ export const useRouterQuote = (
           hasQuote: true,
           error: null,
         });
-        schedule(QUOTE_REFRESH_MS, gen);
+        return "again";
       } catch (e) {
-        if (cancelled || gen !== generation) return;
-        if (e instanceof DOMException && e.name === "AbortError") return;
+        if (!isLive()) return "stop";
+        if (e instanceof DOMException && e.name === "AbortError") return "stop";
 
         // A 429 from the aggregator pauses the chain for the recovery window.
         // The router folds each leg's failure into its candidates, so this is
@@ -232,8 +205,7 @@ export const useRouterQuote = (
           const untilMs = Date.now() + RECOVERY_TOKEN_TARGET * 1000;
           markExhausted(DFLOW_QUOTE, untilMs);
           setQuote((q) => ({ ...q, status: "rateLimited", error: null }));
-          schedule(RECOVERY_TOKEN_TARGET * 1000, gen);
-          return;
+          return RECOVERY_TOKEN_TARGET * 1000;
         }
 
         setQuote({
@@ -246,25 +218,18 @@ export const useRouterQuote = (
         // QUOTE_REFRESH_MS would burn the rate-limit budget for nothing. The
         // next input change restarts it. Anything else (a thin book, a
         // transient outage) can resolve on its own, so keep polling.
-        if (!isTerminal(e)) schedule(QUOTE_REFRESH_MS, gen);
+        return isTerminal(e) ? "stop" : "again";
       }
     };
 
-    schedule(QUOTE_DEBOUNCE_MS, generation);
-
-    const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
-      generation += 1;
-      if (timer !== undefined) window.clearTimeout(timer);
-      schedule(0, generation);
-    };
-    document.addEventListener("visibilitychange", onVisible);
-
+    const chain = startPollChain({
+      intervalMs: QUOTE_REFRESH_MS,
+      initialDelayMs: QUOTE_DEBOUNCE_MS,
+      fire,
+    });
     return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
+      chain.stop();
       controller.abort();
-      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [
     inputMint,

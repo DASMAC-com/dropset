@@ -4,12 +4,13 @@ import { quoteEclob } from "@dropset/sdk";
 import { useSolanaClient } from "@solana/react-hooks";
 import { useEffect, useState } from "react";
 import { QUOTE_DEBOUNCE_MS, QUOTE_REFRESH_MS } from "../data/timings";
-import { gateNowSlot, gateNowUnix, syncChainClock } from "../eclob/chainClock";
+import { readGateClocks } from "../eclob/chainClock";
 import { resolveEclobRoute } from "../eclob/route";
 import { PLATFORM_FEE } from "../env";
 import { parseAmountToBase } from "../format/balance";
 import { getErrorMessage } from "../guards";
 import { formatAtomic, INITIAL_QUOTE, type QuoteState } from "../quote";
+import { type PollNext, startPollChain } from "./pollChain";
 
 // Quote the swap directly against our own market — the core-style, eCLOB-only
 // route, bypassing the aggregator entirely. The SDK's `quoteEclob` does the
@@ -40,30 +41,9 @@ export const useEclobQuote = (
       setQuote({ ...INITIAL_QUOTE, status: "skipped" });
       return;
     }
-    let timer: number | undefined;
-    let cancelled = false;
-    // A monotonically-increasing id for the live fire→schedule chain. Only the
-    // current generation may reschedule; a fire that was superseded (e.g. by a
-    // tab-refocus that starts a fresh chain) sees a stale `gen` and drops its
-    // reschedule, so exactly one timer stays live and the RPC cadence can't
-    // double on refocus.
-    let generation = 0;
     const rpc = client.runtime.rpc;
 
-    const schedule = (delay: number, gen: number) => {
-      if (cancelled || gen !== generation) return;
-      if (timer !== undefined) window.clearTimeout(timer);
-      timer = window.setTimeout(() => void fire(gen), delay);
-    };
-
-    const fire = async (gen: number): Promise<void> => {
-      if (cancelled || gen !== generation) return;
-      // Pause when the tab is hidden, but keep the chain alive to resume.
-      if (document.visibilityState !== "visible") {
-        schedule(QUOTE_REFRESH_MS, gen);
-        return;
-      }
-
+    const fire = async (isLive: () => boolean): Promise<PollNext> => {
       const atomic = parseAmountToBase(inputAmountDecimal, inputDecimals);
       if (
         !inputMint ||
@@ -74,12 +54,12 @@ export const useEclobQuote = (
         // Nothing to quote for this input; the effect re-runs when the inputs
         // change, so no reschedule.
         setQuote({ ...INITIAL_QUOTE, status: "skipped" });
-        return;
+        return "stop";
       }
 
       try {
         const route = await resolveEclobRoute(rpc, inputMint, outputMint);
-        if (cancelled || gen !== generation) return;
+        if (!isLive()) return "stop";
         if (!route) {
           // Terminal: no market exists for this pair. Re-simulating won't
           // conjure one, so stop the chain until the inputs change.
@@ -88,7 +68,7 @@ export const useEclobQuote = (
             status: "error",
             error: "No Dropset market for this pair",
           });
-          return;
+          return "stop";
         }
 
         // Quote with the platform fee the executor will actually declare
@@ -98,24 +78,22 @@ export const useEclobQuote = (
         // figure they never receive. The simulator composes both fees exactly
         // as the engine does, so this also keeps the quote and the fill in
         // agreement to the atom.
-        const slot = await rpc.getSlot({ commitment: "finalized" }).send();
-        if (cancelled || gen !== generation) return;
-        // Keep the wall-clock half of the gate honest against the cluster —
-        // see lib/eclob/chainClock.ts. Quoting against an unchecked device
-        // clock would let a skewed browser price levels the engine has already
-        // expired. The sync takes the raw slot; the gate takes it margined,
-        // for the same reason in the other domain.
-        await syncChainClock(rpc, slot);
-        if (cancelled || gen !== generation) return;
+        //
+        // The clocks keep the wall-clock half of the gate honest against the
+        // cluster — see lib/eclob/chainClock.ts. Quoting against an unchecked
+        // device clock would let a skewed browser price levels the engine has
+        // already expired.
+        const { nowSlot, nowUnix } = await readGateClocks(rpc);
+        if (!isLive()) return "stop";
 
         const q = await quoteEclob(rpc, {
           leg: { route },
           amount: atomic,
-          nowSlot: gateNowSlot(slot),
-          nowUnix: gateNowUnix(),
+          nowSlot,
+          nowUnix,
           platformFeeBps: PLATFORM_FEE ? PLATFORM_FEE.bps : 0,
         });
-        if (cancelled || gen !== generation) return;
+        if (!isLive()) return "stop";
         if (!q || q.outAmount === 0n) {
           // A thin book is transient — the maker bot re-quotes it — so keep
           // the loop alive to self-heal, unlike the terminal no-market case.
@@ -124,8 +102,7 @@ export const useEclobQuote = (
             status: "error",
             error: "No liquidity for this size",
           });
-          schedule(QUOTE_REFRESH_MS, gen);
-          return;
+          return "again";
         }
         if (q.inAmount !== atomic) {
           // A partial fill: the book can't absorb the whole input, and the
@@ -138,8 +115,7 @@ export const useEclobQuote = (
             status: "error",
             error: `The book can fill only ${formatAtomic(q.inAmount, inputDecimals)} — reduce the amount`,
           });
-          schedule(QUOTE_REFRESH_MS, gen);
-          return;
+          return "again";
         }
 
         setQuote({
@@ -159,9 +135,9 @@ export const useEclobQuote = (
           hasQuote: true,
           error: null,
         });
-        schedule(QUOTE_REFRESH_MS, gen);
+        return "again";
       } catch (e) {
-        if (cancelled || gen !== generation) return;
+        if (!isLive()) return "stop";
         // An RPC hiccup is transient; keep the loop alive so a single failed
         // read doesn't freeze the quote until the user edits an input.
         setQuote({
@@ -169,28 +145,16 @@ export const useEclobQuote = (
           status: "error",
           error: getErrorMessage(e),
         });
-        schedule(QUOTE_REFRESH_MS, gen);
+        return "again";
       }
     };
 
-    schedule(QUOTE_DEBOUNCE_MS, generation);
-
-    const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
-      // Supersede any in-flight fire so its reschedule is dropped, then start a
-      // fresh chain. Without the generation bump an in-flight fire whose timer
-      // already elapsed would reschedule alongside this one, doubling cadence.
-      generation += 1;
-      if (timer !== undefined) window.clearTimeout(timer);
-      schedule(0, generation);
-    };
-    document.addEventListener("visibilitychange", onVisible);
-
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
+    const chain = startPollChain({
+      intervalMs: QUOTE_REFRESH_MS,
+      initialDelayMs: QUOTE_DEBOUNCE_MS,
+      fire,
+    });
+    return chain.stop;
   }, [
     inputMint,
     outputMint,
