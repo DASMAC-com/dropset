@@ -455,6 +455,21 @@ class TitleTokenTests(unittest.TestCase):
             )
         self.assertTrue(lines[0].startswith("WOULD SET ENG-10"))
 
+    def test_run_hands_retoken_to_apply_fields(self):
+        env = {"LINEAR_API_KEY": "k", "LINEAR_PROJECT_ID": "p"}
+        with (
+            mock.patch.object(bb, "env_var", side_effect=lambda n: env[n]),
+            mock.patch.object(
+                bb, "load_json_file", return_value={"10": {"title": "x"}}
+            ),
+            mock.patch.object(bb, "fetch_issues_by_number", return_value=[_issue(10)]),
+            mock.patch.object(bb, "apply_fields") as applied,
+        ):
+            bb.run(["prog", "fields", "--updates", "u.json", "--retoken"])
+            self.assertTrue(applied.call_args.kwargs["retoken"])
+            bb.run(["prog", "fields", "--updates", "u.json"])
+            self.assertFalse(applied.call_args.kwargs["retoken"])
+
     def test_the_cli_takes_retoken_on_fields_only(self):
         args = bb._parse_args(["prog", "fields", "--updates", "u.json", "--retoken"])
         self.assertTrue(args.retoken)

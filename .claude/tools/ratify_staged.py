@@ -69,7 +69,7 @@ milestone resolved by name:
 * ``unmark (--ids … | --all) [--dry-run]`` — clear it; ``--all`` is the close
   sweep and the next bootstrap's leftover sweep. Clears only that milestone.
 
-An out-of-pool id (Todo, parked under any milestone, closed) is skipped and
+An out-of-pool id (Todo, parked under any other milestone, closed) is skipped and
 named, never silently dropped.
 
 **The write is the operator's, executed.** ``approve`` runs only on the
@@ -702,6 +702,10 @@ def run(argv: list[str]) -> int:
             ident = approve[0]["identifier"]
             if ident in updates:
                 updates[ident]["title"] = args.title
+            else:
+                # Already moved by another hand: the move is skipped, and so
+                # is the retitle that rode with it — say so, never drop it.
+                print(f"TITLE NOT APPLIED {ident} | retitle it with board_batch.py")
         for ident in already:
             print(f"ALREADY {ident} | already in its target state, skipped")
         by_number = {int(i["number"]): i for i in approve + cancel}

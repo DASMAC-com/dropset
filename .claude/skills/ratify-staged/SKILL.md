@@ -20,8 +20,9 @@ The tool reads `LINEAR_API_KEY` and `LINEAR_PROJECT_ID` and writes
 nothing but the final batch; `--help` on it lists the subcommands.
 
 The curator drives the same tool over the **inbox pool** with
-`--pool inbox` (every open Backlog issue with no milestone, `[Operator]`
-items included and marked) rather than over `Session pending`. There
+`--pool inbox` (every open Backlog issue with no milestone or the
+curator's own `Curator pending` mark, `[Operator]` items included and
+marked) rather than over `Session pending`. There
 `ask` takes the session's per-task `--notes` and its `--proposals`
 (edges, and the launcher's kill and merge candidates, asked as a
 further question; no priority kind, priorities being the

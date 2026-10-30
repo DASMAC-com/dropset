@@ -88,7 +88,8 @@ Urgent set leads, and meta work follows launch work.
 
 The **un-parked Backlog**: state Backlog, no milestone,
 `[Operator]` items included. Your own **`Curator pending`** mark
-(below) keeps a task in the pool: it parks nothing. An operator item is filed at
+(below) is counted with the parking milestones but keeps a task in
+your pool. An operator item is filed at
 Urgent,
 so it leads the ranking in priority order, and is **surfaced once**:
 a tick moves it to Todo, where the Next view holds it until the
@@ -167,7 +168,7 @@ longer matches its body (a fold grew it), its line ends
 `title → <proposed title>`. A held task that grew a part gets the
 same check when it returns. The proposal **never changes** the
 leading `[<Verb>/<Substrate>]` token, `[Operator]` or `Claude:`; the
-tool refuses one that does, and you never pass `--retoken`. If the
+`approve --title` refuses one that does and has no override. If the
 body contradicts the token, raise it with the operator as a comment;
 don't retitle around it.
 

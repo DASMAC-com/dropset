@@ -364,6 +364,10 @@ def cmd_comment(
     answers in the operator's thread and then resolves it, and a reply that
     failed raises here, so the caller never reaches the resolve.
     """
+    if reply_to is not None and not reply_to.strip():
+        # An empty id would post a top-level comment that a caller then
+        # resolves the operator's thread with — refused, never downgraded.
+        raise LinearPatchError("--reply-to was given an empty comment id")
     body = _read_text(body_path)
     if not body.strip():
         raise LinearPatchError(f"{body_path} is empty — nothing to comment")
@@ -380,6 +384,11 @@ def cmd_comment(
         raise LinearPatchError(f"commentCreate failed for {issue['identifier']}")
     comment = result.get("comment") or {}
     if reply_to:
+        if not comment.get("id"):
+            raise LinearPatchError(
+                f"commentCreate on {issue['identifier']} returned no reply id — "
+                "do not resolve the thread"
+            )
         return (
             f"REPLIED {issue['identifier']} {comment.get('url')} | comment "
             f"{comment.get('id')} in thread {reply_to} | {len(body)} chars"

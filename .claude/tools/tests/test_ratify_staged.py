@@ -560,6 +560,23 @@ class InboxRunTests(unittest.TestCase):
         with self.assertRaisesRegex(RatifyError, "--title retitles"):
             self._run(fake, ["approve", "--ids", "ENG-1", "--title", "New"])
 
+    def test_a_retitle_on_an_already_moved_task_is_named_not_dropped(self):
+        moved = _inbox(1, state_type="unstarted", state="Todo")
+        fake = FakeLinear([moved])
+        code, out = self._run(
+            fake, ["approve", "--pool", "inbox", "--ids", "ENG-1", "--title", "New"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("ALREADY ENG-1", out)
+        self.assertIn("TITLE NOT APPLIED ENG-1", out)
+        self.assertEqual(fake.writes, [])
+
+    def test_unmark_ids_clears_a_marked_task(self):
+        fake = FakeLinear([_issue(1, milestone=rs.CURATOR_MILESTONE), _inbox(2)])
+        code, _ = self._run(fake, ["unmark", "--ids", "ENG-1,ENG-2"])
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.writes, [("uuid-1", {"projectMilestoneId": None})])
+
     def test_mark_stamps_inbox_members_and_skips_the_rest(self):
         marked = _issue(2, milestone=rs.CURATOR_MILESTONE)
         fake = FakeLinear([_inbox(1), marked, _issue(3)])

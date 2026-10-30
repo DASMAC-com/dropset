@@ -408,6 +408,23 @@ class ZeroEchoTests(unittest.TestCase):
                         "k", "ENG-942", body_path, dry_run=False, reply_to="t-1"
                     )
 
+    def test_an_empty_reply_to_or_a_missing_reply_id_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            body_path = os.path.join(d, "note.md")
+            with open(body_path, "w", encoding="utf-8") as handle:
+                handle.write("text")
+            with mock.patch.object(lp, "_post") as posted:
+                with self.assertRaisesRegex(LinearPatchError, "empty comment id"):
+                    lp.cmd_comment("k", "ENG-942", body_path, False, reply_to=" ")
+            posted.assert_not_called()
+            posts = [
+                {"issue": self._issue(self.SECRET)},
+                {"commentCreate": {"success": True, "comment": None}},
+            ]
+            with mock.patch.object(lp, "_post", side_effect=posts):
+                with self.assertRaisesRegex(LinearPatchError, "no reply id"):
+                    lp.cmd_comment("k", "ENG-942", body_path, False, reply_to="t-1")
+
     def test_a_patch_that_changes_nothing_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             ops = os.path.join(d, "ops.json")

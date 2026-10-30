@@ -550,14 +550,14 @@ session-metrics state, standing decisions and verification debt.
 
 The state and the milestone together say where an issue sits:
 
-| State                        | Milestone         | Meaning                                                            |
-| ---------------------------- | ----------------- | ------------------------------------------------------------------ |
-| Backlog                      | none              | a spec awaiting the operator's review — the inbox                  |
-| Backlog or Todo              | other parking     | **parked**: hidden from the operator's project view                |
-| Backlog                      | `Session pending` | a seat session's filed tasks, under its in-tab review; short-lived |
-| Backlog                      | `Curator pending` | the curator's current batch, still in its pool; short-lived        |
-| Todo                         | none              | reviewed and dispatchable; the body is frozen                      |
-| In Progress, In Review, Done | —                 | the session state machine, unchanged (see above)                   |
+| State                        | Milestone         | Meaning                                                                    |
+| ---------------------------- | ----------------- | -------------------------------------------------------------------------- |
+| Backlog                      | none              | a spec awaiting the operator's review — the inbox                          |
+| Backlog or Todo              | other parking     | **parked**: hidden from the operator's project view, bar `Curator pending` |
+| Backlog                      | `Session pending` | a seat session's filed tasks, under its in-tab review; short-lived         |
+| Backlog                      | `Curator pending` | the curator's current batch, still in its pool; short-lived                |
+| Todo                         | none              | reviewed and dispatchable; the body is frozen                              |
+| In Progress, In Review, Done | —                 | the session state machine, unchanged (see above)                           |
 
 **The operator's move from Backlog to Todo is the approval.** The
 scheduler never makes that move, nor does any session on its own
@@ -708,9 +708,10 @@ held task that grew a part is retitled on the same rule when it
 returns. A retitle **never changes** the leading
 `[<Verb>/<Substrate>]` token, `[Operator]` or `Claude:`.
 `board_batch.py`'s title write refuses a title whose token run differs
-from the current one unless `--retoken` is passed, and the curator
-never passes it. If the body contradicts the token, the curator raises
-it with the operator as a comment.
+from the current one unless `--retoken` is passed. The curator's path,
+`ratify_staged.py approve --title`, has no `--retoken` at all. If the
+body contradicts the token, the curator raises it with the operator as
+a comment.
 
 **The curator marks its batch.** Before each ask the curator stamps
 the batch `Curator pending` in one write
@@ -749,8 +750,9 @@ The project's milestones split into two kinds, and only one kind parks.
 legacy `Audit findings` — mean "filed, not yet reviewed", and an issue
 carrying one is read as parked by every rule above, with one exception:
 `Curator pending` marks the curator's own batch **under** review, so
-its issues stay in the curator's pool (ruling 23 gives it the parked
-rhythm: counted out loud at every bootstrap, never promoted). ~~`Follow-ups`~~
+its issues stay in the curator's pool. It keeps the parked rhythm:
+it is counted out loud at every bootstrap, and only the curator's own
+tick or sweep clears it, never the scheduler. ~~`Follow-ups`~~
 (into which `Claude meta` already merged) is struck: filers land in
 Backlog and message the curator, and the milestone is deleted once what
 it still holds is cleared. The rest —
