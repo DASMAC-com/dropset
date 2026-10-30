@@ -20,11 +20,15 @@ jobs:
     # dtolnay/rust-toolchain: the latter's `toolchain` input defaults to
     # matching its own `@rev`, so it cannot read a toolchain file at all and
     # would need the version duplicated at every call site. Two of this
-    # action's defaults are deliberately neutralized in all six call sites —
-    # `cache`, because it bundles Swatinem/rust-cache and the explicit step
-    # below owns the key, and `rustflags`, which otherwise injects
+    # action's defaults are deliberately neutralized in all seven call sites —
+    # `cache`, because it bundles Swatinem/rust-cache and the explicit
+    # rust-cache step owns the key, and `rustflags`, which otherwise injects
     # `-D warnings` into every cargo invocation in the job (the clippy hook
     # passes its own, and a stray RUSTFLAGS also perturbs the rust-cache key).
+    #
+    # This job needs the toolchain only for `cargo fmt`, which compiles
+    # nothing, so it restores no rust-cache: the two cargo-backed hooks run in
+    # `lint-rust` below.
     #
     # Every step a `push` run skips carries `if: github.event_name != 'push'`.
     # That run only warms the pre-commit hook cache (see the restore step).
@@ -35,47 +39,6 @@ jobs:
       with:
         cache: false
         rustflags: ''
-    # Shares the test jobs' dep-artifact cache rather than keeping a
-    # `rust-lint` key of its own. What used to keep this job on a separate
-    # entry was the `RUST_VERSION` variable defined only here: rust-cache
-    # hashes environment variables matching a `RUST` prefix into its key, so
-    # this job alone computed a different hash. That variable was dead config
-    # and is gone, so the keys now coincide — measured, `full match: true` on
-    # `v0-rust-rust-test-Linux-Linux-x64-cee1353d-…` in lint, sdk and the
-    # test jobs alike. Two wins: one ~0.6 GB copy per ref stops being stored,
-    # and this job — restore-only through `save-if: false` below, and
-    # skipping this step on its `push: main` run — can restore one, warming
-    # merge-queue runs and the first run of every new PR.
-    # `save-if: false` makes this job a restore-only consumer of that entry,
-    # and it is load-bearing rather than tidiness. rust-cache skips its save
-    # whenever the restore was an exact key match, so the FIRST job to finish
-    # on a fresh key decides the entry's contents for that whole
-    # lockfile-plus-toolchain generation. This job and sdk carry thinner
-    # dependency sets than the three test jobs, so letting either win that
-    # race would freeze a thin entry that the program-building jobs then
-    # restore on every later run — making the critical path slower, which is
-    # the opposite of the point. Only the test jobs write; lint and sdk read.
-    #
-    # A corollary worth stating, because it has been missed before: while
-    # `save-if: false` stands below, every save-side rust-cache input here is
-    # inert, `cache-on-failure` included. That covers `cache-workspace-crates`,
-    # which was proposed here to hand clippy back its workspace artifacts: it
-    # governs what a save prunes, and this job never saves. Setting it on the
-    # three test jobs that share this key does not help either: `cargo clippy`
-    # sets `RUSTC_WORKSPACE_WRAPPER`, which enters the fingerprint of workspace
-    # members but not of dependencies — the same asymmetry that makes deps
-    # reusable across build and clippy in the first place — so clippy cannot
-    # reuse workspace artifacts a test job compiled. Caching clippy's own would
-    # need this job to save under a key of its own from a default-branch run
-    # that compiles the workspace; the `push: main` run only warms hooks.
-    - if: >-
-        github.event_name != 'push'
-      uses: >- # v2.9.3
-        Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
-      with:
-        cache-on-failure: true
-        save-if: false
-        shared-key: 'rust-test-${{ runner.os }}'
     - if: >-
         github.event_name != 'push'
       uses: >- # v6.0.10
@@ -150,7 +113,11 @@ jobs:
               }}-${{ hashFiles(env.CONFIG_PATH) }}'
         path: '~/.cache/pre-commit'
     - run: 'pre-commit install-hooks -c ${{ env.CONFIG_PATH }}'
-    - if: >-
+    # Every hook but the two that `lint-rust` runs, which were about 80% of
+    # this step's wall time before the split.
+    - env:
+        SKIP: 'clippy,rustdoc'
+      if: >-
         github.event_name != 'push'
       run: >-
         pre-commit run --all-files --color=always --show-diff-on-failure
@@ -164,6 +131,89 @@ jobs:
               env.PYTHON_VERSION }}-pre-commit-${{ env.PRE_COMMIT_VERSION
               }}-${{ hashFiles(env.CONFIG_PATH) }}'
         path: '~/.cache/pre-commit'
+  # The two cargo-backed hooks, one job each, beside `lint` rather than inside
+  # it: run serially there they set the merge queue's critical path (clippy
+  # about 1.9 min and rustdoc about 1.4 min of a 6.6 min job). Each is its own
+  # check, `Lint (clippy)` and `Lint (rustdoc)`, required once the ruleset
+  # adds them (docs/conventions/github-mcp.md). Both hooks are
+  # `language: system`, so `pre-commit run <hook>` installs no hook
+  # environment and this job needs neither Node nor the hook cache; Python is
+  # here only for pre-commit and the hooks' `cargo_scope.py` entry. A `push`
+  # run skips the job outright, having no hook cache to warm.
+  lint-rust:
+    env:
+      CONFIG_PATH: 'cfg/pre-commit-lint.yml'
+    if: >-
+      github.event_name != 'push'
+    name: 'Lint (${{ matrix.hook }})'
+    permissions:
+      contents: 'read'
+    runs-on: 'ubuntu-24.04'
+    steps:
+    - uses: 'actions/checkout@v6'
+    - uses: >- # v1.17.0
+        actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
+      with:
+        cache: false
+        rustflags: ''
+    # Shares the test jobs' dep-artifact cache rather than keeping a
+    # `rust-lint` key of its own. What used to keep the then-single lint job
+    # on a separate entry was the `RUST_VERSION` variable defined only in
+    # this file: rust-cache hashes environment variables matching a `RUST`
+    # prefix into its key, so that job alone computed a different hash. That
+    # variable was dead config and is gone, so the keys now coincide —
+    # measured, `full match: true` on
+    # `v0-rust-rust-test-Linux-Linux-x64-cee1353d-…`
+    # in the old lint job, sdk and the test jobs alike. Two wins: one ~0.6 GB
+    # copy per ref stops being stored, and this job — restore-only through
+    # `save-if: false` below, and never run on `push: main` — can restore one,
+    # warming merge-queue runs and the first run of every new PR.
+    # `save-if: false` makes this job a restore-only consumer of that entry,
+    # and it is load-bearing rather than tidiness. rust-cache skips its save
+    # whenever the restore was an exact key match, so the FIRST job to finish
+    # on a fresh key decides the entry's contents for that whole
+    # lockfile-plus-toolchain generation. This job and sdk carry thinner
+    # dependency sets than the three test jobs, so letting either win that
+    # race would freeze a thin entry that the program-building jobs then
+    # restore on every later run — making the critical path slower, which is
+    # the opposite of the point. Only the test jobs write; lint-rust and sdk
+    # read.
+    #
+    # A corollary worth stating, because it has been missed before: while
+    # `save-if: false` stands below, every save-side rust-cache input here is
+    # inert, `cache-on-failure` included. That covers `cache-workspace-crates`,
+    # which was proposed here to hand clippy back its workspace artifacts: it
+    # governs what a save prunes, and this job never saves. Setting it on the
+    # three test jobs that share this key does not help either: `cargo clippy`
+    # sets `RUSTC_WORKSPACE_WRAPPER`, which enters the fingerprint of workspace
+    # members but not of dependencies — the same asymmetry that makes deps
+    # reusable across build and clippy in the first place — so clippy cannot
+    # reuse workspace artifacts a test job compiled. Caching clippy's own would
+    # need this job to save under a key of its own from a default-branch run
+    # that compiles the workspace, which no run of this workflow does.
+    - uses: >- # v2.9.3
+        Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      with:
+        cache-on-failure: true
+        save-if: false
+        shared-key: 'rust-test-${{ runner.os }}'
+    - uses: 'actions/setup-python@v6'
+      with:
+        cache: 'pip'
+        cache-dependency-path: '.github/workflows/lint/requirements.txt'
+        python-version: '${{ env.PYTHON_VERSION }}'
+    - run: 'pip install -r .github/workflows/lint/requirements.txt'
+    - run: >-
+        pre-commit run ${{ matrix.hook }} --all-files --color=always
+        --show-diff-on-failure --config ${{ env.CONFIG_PATH }}
+    # Both legs report whatever the other does, so one red hook never cancels
+    # the other's verdict.
+    strategy:
+      fail-fast: false
+      matrix:
+        hook:
+        - 'clippy'
+        - 'rustdoc'
 name: 'Lint'
 'on':
   merge_group: null

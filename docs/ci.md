@@ -206,13 +206,13 @@ until the next scheduled run, so it is not used.
 
 ### One shared key for the Rust caches
 
-The `lint` and `sdk` jobs and the three test jobs all name one cache key,
+The `lint-rust` and `sdk` jobs and the three test jobs all name one cache key,
 the test jobs' `rust-test` one. That input **replaces** rust-cache's
 automatic job-id component, so jobs naming the same key resolve to the same
 entry instead of each storing a near-identical copy.
 
 Only the three test jobs **write** that entry, and only on a push to main
-(see above). `lint` and `sdk` set
+(see above). `lint-rust` and `sdk` set
 `save-if: false` and are restore-only, which is load-bearing rather than
 tidy: rust-cache skips its save whenever the restore was an exact key match,
 so the first job to finish on a fresh key decides that entry's contents for
@@ -223,8 +223,9 @@ later run — slowing the critical path, which is the opposite of the point.
 
 The race is narrowed rather than removed: the three writers still contend,
 but their dependency builds are near-identical, so whichever wins, the
-stored entry is representative. Measured after the change: all five jobs
-restore one `v0-rust-rust-test-…` entry with `full match: true`.
+stored entry is representative. Measured after the change, before the
+`lint-rust` split: all five jobs restore one `v0-rust-rust-test-…` entry
+with `full match: true`.
 
 This was worth doing because the duplication was measured, not suspected: on
 a single PR ref there were four entries with identical dependency hashes —
@@ -344,7 +345,8 @@ A verification point is one call, `.claude/tools/verify_head.py`. It
 records HEAD, runs `make lint-abridged` and then `make test-abridged`,
 each as a process group it owns, and, when HEAD is pushed and the tree is clean,
 polls CI for the same SHA. Each check settles on whichever side finishes
-first. A green CI `Lint` kills the local lint. The `Tests*` checks all
+first. The three `Lint*` checks all green (`Lint`, `Lint (clippy)`,
+`Lint (rustdoc)`) kill the local lint. The `Tests*` checks all
 green kill or skip the local test; the `code` filter reports an excluded
 PR's Tests jobs as passing, while a `skipping` one (its `Detect changes`
 failed) verified nothing and never settles the check. A red on

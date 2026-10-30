@@ -20,8 +20,9 @@ the whole fall-through inside one Bash call::
    ``gh pr view --json headRefOid`` and the watcher's own
    ``gh pr checks --json`` read, believed only while the PR's head is this
    SHA. Otherwise the run is local only and the verdict says why.
-3. **Each check settles on whichever side finishes first.** CI's ``Lint``
-   green kills the local lint; every ``Tests*`` check green — which is how
+3. **Each check settles on whichever side finishes first.** Every ``Lint*``
+   check green (``Lint``, ``Lint (clippy)``, ``Lint (rustdoc)``) kills the
+   local lint; every ``Tests*`` check green — which is how
    CI's ``code`` filter reports a PR no test can see — kills or skips the
    local test. A ``skipping`` job verified nothing (its ``Detect changes``
    failed), so it never settles a check. A
@@ -47,7 +48,8 @@ the whole fall-through inside one Bash call::
 Prints one verdict line, then appends the machine-load probe's ``--sample``
 line to the fleet log (best-effort)::
 
-    verify-head: GREEN sha=0123456789ab lint=ci:green[Lint] \
+    verify-head: GREEN sha=0123456789ab \
+lint=ci:green[Lint,Lint (clippy),Lint (rustdoc)] \
 test=local:green[/…/verify-head-0123456789ab-test.log] wall=212s \
 killed=lint ci=consulted
 
@@ -85,13 +87,14 @@ import wait_for_checks as wfc
 #: The two checks, in local run order, and the make target each runs.
 STAGES = (("lint", ["make", "lint-abridged"]), ("test", ["make", "test-abridged"]))
 
-#: CI's check for each stage: ``Lint`` exactly, and every ``Tests*`` job.
-CI_LINT = re.compile(r"^Lint$")
+#: CI's check for each stage: every ``Lint*`` job, and every ``Tests*`` job.
+CI_LINT = re.compile(r"^Lint\b")
 CI_TEST = re.compile(r"^Tests\b")
 
 #: The jobs that must all have registered before a check reads green, so a
-#: subset that registered (and passed) first cannot settle it early.
-LINT_JOBS = frozenset({"Lint"})
+#: subset that registered (and passed) first cannot settle it early. The
+#: cargo-backed hooks run in their own jobs, so ``Lint`` alone is not lint.
+LINT_JOBS = frozenset({"Lint", "Lint (clippy)", "Lint (rustdoc)"})
 TEST_JOBS = frozenset(
     {"Tests", "Tests (no teardown)", "Tests (asm parity)", "Tests (Postgres)"}
 )
