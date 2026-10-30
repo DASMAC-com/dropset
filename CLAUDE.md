@@ -45,8 +45,9 @@ assignee and the Planning document id from **environment variables**
 
 Linear's MCP is reached **two ways**: the hosted `claude.ai Linear`
 connector never reaches a **Bedrock** session; a **locally configured**
-server at the same URL sending `Authorization: Bearer ${LINEAR_API_KEY}`
-reaches every session. The Python board tools take that key **bare** —
+server at the same URL, user scope, sending
+`Authorization: Bearer ${LINEAR_API_KEY}`, is expected to reach every
+session. The Python board tools take that key **bare** —
 confusing the two forms gives a convincing false negative. Detail:
 `docs/conventions/linear-automation.md`.
 
@@ -67,12 +68,12 @@ placed: `docs/conventions/linear-automation.md`.
 Long-horizon **design** conversations run in their own session: `plan`
 keeps the board coherent, `architect` asks whether the thing on the
 board is the right thing to build. Launched with **`architect <n>`**
-(model-pinned, idempotent, one resumable session per governing issue),
-it bootstraps from the Planning document and plan's rulings only, and
-makes **no scheduling writes**: it files its own tasks, moves its own
-issue to In Review, places only operator-ratified edges, re-prioritizes
-nothing and touches no other issue. It hands conclusions to the
-scheduler through the Planning document's
+(model-pinned, idempotent, one resumable session per governing issue,
+named `<n>`), it bootstraps from the Planning document and plan's
+rulings only, and makes **no scheduling writes**: it files its own
+tasks, moves its own issue to In Review, places only operator-ratified
+edges, re-prioritizes nothing and touches no other issue. It hands
+conclusions to the scheduler through the Planning document's
 `Notes for the next planning session` heading **and** a direct
 message. Detail: the `architect` skill.
 
@@ -92,9 +93,9 @@ markers indexed at the top; **settled text carries no marker**.
 State is **In Progress** while running, **In Review** at handoff,
 **Done only on the operator's ratification** — never self-marked. With
 durable state in Linear *before* the handoff, the worktree is
-**expendable**: a spec file is never the only copy of live work.
-Detail: `docs/conventions/local-integrations.md` → "Architect and
-explore sessions: temporary worktree, no PR".
+**expendable**: a spec file must never be the only copy of live work.
+Mechanism and naming rule: `docs/conventions/local-integrations.md` →
+"Architect and explore sessions: temporary worktree, no PR".
 
 ### Three more verbs
 
@@ -131,7 +132,8 @@ operator-ratified complete — never merely merged. Linear makes **no
 state transition on merge** (a team setting), so the In Review state
 `review-pr` writes at the enqueue handoff persists until an explicit
 approval. Before a session, **Backlog** with no milestone awaits review
-and **Todo** is approved. So the upkeep pass prunes a worktree on the
+and **Todo** is approved. Since the state tracks the session, the
+upkeep pass prunes a worktree on the
 issue's **status type** (completed / canceled), never on PR-merged, and
 fleet resume picks up In Progress **or** In Review. Detail:
 `docs/conventions/linear-automation.md`.
@@ -174,16 +176,17 @@ requires re-sending it. `patch` is **update-only**, never passed
 alongside `description` / `content` (which replace wholesale), and
 capped at 50 ops. Each op takes its **own** argument names (`append` /
 `prepend` take `text`; `replace` takes `old_string` / `new_string`);
-the table is in the convention doc. Every MCP call echoes the full
-body, so a body **append** goes through the zero-echo
+the table is in the convention doc. Every `save_issue` call echoes the
+full body, `patch` or not, so a body **append** goes through the zero-echo
 `.claude/tools/linear_issue.py append`, a checklist tick through
 `linear_issue.py tick`, and a **fold**'s ops file through
 `.claude/tools/linear_patch.py patch --ops <path> ENG-###` (same ops,
 same atomic abort, no echo). Other **anchored** one-off edits stay on
-the MCP `patch`. Non-body field writes go through `board_batch.py`
-(`state` is a single-issue alias). Anchors must match the **stored**
-text exactly once; Linear rewrites an `ENG-###` into a mention node, so
-never anchor on one. Detail: `docs/conventions/linear-automation.md`.
+the MCP `patch`, where the abort is worth the echo. Non-body field
+writes go through `board_batch.py` (`state` is a single-issue alias).
+Anchors must match the **stored** text exactly once; Linear rewrites an
+`ENG-###` into a mention node, so never anchor on one. Detail:
+`docs/conventions/linear-automation.md`.
 
 ### Backlog reviews, Todo pulls
 
@@ -191,7 +194,8 @@ never anchor on one. Detail: `docs/conventions/linear-automation.md`.
 review; **Todo** with no milestone is reviewed and dispatchable, body
 frozen. The operator's Backlog → Todo move **is** the approval — the
 scheduler never makes it — and a fold into a Todo body drops it back.
-The dispatch gate (the Next view) is **Todo plus unblocked**. A
+The dispatch gate is **state Todo plus unblocked**; the Next view
+shows the unblocked Todo. A
 **parking milestone** — `Session pending` (and the legacy
 `Audit findings`, retired once empty) — parks an issue in either
 state, so a filing skill sets **`Backlog` plus the milestone, in the
@@ -203,7 +207,8 @@ genuinely urgent stray (a broken guard) is promoted on the spot.
 **The curator owns review** — `curate`, a daily advisor-tier base-repo
 session the launcher dispatches. It walks the operator through the
 un-parked Backlog (`[Operator]` items included) four at a time and
-moves each ticked, uncommented task to Todo one at a time. Detail:
+moves each ticked, uncommented task to Todo one at a time, the tick
+being the operator's move. Detail:
 `docs/conventions/linear-automation.md` → "The curator owns review".
 
 ### An audit is a board issue, not a directive
@@ -247,10 +252,11 @@ curator proposal, or by a seat session's filing yes. The scheduler and
 curator message each other any change to the other's edge; priorities
 are the scheduler's alone. A spurious edge (dropping an issue out of
 the available set) costs more than a missing one (a rebase). A filer
-that suspects a real dependency **proposes** it via `AskUserQuestion`
-with the evidence and writes it only on an explicit yes; in an
-autonomous run the default is **no edge**, the suspicion recorded as
-prose. Human-placed edges are never rewritten. **No exception**: the
+that believes a real dependency exists **proposes** it via
+`AskUserQuestion` with the concrete evidence and writes it only on an
+explicit yes; in an autonomous run the default is **no edge**, the
+suspicion recorded as prose. Human-placed edges are authoritative and
+never rewritten. **No exception**: the
 `Claude:` batches carry **no edge** and are **not serialized**. File
 overlap is **not** a dependency and records no collision link;
 reconciling it is the scheduler's work, judged on content. Detail:
@@ -278,17 +284,18 @@ against those, not per-PR.
 ## AWS infrastructure
 
 AWS resources are **CloudFormation YAML** under `infra/aws/`. Templates
-pass **both** `cfn-lint` and the repo's strict `yamllint` —
-alphabetical keys, single-quoted strings, block style, folded block
-scalars for long ARNs. Documentation lookups go to the credential-free
-`aws-docs` MCP server; account actions go to the **AWS CLI** under an
-SSO profile, with the SigV4 `aws-mcp` server a **fallback even when
-healthy** — its one unique capability is `aws___retrieve_skill`, and
-its connection failures are **its own bug, not a substrate one**.
-Search the AWS docs before acting and keep to least privilege (deploys
-via the passed `*-cfn-deployment` role). The `*-agent-provisioning`
-role is **inert by decision**, so IAM-creating deploys run from the
-admin login; wiring the MCP to assume it is ruled out.
+pass **both** `cfn-lint` and the repo's strict `yamllint`, so they are
+written to fit the latter — alphabetical keys, single-quoted strings,
+block style, folded block scalars for long ARNs. Documentation lookups
+go to the credential-free `aws-docs` MCP server; account actions go to
+the **AWS CLI** under an SSO profile, with the SigV4 `aws-mcp` server a
+**fallback even when healthy** — its one unique capability is
+`aws___retrieve_skill`, and its connection failures are **its own bug,
+not a substrate one**. Search the AWS docs before acting and keep to
+least privilege (deploys via the passed `*-cfn-deployment` role). The
+`*-agent-provisioning` role is **inert by decision**, so IAM-creating
+deploys run from the admin login; wiring the MCP to assume it is ruled
+out.
 
 **A session cannot log itself in** (`aws login` is interactive), so
 `plan`, the one verb reading cost data, **gates its own launch** on
@@ -362,7 +369,7 @@ scales with match *density*, so clustered matches want `--files-only`
 plus a slice-read. Keep a stable command + subcommand prefix. Never
 sweep `.claude/` bare — it holds the worktrees and their `target/`;
 scope to `skills` / `tools` / `hooks`. A multi-URL `curl` status probe
-repeats `-o /dev/null` **per URL** or uses `-I`. This holds for shell
+must repeat `-o /dev/null` **per URL** or use `-I`. This holds for shell
 you **author** in skills, scripts and Makefile targets, and for work
 you hand a sub-agent. Three opt-in `PreToolUse` guards enforce it:
 `.claude/hooks/no_compound_bash.py` (escape marker `#compound-ok`),
@@ -398,10 +405,11 @@ excepted. Both settings files are git-ignored, so all of it is opt-in;
 to the main checkout**. A committed guard is **inert until wired**:
 `make hook-wiring` (also run by the daily upkeep pass) names every
 guard that cannot fire and writes nothing. The **session helpers**
-(`cdds`, `fleet` and the launch verbs) *are* committed, at
+(`cdds`, `fleet` and the session verbs) *are* committed, at
 `.claude/shell/init.zsh`, sourced by one guarded shell-profile line;
 only the runtime config (model ids, 1Password coordinates, Linear ids,
-fleet knobs) stays untracked, its shape the committed
+fleet knobs and the like) stays untracked, in the shell profile, its
+shape the committed
 `.claude/shell/runtime-config.manifest.json`, held to the code by
 `runtime_config_check.py`. Detail:
 `docs/conventions/local-integrations.md`.
@@ -426,7 +434,8 @@ verbs re-export (re-pinning the tier); an absent marker reads as
 exports.
 
 A scheduler session may **dispatch** a ready task — `session_dispatch.py`
-opens a **tab in its own window** (never a new window) and types the
+opens a **tab in the dispatching session's own window** (never a new
+window) and types the
 verb, authorized by the operator's yes as `fleet go` is; several verbs
 go in one call, separated by a bare `+`. iTerm is driven only via
 `.claude/tools/iterm_api.py`; **AppleScript is retired**.
