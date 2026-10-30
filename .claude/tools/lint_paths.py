@@ -160,9 +160,19 @@ _FRONTEND_INSTALL = ["pnpm", "--dir", "frontend", "install"]
 _ENV_INSTALL_PREFIX = "[INFO] Installing environment for "
 _ENV_FAILURE_MARKER = "An unexpected error has occurred: CalledProcessError"
 
-# The languages whose hooks need no environment of their own. A `local` repo's
-# environment failure can only be one of its other hooks.
-_NO_ENV_LANGUAGES = frozenset({"system", "pygrep", "script", "fail"})
+# A hook result line (`cspell......Passed`). One between the last install line
+# and the error means the hooks had started, so the error is not an install's.
+_HOOK_RESULT_RE = re.compile(r"\.{4,}")
+
+# `PRE_COMMIT_COLOR=always` wraps the `[INFO]` prefix in escape codes.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# The languages whose hooks need no environment of their own (`unsupported`
+# and `unsupported_script` are pre-commit 4's names for system and script). A
+# `local` repo's environment failure can only be one of its other hooks.
+_NO_ENV_LANGUAGES = frozenset(
+    {"system", "unsupported", "pygrep", "script", "unsupported_script", "fail"}
+)
 
 _HOOK_ID_RE = re.compile(r"^\s*(?:- )?id: '([^']+)'")
 _LANGUAGE_RE = re.compile(r"^\s*(?:- )?language: '([^']+)'")
@@ -402,15 +412,26 @@ def env_hooks_by_repo(config_text: str) -> dict[str, list[str]]:
 
 
 def broken_env_repo(output: list[str]) -> str | None:
-    """The repo whose environment install aborted this run, if one did."""
-    if not any(_ENV_FAILURE_MARKER in line for line in output):
-        return None
-    installing = [
-        line.strip()[len(_ENV_INSTALL_PREFIX) :].rstrip(".")
-        for line in output
-        if line.strip().startswith(_ENV_INSTALL_PREFIX)
+    """The repo whose environment install aborted this run, if one did.
+
+    The last install line names it only when the error follows that line
+    with no hook result between them: otherwise every environment installed
+    and the error came from somewhere else, which stays a plain failure.
+    """
+    lines = [_ANSI_RE.sub("", line).strip() for line in output]
+    marker = next(
+        (i for i, line in enumerate(lines) if _ENV_FAILURE_MARKER in line), None
+    )
+    installs = [
+        i
+        for i, line in enumerate(lines[:marker])
+        if line.startswith(_ENV_INSTALL_PREFIX)
     ]
-    return installing[-1] if installing else None
+    if marker is None or not installs:
+        return None
+    if any(_HOOK_RESULT_RE.search(line) for line in lines[installs[-1] + 1 : marker]):
+        return None
+    return lines[installs[-1]][len(_ENV_INSTALL_PREFIX) :].rstrip(".")
 
 
 def run_pre_commit(
@@ -481,6 +502,10 @@ def lint(config: str, hook_args: list[str], files: list[str], root: str) -> int:
             repos = env_hooks_by_repo(_config_text(root, config))
         skipped = {h for hs in unverifiable.values() for h in hs}
         new = [h for h in repos.get(broken, []) if h not in skipped]
+        # A caller that named hooks skips only those; pre-commit installs
+        # nothing else. Every `local` environment reports one `src`, so a
+        # broken one there skips all of that repo's environment hooks.
+        new = [h for h in new if h in hook_args] or new
         if not new:
             break
         print(

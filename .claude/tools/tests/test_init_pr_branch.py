@@ -243,6 +243,13 @@ class PnpmCommand(unittest.TestCase):
         self._pin('{"packageManager": "pnpm@10.30.3"}')
         self.assertEqual(self._command("npx"), "npx --yes pnpm@10.30.3")
 
+    def test_a_corepack_hash_suffix_is_dropped(self):
+        self._pin('{"packageManager": "pnpm@10.30.3+sha512.abc"}')
+        self.assertEqual(self._command("npx"), "npx --yes pnpm@10.30.3")
+
+    def test_no_package_json_is_no_command(self):
+        self.assertIsNone(self._command("npx"))
+
     def test_no_npx_is_no_command(self):
         self._pin('{"packageManager": "pnpm@10.30.3"}')
         self.assertIsNone(self._command())

@@ -145,6 +145,20 @@ class HappyPathTests(unittest.TestCase):
         )
         self.assertEqual(result["facts"]["pnpm"], "absent")
 
+    def test_a_failed_npx_install_says_so(self):
+        runner = FakeRunner(
+            {("npx",): (1, "", "ERR")},
+            helper={
+                "frontend_node_modules": "absent",
+                "pnpm_command": "npx --yes pnpm@10.30.3",
+            },
+        )
+        result = bootstrap(runner).execute()
+        self.assertEqual(statuses(result)["install"], "failed")
+        self.assertIn(
+            "via `npx --yes pnpm@10.30.3` exit 1", statuses_detail(result, "install")
+        )
+
     def test_no_pnpm_and_no_npx_fails_the_install_without_running_it(self):
         runner = FakeRunner(
             helper={"frontend_node_modules": "absent", "pnpm_command": None}

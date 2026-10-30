@@ -260,7 +260,8 @@ def pnpm_command(
         return None
     if not isinstance(pin, str) or not pin.startswith("pnpm@"):
         return None
-    return f"npx --yes {pin}"
+    # corepack may append `+sha512.<hash>`, which npm cannot resolve.
+    return f"npx --yes {pin.split('+', 1)[0]}"
 
 
 def program_so_state(worktree_root: str) -> str:

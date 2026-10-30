@@ -520,6 +520,29 @@ class HookEnvironmentFailure(unittest.TestCase):
     def test_no_failure_marker_is_no_broken_repo(self):
         self.assertIsNone(lp.broken_env_repo(_ENV_FAILURE[:5]))
 
+    def test_an_error_after_hooks_started_is_not_an_install_failure(self):
+        # Every environment installed and a hook reported, so the last install
+        # line is a healthy repo; blaming it would be one wrong skip.
+        output = [
+            *_ENV_FAILURE[:5],
+            "cfn-lint.................Passed\n",
+            *_ENV_FAILURE[5:],
+        ]
+        self.assertIsNone(lp.broken_env_repo(output))
+
+    def test_coloured_output_is_still_read(self):
+        output = [
+            line.replace("[INFO]", "[\x1b[93mINFO\x1b[m]") for line in _ENV_FAILURE
+        ]
+        self.assertEqual(
+            lp.broken_env_repo(output),
+            "https://github.com/aws-cloudformation/cfn-lint",
+        )
+
+    def test_pre_commit_4_names_for_system_are_not_skipped(self):
+        config = _CONFIG.replace("language: 'system'", "language: 'unsupported'")
+        self.assertEqual(lp.env_hooks_by_repo(config)["local"], ["dashboard-sql-lint"])
+
     def test_the_failure_is_read_from_pre_commit_output(self):
         lines = "".join(_ENV_FAILURE)
         script = f"import sys; sys.stdout.write({lines!r}); sys.exit(3)"
@@ -529,15 +552,35 @@ class HookEnvironmentFailure(unittest.TestCase):
             )
         self.assertEqual(broken, "https://github.com/aws-cloudformation/cfn-lint")
 
-    def _lint(self, runs):
+    def _lint(self, runs, hook_args=(), frontend=([], "")):
         with (
-            mock.patch.object(lp, "ensure_frontend_hooks", return_value=([], "")),
+            mock.patch.object(lp, "ensure_frontend_hooks", return_value=frontend),
             mock.patch.object(lp, "_config_text", return_value=_CONFIG),
             mock.patch.object(lp, "run_pre_commit", side_effect=runs) as rpc,
             redirect_stderr(io.StringIO()) as err,
         ):
-            code = lp.lint("cfg.yml", [], ["a.yaml"], "/root")
+            code = lp.lint("cfg.yml", list(hook_args), ["a.yaml"], "/root")
         return code, rpc, err.getvalue()
+
+    def test_a_named_hook_skips_only_itself(self):
+        ruff = "https://github.com/astral-sh/ruff-pre-commit"
+        _, rpc, err = self._lint(
+            [(3, False, ruff), (0, False, None)], hook_args=["ruff-check"]
+        )
+        self.assertEqual(rpc.call_args.args[2]["SKIP"].split(",")[-1], "ruff-check")
+        self.assertNotIn("ruff-format", err)
+
+    def test_a_frontend_skip_and_an_env_skip_both_report(self):
+        cfn = "https://github.com/aws-cloudformation/cfn-lint"
+        _, rpc, err = self._lint(
+            [(3, False, cfn), (0, False, None)],
+            frontend=(["biome", "tsc"], "pnpm not on PATH"),
+        )
+        self.assertEqual(
+            rpc.call_args.args[2]["SKIP"].split(",")[-3:], ["biome", "tsc", "cfn-lint"]
+        )
+        self.assertIn("UNVERIFIABLE locally: biome, tsc (pnpm not on PATH)", err)
+        self.assertIn("UNVERIFIABLE locally: cfn-lint (its pre-commit", err)
 
     def test_a_broken_env_is_skipped_and_the_rest_reports(self):
         cfn = "https://github.com/aws-cloudformation/cfn-lint"

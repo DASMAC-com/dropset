@@ -94,9 +94,10 @@ by hand, since the `biome` and `tsc` hooks fail the first full
 **`facts.pnpm: absent`** means the binary is off PATH. The install
 already ran through the helper's `npx --yes pnpm@<pin>` fallback (its
 `detail` says so); use that same prefix for any later `pnpm` command,
-never a corepack shim. `lint_paths.py` skips the `biome` / `tsc` hooks
-and reports them `UNVERIFIABLE locally`, so say so once and never gate
-on them. An install that failed even through `npx` is the same note.
+never a corepack shim. `lint_paths.py` skips the `biome` / `tsc` /
+`tsc-sdk` hooks and reports them `UNVERIFIABLE locally`, so say so
+once and never gate on them. An install that failed even through `npx`
+is the same note.
 
 Two **measured facts** in `facts` are acted on, not reasoned about
 from the diff:
