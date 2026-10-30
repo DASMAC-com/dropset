@@ -6,6 +6,6 @@
 # fails the tool's tests.
 [advisories]
 ignore = [
-  "GHSA-qr28-fpjm-wq7f", # decode-uri-component; spectacle's CJS query-string 7 cannot take the ESM-only fix
-  "GHSA-vcc3-ghjq-m6fr", # decode-uri-component; spectacle's CJS query-string 7 cannot take the ESM-only fix
+  "GHSA-qr28-fpjm-wq7f", # decode-uri-component via spectacle's CJS query-string 7, which cannot take the ESM-only fix; the deck is client-only (ssr: false), so at worst a visitor's own tab hangs
+  "GHSA-vcc3-ghjq-m6fr", # decode-uri-component via spectacle's CJS query-string 7, which cannot take the ESM-only fix; the deck is client-only (ssr: false), so at worst a visitor's own tab hangs
 ]

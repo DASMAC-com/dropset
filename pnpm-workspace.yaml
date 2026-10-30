@@ -36,7 +36,8 @@ onlyBuiltDependencies:
 # decode-uri-component has no override: the fixed line is ESM-only, which
 # its CJS query-string 7 cannot require, and query-string 9 drops the named
 # exports Spectacle imports, so those two ids are standing exceptions in
-# cfg/pnpm-audit.toml.
+# cfg/pnpm-audit.toml, dropped once Spectacle's query-string can take the
+# fixed decoder.
 overrides:
   '@metamask/utils>uuid': '^11.1.1'
   '@types/react': '^19'
