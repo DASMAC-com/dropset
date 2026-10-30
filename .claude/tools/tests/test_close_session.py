@@ -559,13 +559,19 @@ class ParkTests(unittest.TestCase):
         "spec…\n\n**Resume brief**: PR #715 green, held behind #717; owed: enqueue\n"
     )
 
-    def _park(self, body=BRIEF, session_id=None, dry_run=False, **fake):
+    def _park(self, body=BRIEF, session_id=None, dry_run=False, no_exit=False, **fake):
         fake.setdefault("prs", self.OPEN)
         runner = FakeRun(**fake)
         writer = Writer()
         appended: list[tuple] = []
         rc, result = close(
-            ns(state=None, park=True, session_id=session_id, dry_run=dry_run),
+            ns(
+                state=None,
+                park=True,
+                no_exit=no_exit,
+                session_id=session_id,
+                dry_run=dry_run,
+            ),
             run=runner,
             writer=writer,
             pid=1000,
@@ -676,7 +682,85 @@ class ParkTests(unittest.TestCase):
     def test_cli_parses_park_without_state(self):
         args = close_session.parse_args(["close_session.py", "--park"])
         self.assertTrue(args.park)
+        self.assertFalse(args.no_exit)
         self.assertIsNone(args.state)
+
+    def test_park_names_its_own_client_from_the_lock(self):
+        rc, result, *_ = self._park()
+        self.assertEqual(rc, 0, result)
+        self.assertEqual(result["client_pid"], SESSION_PID)
+        self.assertTrue(any("ending the client" in n for n in result["notes"]))
+
+    def test_no_exit_leaves_the_client(self):
+        # No lock to read a client from, and none needed.
+        unlocked = PORCELAIN.replace(f"locked {LOCK}\n", "")
+        rc, result, *_ = self._park(no_exit=True, porcelain=unlocked)
+        self.assertEqual(rc, 0, result)
+        self.assertIsNone(result["client_pid"])
+
+    def test_park_refuses_when_the_client_is_unknown(self):
+        unlocked = PORCELAIN.replace(f"locked {LOCK}\n", "")
+        rc, result, _, writer, appended = self._park(session_id="s", porcelain=unlocked)
+        self.assertEqual(rc, 1)
+        self.assertIn("pass --no-exit", result["refused"])
+        self.assertEqual((writer.calls, appended), ([], []))
+
+    def test_park_refuses_another_sessions_lock(self):
+        rc, result, *_ = self._park(parents={1000: 999, 999: 1})
+        self.assertEqual(rc, 1)
+        self.assertIn("another live process", result["refused"])
+
+
+class EndClientTests(unittest.TestCase):
+    def test_sigterm_then_bounded_wait(self):
+        sent: list[tuple] = []
+        polls = iter([True, True, False])
+        went = close_session.end_client(
+            77,
+            kill=lambda pid, sig: sent.append((pid, sig)),
+            alive=lambda _pid: next(polls),
+            sleep=lambda _s: None,
+        )
+        self.assertTrue(went)
+        self.assertEqual(sent, [(77, close_session.signal.SIGTERM)])
+
+    def test_a_client_that_outlives_the_wait(self):
+        slept: list[float] = []
+        went = close_session.end_client(
+            77, kill=lambda *_: None, alive=lambda _pid: True, sleep=slept.append
+        )
+        self.assertFalse(went)
+        self.assertAlmostEqual(sum(slept), close_session.EXIT_WAIT)
+
+    def test_an_already_gone_client(self):
+        def gone(*_):
+            raise ProcessLookupError
+
+        self.assertTrue(close_session.end_client(77, kill=gone))
+
+    def _main(self, rc, result):
+        out = mock.MagicMock()
+        with (
+            mock.patch.object(close_session, "close", return_value=(rc, result)),
+            mock.patch.object(close_session, "parse_args"),
+            mock.patch.object(close_session, "end_client", return_value=True) as end,
+            mock.patch.object(close_session.sys, "stdout", out),
+        ):
+            self.assertEqual(close_session.main(), rc)
+        return end, out
+
+    def test_main_ends_the_client_after_printing(self):
+        result = {"dry_run": False, "client_pid": 4242}
+        end, out = self._main(0, result)
+        end.assert_called_once_with(4242)
+        out.flush.assert_called()
+
+    def test_main_never_ends_the_client_on_a_dry_run_or_refusal(self):
+        for rc, dry in ((0, True), (1, False)):
+            end, _ = self._main(rc, {"dry_run": dry, "client_pid": 4242})
+            end.assert_not_called()
+        end, _ = self._main(0, {"dry_run": False, "client_pid": None})
+        end.assert_not_called()
 
 
 class NotifyingRun(FakeRun):

@@ -1659,8 +1659,11 @@ migrations or generation inputs, and whether it spans crates.
    ```
 
    It writes no state, keeps the worktree and branch, appends the cost
-   line, and refuses — naming what is missing — on a dirty or unpushed
-   tree, no open PR, or no brief naming this PR. A fresh session
+   line, then **ends this client** (SIGTERM, last of all, after the
+   result prints) so the fleet slot frees; `--no-exit` keeps the tab
+   for a human-driven park. It refuses — naming what is missing — on a
+   dirty or unpushed tree, no open PR, no brief naming this PR, or a
+   worktree lock that does not name this session. A fresh session
    resumes from the brief alone at step 2, re-running no lens unless
    the rebase overlaps.
 
