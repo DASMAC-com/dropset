@@ -31,8 +31,8 @@ use crate::validator::Validator;
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-        MouseButton, MouseEvent, MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -181,7 +181,7 @@ enum Flow {
 }
 
 /// The two-press quit: a quit with a warning to give is held once, and the
-/// next quit — with no other key between — exits anyway.
+/// next quit — with no other event between — exits anyway.
 #[derive(Default)]
 struct QuitGuard {
     warned: bool,
@@ -199,9 +199,52 @@ impl QuitGuard {
         held
     }
 
-    /// Re-arm the warning: a key other than quit came between.
+    /// Re-arm the warning: an event other than quit came between.
     fn stand_down(&mut self) {
         self.warned = false;
+    }
+
+    /// Whether a quit is held, so the next quit exits.
+    fn held(&self) -> bool {
+        self.warned
+    }
+}
+
+/// What an event means to the [`QuitGuard`].
+#[derive(PartialEq, Eq, Debug)]
+enum QuitEvent {
+    /// Not a press: a key release or repeat, which neither quits nor re-arms.
+    /// Only reported once keyboard-enhancement flags are on, where a release
+    /// would otherwise count as the second press.
+    Ignore,
+    /// A quit press on the dashboard.
+    Quit,
+    /// Anything else — a prompt's keys, the dashboard's other keys, a resize,
+    /// mouse or focus event — which re-arms a held quit.
+    Other,
+}
+
+/// Classify `ev` for the quit guard. `in_prompt` is whether a prompt owns the
+/// keys (there `q` and Esc edit or cancel it, never quit); `held` is whether
+/// a quit is held. Esc dismisses a held warning rather than counting as the
+/// second press, so only `q` or Ctrl-C exits with a kept writer's lamports.
+fn classify_quit(ev: &Event, in_prompt: bool, held: bool) -> QuitEvent {
+    let Event::Key(k) = ev else {
+        return QuitEvent::Other;
+    };
+    if k.kind != KeyEventKind::Press {
+        return QuitEvent::Ignore;
+    }
+    let ctrl_c = k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c');
+    let quit = match k.code {
+        KeyCode::Char('q') => true,
+        KeyCode::Esc => !held,
+        _ => ctrl_c,
+    };
+    if quit && !in_prompt {
+        QuitEvent::Quit
+    } else {
+        QuitEvent::Other
     }
 }
 
@@ -580,6 +623,13 @@ impl App {
     }
 
     fn handle_event(&mut self, ev: Event) -> Flow {
+        match classify_quit(&ev, self.in_prompt(), self.quit.held()) {
+            QuitEvent::Ignore => return Flow::Continue,
+            QuitEvent::Quit => return self.request_quit(),
+            // Every other event stands a held quit down — prompt keys and
+            // non-key events included — so only two quits in a row exit.
+            QuitEvent::Other => self.quit.stand_down(),
+        }
         match ev {
             Event::Key(k) => self.handle_key(k),
             Event::Mouse(m) => {
@@ -681,6 +731,17 @@ impl App {
         }
     }
 
+    /// Whether a prompt owns the keys, so `q` and Esc edit or cancel it
+    /// rather than quit.
+    fn in_prompt(&self) -> bool {
+        self.amount_input.is_some()
+            || self.leader_prompt.is_some()
+            || self.passive_prompt.is_some()
+            || self.name_prompt.is_some()
+            || self.rotate_prompt.is_some()
+            || self.ceremony_prompt.is_some()
+    }
+
     fn handle_key(&mut self, k: KeyEvent) -> Flow {
         // While entering a swap amount, keystrokes edit the buffer instead of
         // driving the dashboard — this must come before the normal keybinds so
@@ -709,14 +770,8 @@ impl App {
             self.handle_ceremony_key(k);
             return Flow::Continue;
         }
-        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-        if matches!(k.code, KeyCode::Char('q') | KeyCode::Esc)
-            || (ctrl && k.code == KeyCode::Char('c'))
-        {
-            return self.request_quit();
-        }
-        // Any other key stands a held quit down: only two quits in a row exit.
-        self.quit.stand_down();
+        // The quit keys never reach here: `handle_event` routes them through
+        // the guard first.
         match k.code {
             KeyCode::Char('j') | KeyCode::Down => self.menu_step(1),
             KeyCode::Char('k') | KeyCode::Up => self.menu_step(-1),
@@ -2364,9 +2419,10 @@ fn classify_basis_line(line: &str) -> Option<(String, BasisNote)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_basis_line, hit_target, is_confirmation, parse_positive_amount, swap_side_label,
-        Action, BasisNote, QuitGuard, SwapSide,
+        classify_basis_line, classify_quit, hit_target, is_confirmation, parse_positive_amount,
+        swap_side_label, Action, BasisNote, QuitEvent, QuitGuard, SwapSide,
     };
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
     use ratatui::layout::Rect;
     use solana_pubkey::Pubkey;
 
@@ -2389,6 +2445,63 @@ mod tests {
         guard.stand_down();
         assert!(guard.quit(warn).is_some());
         assert_eq!(guard.quit(warn), None);
+    }
+
+    fn press(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    /// Esc quits from the dashboard, but on a held warning it dismisses it:
+    /// the TUI keeps running and the guard re-arms. `q` and Ctrl-C still exit.
+    #[test]
+    fn esc_on_a_held_warning_dismisses_rather_than_quits() {
+        assert_eq!(
+            classify_quit(&press(KeyCode::Esc), false, false),
+            QuitEvent::Quit
+        );
+        assert_eq!(
+            classify_quit(&press(KeyCode::Esc), false, true),
+            QuitEvent::Other
+        );
+        assert_eq!(
+            classify_quit(&press(KeyCode::Char('q')), false, true),
+            QuitEvent::Quit
+        );
+        let ctrl_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(classify_quit(&ctrl_c, false, true), QuitEvent::Quit);
+    }
+
+    /// A prompt's keys — its `q` and Esc included — and non-key events re-arm
+    /// a held quit rather than slipping past the guard.
+    #[test]
+    fn a_prompt_key_or_non_key_event_re_arms_the_guard() {
+        for held in [false, true] {
+            for code in [KeyCode::Char('q'), KeyCode::Esc, KeyCode::Char('5')] {
+                assert_eq!(classify_quit(&press(code), true, held), QuitEvent::Other);
+            }
+            assert_eq!(
+                classify_quit(&Event::Resize(80, 24), false, held),
+                QuitEvent::Other
+            );
+            assert_eq!(
+                classify_quit(&Event::FocusGained, false, held),
+                QuitEvent::Other
+            );
+        }
+    }
+
+    /// A key release or repeat neither quits nor re-arms, so a `q` released
+    /// between two presses cannot stand the hold down or count as the second.
+    #[test]
+    fn a_key_release_is_ignored() {
+        for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
+            let mut k = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+            k.kind = kind;
+            assert_eq!(
+                classify_quit(&Event::Key(k), false, true),
+                QuitEvent::Ignore
+            );
+        }
     }
 
     /// The shape the parser actually receives at runtime: `bot::stream` prepends
