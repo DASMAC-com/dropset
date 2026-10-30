@@ -348,6 +348,12 @@ class ParentRunTests(_RunBase):
             self._run(fake, ["approve", "--parent", "ENG-9", "--cancel", "ENG-7"])
         self.assertEqual(fake.writes, [])
 
+    def test_approve_refuses_a_title_beside_a_parent(self):
+        fake = self._set()
+        with self.assertRaisesRegex(RatifyError, "--title retitles"):
+            self._run(fake, ["approve", "--parent", "ENG-9", "--title", "New"])
+        self.assertEqual(fake.writes, [])
+
     def test_an_empty_parent_is_refused_not_read_as_no_ids(self):
         with self.assertRaisesRegex(RatifyError, "wants an ENG-### identifier"):
             self._run(self._set(), ["gate", "--parent", ""])
