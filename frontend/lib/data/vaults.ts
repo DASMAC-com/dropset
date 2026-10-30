@@ -106,7 +106,8 @@ export const PPM = 1_000_000n;
 // Whether a deposit of `sharesOut` keeps the leader at or above their
 // min_leader_share floor — the program's own integer check, so it decides
 // exactly where the dialog's float warning only estimates. The table's "Full"
-// state and the send-time gate both read it, so the two always agree.
+// state and the send-time gate share it, so a vault the gate would refuse
+// even one share never reads open (atLeaderFloor closes a sliver earlier).
 export function leaderFloorHolds(
   vault: {
     leaderShares: bigint;

@@ -212,12 +212,23 @@ export function sizeWithdraw(
   };
 }
 
-// The table's position figures, sized against the same fee-realized share
-// count a withdraw is: `vault` with `totalShares` swapped for the count
-// `realize_in_place` leaves. Above the high-water mark the leader's fee
-// dilutes every position, so the stored count would overstate its value.
+// `vault` as the program sees it once `realize_in_place` has minted the
+// leader's performance fee, for every position figure (the table's and the
+// dialog's), so each is sized against the share count a withdraw slices.
+// Above the high-water mark the fee dilutes every position, so the stored
+// count would overstate its value. The minted shares go to the leader, and
+// `vps` scales down with the count, so the yield % nets the fee too; `chain`
+// keeps the stored raw counts the SDK kernels realize from.
 export function realizedVault(vault: Vault): Vault {
-  return { ...vault, totalShares: Number(realizedTotalShares(vault.chain)) };
+  const stored = vault.chain.totalShares;
+  const realized = realizedTotalShares(vault.chain);
+  if (realized === stored) return vault;
+  return {
+    ...vault,
+    totalShares: Number(realized),
+    leaderShares: Number(vault.chain.leaderShares + realized - stored),
+    vps: (vault.vps * Number(stored)) / Number(realized),
+  };
 }
 
 export type VaultRef = {
