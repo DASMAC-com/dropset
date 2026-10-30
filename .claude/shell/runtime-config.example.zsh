@@ -27,6 +27,9 @@ DS_OP_ACCOUNT='<account>.1password.com'
 DS_OP_LINEAR_REF='op://<vault>/<item>/<field>'
 DS_OP_GITHUB_REF='op://<vault>/<item>/<field>'
 DS_OP_BEDROCK_REF='op://<vault>/<item>/<field>'
+# The private-key guard hook reads these two, so they must be exported.
+export DS_OP_PRIVATE_KEYS_VAULT='<vault-name>,<vault-id>'
+export DS_OP_PRIVATE_KEY_ITEMS='<key-item-title>,<key-item-title>'
 
 # --- Linear ids (the filing skills read each with its own printenv) ---------
 export LINEAR_TEAM_ID='<team-id>'

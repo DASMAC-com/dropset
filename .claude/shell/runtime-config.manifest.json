@@ -302,6 +302,26 @@
       ]
     },
     {
+      "anchor": "docs/conventions/local-integrations.md → Wiring the private-key guard",
+      "default": null,
+      "kind": "secret-ref",
+      "name": "DS_OP_PRIVATE_KEYS_VAULT",
+      "required": false,
+      "verbs": [
+        "every session, read by the private-key guard hook"
+      ]
+    },
+    {
+      "anchor": "docs/conventions/local-integrations.md → Wiring the private-key guard",
+      "default": null,
+      "kind": "secret-ref",
+      "name": "DS_OP_PRIVATE_KEY_ITEMS",
+      "required": false,
+      "verbs": [
+        "every session, read by the private-key guard hook"
+      ]
+    },
+    {
       "anchor": "docs/conventions/local-integrations.md \u2192 The family, one line each",
       "default": null,
       "kind": "launcher-set",

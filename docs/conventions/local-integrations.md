@@ -723,12 +723,12 @@ brief:
 
 1. A Bash command naming the private-keys **vault** (name or id, read
    from `DS_OP_PRIVATE_KEYS_VAULT` in the session environment, comma
-   separated for both — set it in the runtime init, since the committed
-   script carries no real name), an `op://` reference to a **key item**
-   (titles read from `DS_OP_PRIVATE_KEY_ITEMS`, separated by commas,
-   semicolons or newlines, each matched on the item's leading words so a
-   wallet record's `(SSH)` signing duplicate matches too), or the
-   **1Password agent socket**. A reference is read with quotes and
+   separated for both — export it in the runtime init, since the
+   committed script carries no real name), an `op://` reference to a
+   **key item** (titles read from `DS_OP_PRIVATE_KEY_ITEMS`, separated
+   by commas, semicolons or newlines, each matched on the item's leading
+   words so a wallet record's `(SSH)` signing duplicate matches too), or
+   the **1Password agent socket**. A reference is read with quotes and
    backslashes removed and percent escapes decoded. The titles match only
    inside an `op://` reference: their words may be ordinary here, and a
    guard that blocks `grep signer` gets turned off.
@@ -789,14 +789,21 @@ The **script** is committed with a self-test
 `make tools-tests`. Neither layer's **wiring** is committed. Wiring it
 takes three things.
 
-First, set `DS_OP_PRIVATE_KEYS_VAULT` (the vault's name, its id, or
-both comma separated) in the runtime init the session helpers source,
-so every session inherits it. Unset, the hook's vault-name check is
-off; the other four groups still hold. Beside it, set
-`DS_OP_PRIVATE_KEY_ITEMS` to the key items' titles, comma separated,
-and update it whenever an item is renamed: a title missing from the
-list is a key the item check cannot see, while an extra or superseded
-title only over-blocks, so keep an old spelling until the rename is
+First, export the vault and its key items in the runtime init the
+session helpers source, so every session's hook process inherits them
+(a plain assignment never reaches it):
+
+```zsh
+export DS_OP_PRIVATE_KEYS_VAULT='<vault-name>,<vault-id>'
+export DS_OP_PRIVATE_KEY_ITEMS='<key-item-title>,<key-item-title>'
+```
+
+The vault variable takes the name, the id, or both comma separated.
+Unset, the hook's vault-name check is off; the other four groups still
+hold. The items variable takes the key items' titles, comma separated;
+update it whenever an item is renamed: a title missing from the list
+is a key the item check cannot see, while an extra or superseded title
+only over-blocks, so keep an old spelling until the rename is
 verified. Unset, the item check is off; a reference into the vault is
 still caught by name when the vault variable is set, and dereferencing
 any reference still needs `op` (group 2). `make hook-wiring` prints a

@@ -111,6 +111,12 @@ class StaticTests(Fixture):
         self.assertEqual(code, 1)
         self.assertIn("undocumented read: DS_WAIT (.claude/tools/pool.py:3)", out)
 
+    def test_a_quoted_name_in_a_hook_is_a_read(self):
+        self.put(".claude/hooks/guard.py", 'VAULT_ENV = "DS_VAULT"\n')
+        code, out = self.call("--static")
+        self.assertEqual(code, 1)
+        self.assertIn("undocumented read: DS_VAULT (.claude/hooks/guard.py:1)", out)
+
     def test_a_stale_row_fails(self):
         self.write_manifest(ROWS + [dict(ROWS[0], name="DS_GONE")])
         code, out = self.call("--static")

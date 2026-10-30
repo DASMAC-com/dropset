@@ -82,7 +82,8 @@ class ComposeTests(unittest.TestCase):
     def test_the_brief_lands_in_the_composed_output(self):
         out = lp.compose(self.root, [], ["No test harness exists."])
         self.assertIn("You are a **read-only** agent.", out)
-        self.assertIn("Standing brief for this review", out)
+        self.assertIn("Standing brief for this sub-agent", out)
+        self.assertNotIn("review", out.splitlines()[0])
 
     def test_appended_sections_follow_the_brief_in_order(self):
         (self.root / "a.md").write_text("## Alpha\n", encoding="utf-8")
