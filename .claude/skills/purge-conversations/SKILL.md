@@ -153,8 +153,8 @@ invariant".
   `$CLAUDE_CONFIG_DIR` / `$HOME` (the tool reuses
   `claude_home()`); the dropset root is discovered at
   runtime from `git worktree list`; the slug is `slugify()`.
-- **The launcher offers it** in its one prune ask (`launch`
-  step 3), running steps 1–3 here first — never an
+- **The launcher offers it** in its one destructive ask
+  (`launch` step 4), running steps 1–3 here first — never an
   unattended auto-step; nothing deletes without a yes.
 
 ## Safety invariant

@@ -40,7 +40,12 @@ refuses the whole pass, since every later step assumes it.
     resolved is reported; Linear unreachable cleans NOTHING;
  6. prune the eligible worktrees and stray local branches, passed to
     ``prune_worktrees`` as ``--closed`` names: only a live session lock holds
-    one, and the report names each one's commits ahead of ``origin/main``;
+    one, and the report names each one's commits ahead of ``origin/main``. A
+    worktree whose session the digest has not read yet — a transcript written
+    at or after the last digest window's close, or one it cannot read
+    (:func:`undigested`) — is held
+    out of the set and reported ``held: not yet digested``; it goes the next
+    morning;
  7. dismiss every settled PR's notifications, unsubscribing only from a
     merged one's (``pr_notifications dismiss --settled``) — merged or closed,
     whatever its issue's state, one thread at a time (never mark-all);
@@ -64,7 +69,9 @@ refuses the whole pass, since every later step assumes it.
     the last digest's window closed, its rate-calibration line fed by step 12's
     reconcile figure and the settled day's ``fleet_cost rates`` read, and its
     CI section (``--ci``) read from the merge queue over the same window;
-14. the memory scan gate, then the memory audit when due;
+14. the memory scan gate, then the memory audit when due — the mechanical
+    pre-filter the launcher's staleness sub-agent reads — and ``MEMORY.md``'s
+    line count every run;
 15. the transcript-purge dry-run manifest;
 16. the dependency advisories (``deps_audit --json``): one line, by severity,
     with the delta against the previous run's ids kept beside the stamp.
@@ -231,6 +238,9 @@ class Ctx:
     # under test — and the clock their elapsed seconds are read from.
     progress: Callable[[str], None] | None = None
     clock: Callable[[], float] = time.monotonic
+    # The Claude projects tree the prune's digest hold reads transcripts from;
+    # None is the Claude home's.
+    projects: Path | None = None
 
     def tool(self, name: str, *args: str, timeout: float = TIMEOUT_TOOL):
         return self.run(
@@ -446,12 +456,67 @@ def step_board(ctx: Ctx) -> None:
     )
 
 
+def undigested(ctx: Ctx, targets: list[str]) -> list[str]:
+    """The targets whose worktree's session the digest has not read yet: a
+    transcript written at or after the latest digest window's close (or any
+    transcript, when no digest has run). A tree goes only once its session
+    metrics are in a digest; a held one goes the next morning. A branch with
+    no tree has no transcript to read, so it is never held. An unreadable
+    transcript holds the tree: the guard fails closed."""
+    projects = ctx.projects or prune_conversations.projects_root()
+    close = session_digest.last_close(ctx.base / session_digest.DIGEST_DIR)
+    cutoff = close.timestamp() if close is not None else None
+    # A projects root that is absent holds no session; one that exists but
+    # cannot be listed might, so it holds every tree.
+    unlisted = False
+    try:
+        dirs = [p for p in projects.iterdir() if p.is_dir()]
+    except FileNotFoundError:
+        dirs = []
+    except OSError:
+        dirs, unlisted = [], True
+    held = []
+    for tree in ctx.data.get("trees", []):
+        if tree.get("branch") not in targets or prune_worktrees.is_base(tree):
+            continue
+        # The tree's own project, and a session started in a subdirectory of
+        # it (`<slug>-<sub>`), which the digest's prefix discovery also reads.
+        slug = prune_conversations.slugify(Path(tree["path"]))
+        mtimes: list[float] = []
+        unreadable = unlisted
+        for project in dirs:
+            if project.name != slug and not project.name.startswith(slug + "-"):
+                continue
+            # Top-level transcripts only, as the digest's discovery reads them.
+            # Listed directly: a glob over an unreadable directory yields
+            # nothing rather than raising.
+            try:
+                transcripts = [p for p in project.iterdir() if p.suffix == ".jsonl"]
+            except OSError:
+                unreadable = True
+                continue
+            for transcript in transcripts:
+                try:
+                    mtimes.append(transcript.stat().st_mtime)
+                except OSError:
+                    unreadable = True
+        if unreadable or (mtimes and (cutoff is None or max(mtimes) >= cutoff)):
+            held.append(tree["branch"])
+    return sorted(held)
+
+
 def step_prune(ctx: Ctx) -> None:
-    targets = sorted(
+    eligible = sorted(
         ctx.data.get("eligible", set()) & ctx.data.get("local_traces", set())
     )
+    held = undigested(ctx, eligible)
+    held_lines = [f"{b}: held: not yet digested" for b in held]
+    targets = [b for b in eligible if b not in held]
     if not targets:
-        ctx.record("prune", "no worktree or branch to clean")
+        line = "no worktree or branch to clean"
+        if held:
+            line += f"; {len(held)} held: not yet digested"
+        ctx.record("prune", line, held=held_lines)
         return
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
         f.write("\n".join(targets))
@@ -474,8 +539,10 @@ def step_prune(ctx: Ctx) -> None:
         "prune",
         f"{verb} {len(result['removed'])} worktree(s) and "
         f"{len(result.get('branches_removed', []))} stray branch(es); "
-        f"{len(result['skipped'])} held back",
+        f"{len(result['skipped'])} held back"
+        + (f", {len(held)} held: not yet digested" if held else ""),
         skipped=[f"{s['branch']}: {s['reason']}" for s in result["skipped"]],
+        held=held_lines,
         ahead=[
             f"{b}: {a['ahead'] if a.get('ahead') is not None else '?'} ahead of "
             f"origin/main, tip {(a.get('tip') or '?')[:12]}"
@@ -820,19 +887,30 @@ def step_digest(ctx: Ctx) -> None:
     )
 
 
+def index_lines(memory_dir: Path) -> str:
+    """``MEMORY.md``'s non-blank line count, said every run: the memory posture
+    is a minimal store, so the figure should fall run over run."""
+    try:
+        text = (memory_dir / "MEMORY.md").read_text(encoding="utf-8")
+    except OSError:
+        return "MEMORY.md unreadable"
+    return f"MEMORY.md {sum(1 for ln in text.splitlines() if ln.strip())} line(s)"
+
+
 def step_memory(ctx: Ctx) -> None:
     memory_dir = (
-        prune_conversations.projects_root()
+        (ctx.projects or prune_conversations.projects_root())
         / prune_conversations.slugify(ctx.base)
         / "memory"
     )
+    count = index_lines(memory_dir)
     gate = _json_tool(
         ctx, "memory", "memory_scan_gate.py", "check", str(memory_dir), ok_rcs=(0,)
     )
     if gate is None:
         return
     if not gate.get("scan"):
-        ctx.record("memory", f"memory audit not due ({gate.get('reason')})")
+        ctx.record("memory", f"memory audit not due ({gate.get('reason')}); {count}")
         return
     rc, out, err = ctx.tool(
         "memory_audit.py", str(memory_dir), "--repo-root", str(ctx.base)
@@ -851,7 +929,7 @@ def step_memory(ctx: Ctx) -> None:
     stamp = "" if rc == 0 else f"; gate stamp failed: {first_line(err)}"
     ctx.record(
         "memory",
-        f"memory audit ran: {len(findings)} finding(s){stamp}",
+        f"memory audit ran: {len(findings)} finding(s); {count}{stamp}",
         ok=rc == 0,
         findings=findings,
     )
@@ -1063,6 +1141,7 @@ LIST_KEYS = (
     "near",
     "flags",
     "skipped",
+    "held",
     "ahead",
     "unmatched",
     "dangling",

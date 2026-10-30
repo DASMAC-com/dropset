@@ -258,6 +258,30 @@ class PruneTests(unittest.TestCase):
         self.assertIn(["branch", "-D", "eng-701"], git.calls)
         self.assertIn(["worktree", "prune"], git.calls)
 
+    def test_a_closed_name_releases_its_tree_registration_and_branch(self):
+        # Done means prune: the checkout, its `.git/worktrees` registration and
+        # the local branch all go, in that order, even with work outstanding.
+        path = "/repo/dropset/.claude/worktrees/eng-701"
+        git = FakeGit(PORCELAIN, modified=[path], unpushed=[("eng-701", 2)])
+        out = prune(set(), dry_run=False, git=git, closed={"eng-701"})
+        self.assertEqual([r["branch"] for r in out["removed"]], ["eng-701"])
+        self.assertTrue(out["pruned"])
+        mutating = [
+            c
+            for c in git.calls
+            if c[:2]
+            in (["worktree", "remove"], ["branch", "-D"], ["worktree", "prune"])
+        ]
+        self.assertEqual(
+            mutating,
+            [
+                ["worktree", "remove", "--force", path],
+                ["branch", "-D", "eng-701"],
+                ["worktree", "prune"],
+            ],
+        )
+        self.assertEqual(out["ahead"]["eng-701"]["tip"], "eng-701-tip")
+
     def test_dirty_worktree_is_skipped_not_removed(self):
         dirty_path = "/repo/dropset/.claude/worktrees/eng-701"
         git = FakeGit(PORCELAIN, dirty=[dirty_path])

@@ -5,6 +5,9 @@ rule (no-marker, changed-store, within-interval, elapsed, bad-timestamp), the
 corrupt-marker read, plus argument parsing. Run via the repo's ``make tools-tests``.
 """
 
+import contextlib
+import io
+import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -15,6 +18,8 @@ from memory_scan_gate import (
     _parse_args,
     _read_marker,
     decide,
+    decide_judge,
+    run,
     store_signature,
 )
 
@@ -87,6 +92,36 @@ class DecideTests(unittest.TestCase):
         self.assertIn("timestamp", reason)
 
 
+class DecideJudgeTests(unittest.TestCase):
+    def test_no_marker_is_the_first_full_cull(self):
+        self.assertEqual(decide_judge(None, NOW)[:2], (True, True))
+        self.assertEqual(decide_judge({"last_judged": "x"}, NOW)[:2], (True, True))
+
+    def test_weekly_and_time_only(self):
+        recent = {"last_judged": (NOW - timedelta(days=3)).isoformat()}
+        self.assertEqual(decide_judge(recent, NOW)[:2], (False, False))
+        old = {"last_judged": (NOW - timedelta(days=8)).isoformat()}
+        self.assertEqual(decide_judge(old, NOW)[:2], (True, False))
+
+    def test_judge_check_and_record_round_trip(self):
+        with tempfile.TemporaryDirectory() as d:
+            mem = Path(d) / "memory"
+            mem.mkdir()
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                run(["memory_scan_gate.py", "judge-check", str(mem)])
+            self.assertTrue(json.loads(out.getvalue())["first"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                run(["memory_scan_gate.py", "judge-record", str(mem)])
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                run(["memory_scan_gate.py", "judge-check", str(mem)])
+            verdict = json.loads(out.getvalue())
+            self.assertEqual((verdict["judge"], verdict["first"]), (False, False))
+            # The judge's marker sits beside the scan's, never in the store.
+            self.assertEqual(store_signature(mem), "empty")
+
+
 class ReadMarkerTests(unittest.TestCase):
     def test_corrupt_marker_reads_as_absent(self):
         # Each payload raises something other than `JSONDecodeError`: an
@@ -114,6 +149,9 @@ class ParseArgsTests(unittest.TestCase):
     def test_min_interval_override(self):
         _, _, hours = _parse_args(["check", "/tmp/mem", "--min-interval-hours", "6"])
         self.assertEqual(hours, 6.0)
+
+    def test_judge_check_defaults_to_weekly(self):
+        self.assertEqual(_parse_args(["judge-check", "/tmp/mem"])[2], 168.0)
 
     def test_missing_dir_raises(self):
         with self.assertRaises(MemoryScanGateError):

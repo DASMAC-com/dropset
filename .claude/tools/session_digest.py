@@ -455,6 +455,20 @@ def window_start(directory: Path, date: str, given: datetime.datetime):
     return given
 
 
+def last_close(directory: Path) -> datetime.datetime | None:
+    """The latest digest window's close: the newest parseable ``until`` the
+    history records, or ``None`` when no digest has run. A transcript written
+    before it has every record digested, since windows abut; one written at or
+    after it has a record no digest has read yet — the worktree prune's hold."""
+    closes = []
+    for entry in _history_entries(directory):
+        try:
+            closes.append(_instant(entry["until"]))
+        except (KeyError, AttributeError, TypeError, ValueError):
+            continue
+    return max(closes, default=None)
+
+
 def write_history(
     directory: Path, date: str, figures: dict, since: str, until: str
 ) -> None:

@@ -156,9 +156,10 @@ dangling reference or file near its size cap. Say the
 reports it: still inbox, the curator's to clear, never promoted
 here. Say the `fleet-cost` day lines too, any flagged day first. A run stamp
 older than today means the pass did not reach the document —
-say so. Its **destructive items** (the prune, the transcript
-purge, allowlist cruft, refresh candidates, stale memories) are
-the launcher's one ask (ruling 16) — never asked here.
+say so. The launcher prunes finished worktrees unasked; the
+other **destructive items** (the transcript purge, allowlist
+cruft, refresh candidates, judged memories) are its one ask
+(ruling 16) — never asked here.
 
 **Say the fold line.** The lever fold runs in the launcher's own
 tab (`launch`), alongside this bootstrap, never here:

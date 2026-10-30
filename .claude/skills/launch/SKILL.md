@@ -1,6 +1,6 @@
 ---
 name: launch
-description: Run the launcher — the executor-tier session that starts the day, opened by the fresh-day `plan` pre-launch in a tab just left of the scheduler's (or typed as `launch`), in the base repo with no worktree, branch or PR. Runs the trim-context lever fold over the day's digest in its own visible tab, filing the Claude: batches straight into Backlog and writing the fold stamp the scheduler reads; gathers the kill and merge candidates it cannot decide alone, filing and moving nothing on them. Waits, event-driven, for the scheduler's `state of play written` message, then dispatches the curator with the hand-off as its first message. Then asks the morning's one destructive question — the finished worktrees and stray branches with their commits ahead of main, the transcript purge with its bytes, and the upkeep report's other destructive items — and applies only what the operator ticks. Ends with session metrics and its cost; the tab stays open and a late message is acted on.
+description: Run the launcher — the executor-tier session that starts the day, opened by the fresh-day `plan` pre-launch in a tab left of the scheduler's (or typed as `launch`), in the base repo with no worktree, branch or PR. Runs the trim-context lever fold in its own visible tab, filing the Claude: batches into Backlog and writing the fold stamp; gathers kill and merge candidates, filing nothing on them. Then prunes, unasked, every worktree (once the digest has read its session) and stray branch whose issue is Done or Canceled, reporting each tip. Waits, event-driven, for the scheduler's `state of play written`, then dispatches the curator with the hand-off. Weekly, a read-only sub-agent judges every memory stale, superseded, repo-bound or keep. Then asks the one destructive question — the transcript purge, the upkeep report's other destructive items and the judged memories — applying only what is ticked. Ends with session metrics and its cost; the tab stays open.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -63,9 +63,9 @@ whole document:
 python3 .claude/tools/planning_doc.py --section 'Upkeep report'
 ```
 
-Keep the section in context: step 3's ask reads its destructive
+Keep the section in context: step 4's ask reads its destructive
 items from it. A report that wrote no digest means no fold: say so,
-write no stamp, and go on to step 2.
+write no stamp, and go straight on to the prune below.
 
 Follow trim-context steps 1–7 as written — batches **Backlog, no
 milestone**, folds into open issues zero-echo, rejections filed
@@ -87,6 +87,25 @@ shows already landed or retired (a **kill** candidate). Each carries
 one line of evidence — the commit, the PR or the sibling issue. File
 nothing and move nothing on them: canceling and merging are the
 curator's, on its judgment and the operator's tick.
+
+**Then prune, unasked** — the first act once the fold is done or
+skipped (operator ruling, 2026-10-29: Done means prune):
+
+```sh
+python3 .claude/tools/upkeep.py prune --apply
+```
+
+Its names' issues are completed or canceled with no PR open, so
+everything attached goes — the checkout, its `.git/worktrees`
+registration and the local branch — dirty or unpushed work included,
+since Done is the operator's own word. It runs after the pre-launch
+pass's digest step, and a tree whose session the digest has not read
+yet is held (`held: not yet digested`) until the next morning. Say in
+one line per name what it removed, **with each tip** — the only
+restore handle, via `git branch <name> <tip>` — then what it held: a
+live session's lock (`skipped`) or the digest hold, reported,
+never asked and never retried. Linear unreachable prunes nothing;
+say so.
 
 ## 2. The hand-off and the curator
 
@@ -155,50 +174,86 @@ nothing is lost.
 **No message by the time the fold is done** means idling at no
 cost. The operator's `launch the curator now` in this tab is the
 override: dispatch and hand off as above without the message, then
-go on to step 3 — so a day with no scheduler still gets its prune
-ask.
+go on to step 3 — so a day with no scheduler still gets its
+destructive ask.
 
-## 3. The prune ask
+## 3. The memory judge
+
+The memory posture is a **minimal** store: a memory earns its place
+only when it is about the operator or how to work and is not
+derivable from the repo. The upkeep report's `memory` line carries
+`memory_audit.py`'s mechanical findings and the `MEMORY.md` line
+count, which should fall run over run. The judgment is weekly, on
+its own gate, with the auto-memory directory this session's system
+prompt names:
+
+```sh
+python3 .claude/tools/memory_scan_gate.py judge-check <memory-dir>
+```
+
+On `judge: false`, skip to step 4. Otherwise take the pre-filter
+(`memory_audit.py <memory-dir> --repo-root . --json`, its output
+written with the Write tool to the session scratchpad, never into the
+checkout) and spawn **one** read-only `Explore` sub-agent: the
+canonical brief by pointer (`lens_preamble.py` with `--out` and
+`--no-facts`), the memory directory and the base checkout as its
+named-path allowlist, the pre-filter's path, a budget (≤ 30 turns),
+and this deliverable
+— one row per memory file, `<file> — <verdict> — <fact>`, after
+reading every file and checking each claim against HEAD and the
+board:
+
+- **stale** — disproved; the fact is the commit, file or issue state
+  that disproves it;
+- **superseded** — a named sibling memory says it better;
+- **repo-bound** — a durable project or convention fact that belongs
+  in a committed doc; the fact names the doc;
+- **keep** — about the operator or how to work, not derivable from
+  the repo. `feedback` memories are always kept.
+
+**`first: true` is the full cull**: every memory, `keep` verdicts
+included, uncapped. Later runs are incremental: the ten strongest
+non-keep verdicts.
+Record the run whatever the yield:
+
+```sh
+python3 .claude/tools/memory_scan_gate.py judge-record <memory-dir>
+```
+
+The verdicts join step 4's ask. **Repo-bound** items are filed first
+as **one** `Claude:` docs task per run (Backlog, no milestone; one
+part per memory with its target doc and the claim to land), so a
+ticked repo-bound memory is deleted only once its fact is queued for
+a committed doc.
+
+## 4. The destructive ask
 
 The morning's one destructive question, asked once, here (ruling
-16). A past rename of sessions and worktrees deleted live work on a
-rule that looked deterministic, so no pass applies these unasked.
+16). Worktrees and branches are no longer in it: step 1 pruned them.
 Gather, each with one call:
-
-- **Finished worktrees and stray branches** — the prune step's
-  would-remove names, each with its `ahead` line (commits beyond
-  `origin/main`, and the tip):
-
-  ```sh
-  python3 .claude/tools/upkeep.py prune --json
-  ```
-
-  It is a dry run. Its names' issues are completed or canceled, so
-  the apply lifts the unpushed and dirty-tree holds — only a live
-  session's lock still holds a tree. So a name with commits ahead is
-  worth a look before a yes, and its tip is the only restore handle
-  (`git branch <name> <tip>`) once deleted; say it beside the name. A
-  held-back name (`skipped`) is reported, never asked.
 
 - **The transcript purge** — `purge-conversations` steps 1–3 (the
   open-PR join, then its dry-run manifest), reading every named tag
   as that skill says.
 
 - **The upkeep report's other destructive items**, from the
-  section in context: allowlist cruft, permission-refresh
-  candidates and stale memories, when listed.
+  section in context: allowlist cruft and permission-refresh
+  candidates, when listed.
+
+- **Memories**, from step 3 on a judge day: each verdict with its
+  fact beside the name (on the first run, the whole set).
 
 Then **one `AskUserQuestion` call**, one question per category with
-something in it (none for an empty one): the prune names, one per
-line with their counts; the purge's total and its named tags; and a
-`multiSelect` over the report's items. The recommended answer first.
-Apply only what is ticked:
+something in it (none for an empty one): the purge's total and its
+named tags; a `multiSelect` over the report's items; and the first
+page of memories. The recommended answer first. **Memories page**:
+a question holds at most four options and a call four questions, so
+each memory question is a `multiSelect` of four, the label the file
+name and the description `<verdict> — <fact>`, a non-keep verdict
+being the recommended tick. Fill the first call's spare questions
+with memory pages, then ask further calls of four pages each until
+every memory has been shown. Apply only what is ticked:
 
-- **Prune**: `python3 .claude/tools/upkeep.py prune --apply` —
-  same rule, same gates, recomputed at apply time, so it is the whole
-  set or nothing. Say what it removed (with each tip) and what it
-  held back, and name loudly any removed name the ask did not show —
-  its tip in the output is then its only record.
 - **Purge**: `purge-conversations` step 4's apply, this yes its
   approval, then its step 5 report.
 - **Allowlist cruft**: remove the approved entries from
@@ -206,12 +261,12 @@ Apply only what is ticked:
   exit-code-only parse check.
 - **Permission-refresh candidates**: `allowlist.py add` per approved
   rule.
-- **Stale memories**: delete each approved memory file **and** its
-  `MEMORY.md` pointer.
+- **Memories**: delete each ticked memory file **and** its
+  `MEMORY.md` pointer, then say the index's new line count.
 
 Nothing to ask in any category: say so in one line and skip the ask.
 
-## 4. The tail
+## 5. The tail
 
 In order, unprompted:
 
@@ -228,9 +283,12 @@ once-per-day dispatch rule.
 
 ## Notes
 
-- **Writes only to Linear**: the fold's batches, folds and
-  rejections. No state write on any other issue, no edges, no
-  priorities, no Planning-document write — the document is the
-  scheduler's.
+- **Writes to Linear** only the fold's batches, folds and
+  rejections and the memory judge's docs task. No state write on any
+  other issue, no edges, no priorities, no Planning-document write —
+  the document is the scheduler's. Locally, unasked, it prunes
+  finished worktrees and writes the fold and judge stamps; every
+  other deletion — memories, the purge, allowlist entries — waits on
+  the operator's tick.
 - **Shell discipline** (`docs/conventions/shell-commands.md`): every
   command is one bare call.
