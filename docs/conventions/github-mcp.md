@@ -532,6 +532,27 @@ and CI never runs that). Keep it out of the **ruleset** — adding it
 there would recreate the exact merge-queue exposure it was built to
 remove.
 
+**`Explorer image` is non-required by construction.** It runs on
+`pull_request` behind a trigger-level `paths` filter, so most PRs never
+emit the context at all; made required, it would leave those PRs
+pending forever and hang the queue (the hazard the `changes` job in
+`test.yml` is designed around). Keep it out of the ruleset too.
+
+### Token permissions
+
+Every job names a `permissions:` block (`semantic-pr.yml` at workflow
+level), so no job inherits the repository's default `GITHUB_TOKEN`
+grant (which a session token cannot read:
+`actions/permissions/workflow` returns 403). The grants are
+`contents: read` and `pull-requests: read` (`Detect changes`,
+`Semantic PR`), with **one non-read grant**: `actions: write` on the
+three toolchain jobs (`Tests`, `Tests (no teardown)`,
+`Tests (asm parity)`). It lets the `install-toolchain` action delete a
+cache entry that restored incomplete, so the run that reinstalls
+republishes a good entry rather than leaving a poisoned one; the probe
+spends it only on a push to `main`. A new job adds its own block at
+the narrowest grant it uses.
+
 ### Forks get no secrets — so a secret-dependent required check is fork-hostile
 
 A `pull_request` run from a fork receives **no secrets**. This is a

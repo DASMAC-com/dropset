@@ -2,6 +2,11 @@
 jobs:
   sdk:
     name: 'SDK'
+    # Checkout is the only GITHUB_TOKEN consumer; pin it rather than inherit
+    # the repository default, since pnpm and cargo run third-party install and
+    # build scripts here.
+    permissions:
+      contents: 'read'
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'

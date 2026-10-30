@@ -7,6 +7,11 @@ jobs:
     env:
       CONFIG_PATH: 'cfg/pre-commit-lint.yml'
     name: 'Lint'
+    # Checkout is the only GITHUB_TOKEN consumer; pin it rather than inherit
+    # the repository default, since pnpm, pip and pre-commit run third-party
+    # install scripts here.
+    permissions:
+      contents: 'read'
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
