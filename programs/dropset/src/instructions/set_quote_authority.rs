@@ -54,7 +54,7 @@ impl SetQuoteAuthority {
         // delegation passes their own pubkey, not a default sentinel.
         require!(
             !address_eq(&new_authority, &Address::default()),
-            DropsetError::Unauthorized
+            DropsetError::ZeroAddress
         );
 
         // Validate the target vault through an immutable borrow before

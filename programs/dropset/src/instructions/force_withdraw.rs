@@ -363,7 +363,7 @@ impl ForceWithdrawLeader {
         // can never be redirected to the calling admin.
         require!(
             address_eq(&leader, &leader_addr),
-            DropsetError::Unauthorized
+            DropsetError::LeaderAccountMismatch
         );
 
         // An empty (created-but-never-seeded) vault still occupies a

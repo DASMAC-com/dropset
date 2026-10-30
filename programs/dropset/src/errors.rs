@@ -150,4 +150,8 @@ pub enum DropsetError {
     SamePerfFeeRate,
     #[msg("vault sector is occupied by a different vault than expected (seq mismatch)")]
     VaultSeqMismatch,
+    #[msg("pubkey argument is the zero address, which no key can sign for")]
+    ZeroAddress,
+    #[msg("supplied leader account is not the vault's leader")]
+    LeaderAccountMismatch,
 }

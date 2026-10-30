@@ -207,6 +207,12 @@ pub enum DropsetError {
     /// 6064 - vault sector is occupied by a different vault than expected (seq mismatch)
     #[error("vault sector is occupied by a different vault than expected (seq mismatch)")]
     VaultSeqMismatch = 0x17B0,
+    /// 6065 - pubkey argument is the zero address, which no key can sign for
+    #[error("pubkey argument is the zero address, which no key can sign for")]
+    ZeroAddress = 0x17B1,
+    /// 6066 - supplied leader account is not the vault's leader
+    #[error("supplied leader account is not the vault's leader")]
+    LeaderAccountMismatch = 0x17B2,
 }
 
 impl From<DropsetError> for solana_program_error::ProgramError {

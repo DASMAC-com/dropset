@@ -119,7 +119,7 @@ impl CreateVault {
         // pubkey when the caller wants "no separate delegation".
         require!(
             !address_eq(&quote_authority, &Address::default()),
-            DropsetError::Unauthorized
+            DropsetError::ZeroAddress
         );
 
         // Cap check before doing any work.

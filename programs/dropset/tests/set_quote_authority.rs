@@ -187,7 +187,7 @@ fn rejects_zero_address() {
     let err = f
         .set_quote_authority(&leader, 0, Pubkey::default())
         .expect_err("the zero address must be rejected");
-    common::assert_program_error(&err, dropset::DropsetError::Unauthorized);
+    common::assert_program_error(&err, dropset::DropsetError::ZeroAddress);
     assert_eq!(
         f.vault(0).quote_authority,
         leader.pubkey().to_bytes().into()
