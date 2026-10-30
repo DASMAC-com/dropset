@@ -172,10 +172,37 @@ pub struct CeremonyPrompt {
 const MAX_CONFIRM_CHARS: usize = 8;
 
 /// Whether the loop should keep running.
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 enum Flow {
     Continue,
     Quit,
+    /// A quit held back by a warning the operator has not yet seen.
+    Held,
+}
+
+/// The two-press quit: a quit with a warning to give is held once, and the
+/// next quit — with no other key between — exits anyway.
+#[derive(Default)]
+struct QuitGuard {
+    warned: bool,
+}
+
+impl QuitGuard {
+    /// The warning this quit is held back with, or `None` to exit. `warning`
+    /// runs only on a first quit, never on the second press.
+    fn quit(&mut self, warning: impl FnOnce() -> Option<String>) -> Option<String> {
+        if std::mem::take(&mut self.warned) {
+            return None;
+        }
+        let held = warning();
+        self.warned = held.is_some();
+        held
+    }
+
+    /// Re-arm the warning: a key other than quit came between.
+    fn stand_down(&mut self) {
+        self.warned = false;
+    }
 }
 
 /// The whole TUI.
@@ -269,6 +296,8 @@ pub struct App {
     pub(crate) rotate_prompt: Option<RotatePrompt>,
     /// The open ceremony prompt, if any — takes every keystroke while open.
     pub(crate) ceremony_prompt: Option<CeremonyPrompt>,
+    /// The kept-writer warning's hold on the quit (see [`App::request_quit`]).
+    quit: QuitGuard,
     /// Each market's posture: an active one is seeded for and run by its
     /// maker bot, a passive one is seeded with the passive book and never
     /// spawns one. `P` flips the selected market's.
@@ -389,6 +418,7 @@ impl App {
             name_prompt: None,
             rotate_prompt: None,
             ceremony_prompt: None,
+            quit: QuitGuard::default(),
             postures,
             bots: BotManager::new(),
             takers: BotManager::new(),
@@ -462,6 +492,14 @@ impl App {
                 }
                 if flow == Flow::Quit {
                     break;
+                }
+                // Drop the rest of a burst a warning held the quit in — a
+                // second `q` typed during the balance reads must not exit
+                // before the warning is drawn.
+                if flow == Flow::Held {
+                    while event::poll(Duration::ZERO)? {
+                        event::read()?;
+                    }
                 }
             }
 
@@ -672,9 +710,14 @@ impl App {
             return Flow::Continue;
         }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        if matches!(k.code, KeyCode::Char('q') | KeyCode::Esc)
+            || (ctrl && k.code == KeyCode::Char('c'))
+        {
+            return self.request_quit();
+        }
+        // Any other key stands a held quit down: only two quits in a row exit.
+        self.quit.stand_down();
         match k.code {
-            KeyCode::Char('q') | KeyCode::Esc => return Flow::Quit,
-            KeyCode::Char('c') if ctrl => return Flow::Quit,
             KeyCode::Char('j') | KeyCode::Down => self.menu_step(1),
             KeyCode::Char('k') | KeyCode::Up => self.menu_step(-1),
             // Book selector — cycle which market's book and accounts show.
@@ -751,6 +794,36 @@ impl App {
             _ => {}
         }
         Flow::Continue
+    }
+
+    /// Quit — unless a writer kept after a failed handoff still holds
+    /// lamports and this is the first quit since. Then warn with its balance,
+    /// select "Close stranded buffers" so Enter retries the sweep, and stay; a
+    /// second quit in a row exits anyway. Exiting drops the writer's key, the
+    /// only one that can move what it holds. A writer mid-retry counts too.
+    /// The balance reads block, at most the client's 2 s timeout each.
+    fn request_quit(&mut self) -> Flow {
+        let (stranded, client) = (&self.ctx.stranded, &self.client);
+        let held = self.quit.quit(|| {
+            let writers: Vec<_> = stranded
+                .addresses()
+                .into_iter()
+                .map(|(_, writer)| (writer, client.get_balance(&writer).ok()))
+                .collect();
+            crate::publish::exit_warning(&writers, stranded.retrying())
+        });
+        let Some(warning) = held else {
+            return Flow::Quit;
+        };
+        if let Some(i) = self
+            .menu_entries()
+            .iter()
+            .position(|a| *a == Action::CloseBuffers)
+        {
+            self.menu.select(Some(i));
+        }
+        self.log(LogKind::Err, warning);
+        Flow::Held
     }
 
     /// Move the market selection by `delta`, wrapping across the discovered
@@ -2292,10 +2365,31 @@ fn classify_basis_line(line: &str) -> Option<(String, BasisNote)> {
 mod tests {
     use super::{
         classify_basis_line, hit_target, is_confirmation, parse_positive_amount, swap_side_label,
-        Action, BasisNote, SwapSide,
+        Action, BasisNote, QuitGuard, SwapSide,
     };
     use ratatui::layout::Rect;
     use solana_pubkey::Pubkey;
+
+    /// A warned quit is held once, the next quit exits without reading the
+    /// warning again, and any key between re-arms it.
+    #[test]
+    fn a_warned_quit_exits_only_on_the_next_press() {
+        let mut guard = QuitGuard::default();
+        let warn = || Some("kept writer".to_string());
+        // Nothing to warn about: the first press exits.
+        assert_eq!(guard.quit(|| None), None);
+        // Held, then the second press exits without calling the warning.
+        assert_eq!(guard.quit(warn).as_deref(), Some("kept writer"));
+        assert_eq!(
+            guard.quit(|| unreachable!("read on the second press")),
+            None
+        );
+        // Another key between the presses re-arms the hold.
+        assert!(guard.quit(warn).is_some());
+        guard.stand_down();
+        assert!(guard.quit(warn).is_some());
+        assert_eq!(guard.quit(warn), None);
+    }
 
     /// The shape the parser actually receives at runtime: `bot::stream` prepends
     /// `[<symbol>] ` to every child line, so the marker sits mid-line rather than

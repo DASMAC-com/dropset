@@ -69,6 +69,7 @@ use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::{pubkey, Pubkey};
 use solana_signer::Signer;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -432,11 +433,17 @@ fn holds(code: &[u8], bytes: &[u8]) -> bool {
 /// The writers whose handoff ran out of retries this session, each with the
 /// buffer it still holds. Held in memory only — a writer's secret is never
 /// persisted — and shared by every job, so [`close_buffers`] can retry the
-/// handoff a failed [`publish`] gave up on.
+/// handoff a failed [`publish`] gave up on. The count is of the writers a
+/// retry has out of the store, so a quit mid-retry still knows they exist.
 #[derive(Clone, Default)]
-pub struct Stranded(Arc<Mutex<Vec<(Pubkey, Keypair)>>>);
+pub struct Stranded(Arc<Mutex<Vec<(Pubkey, Keypair)>>>, Arc<AtomicUsize>);
 
 impl Stranded {
+    /// How many kept writers a running retry holds outside the store.
+    pub fn retrying(&self) -> usize {
+        self.1.load(Ordering::SeqCst)
+    }
+
     /// Keep `writer`, which still holds `buffer` or lamports, for a retry.
     pub fn keep(&self, buffer: Pubkey, writer: Keypair) {
         self.lock().push((buffer, writer));
@@ -456,16 +463,14 @@ impl Stranded {
     /// lands, which puts every one not yet handed back into the store again
     /// even on a panic.
     fn hand_back(&self, client: &RpcClient, admin: &Pubkey, log: &Logger) -> Result<usize> {
-        let mut retrying = Retrying {
-            store: self,
-            pending: std::mem::take(&mut *self.lock()),
-        };
+        let mut retrying = Retrying::take(self);
         let (mut handed, mut first, mut i) = (0, None, 0);
         while i < retrying.pending.len() {
             let (buffer, writer) = &retrying.pending[i];
             match hand_off(client, buffer, writer, admin, log) {
                 Ok(_) => {
                     retrying.pending.remove(i);
+                    self.1.fetch_sub(1, Ordering::SeqCst);
                     handed += 1;
                 }
                 Err(e) => {
@@ -482,6 +487,32 @@ impl Stranded {
     }
 }
 
+/// The one-line warning a quit gets while a kept writer still holds lamports,
+/// given each kept writer and its balance (`None` when the read failed, which
+/// warns too — an unread balance may be a stranded one), and how many a
+/// running retry holds outside the store. `None` when every writer was swept
+/// or none was kept, so the quit goes through.
+pub fn exit_warning(writers: &[(Pubkey, Option<u64>)], retrying: usize) -> Option<String> {
+    let held: Vec<_> = writers.iter().filter(|(_, b)| *b != Some(0)).collect();
+    let Some((writer, balance)) = held.first() else {
+        return (retrying > 0).then(|| {
+            format!(
+                "{retrying} kept writer(s) are mid-retry in \"Close stranded buffers\" — exiting \
+                 before it lands abandons them. Quit again to exit anyway."
+            )
+        });
+    };
+    let balance = balance.map_or("an unread balance".to_string(), sol);
+    let more = match held.len() {
+        1 => String::new(),
+        n => format!(" (and {} more)", n - 1),
+    };
+    Some(format!(
+        "Kept writer {writer} still holds {balance}{more} — exiting abandons it. Enter retries \
+         the sweep (\"Close stranded buffers\"); quit again to exit anyway."
+    ))
+}
+
 /// The writers [`Stranded::hand_back`] holds outside the lock, returned to the
 /// store when it drops — on success, failure or unwind alike.
 struct Retrying<'a> {
@@ -489,9 +520,22 @@ struct Retrying<'a> {
     pending: Vec<(Pubkey, Keypair)>,
 }
 
+impl<'a> Retrying<'a> {
+    /// Take every writer out of `store`, counted as retrying until returned.
+    fn take(store: &'a Stranded) -> Self {
+        let mut kept = store.lock();
+        store.1.store(kept.len(), Ordering::SeqCst);
+        let pending = std::mem::take(&mut *kept);
+        drop(kept);
+        Self { store, pending }
+    }
+}
+
 impl Drop for Retrying<'_> {
     fn drop(&mut self) {
-        self.store.lock().append(&mut self.pending);
+        let mut kept = self.store.lock();
+        kept.append(&mut self.pending);
+        self.store.1.store(0, Ordering::SeqCst);
     }
 }
 
@@ -1079,15 +1123,45 @@ mod tests {
         // A retry that unwinds before any handoff lands drops its guard,
         // which returns every writer it took.
         let taken = std::panic::catch_unwind(|| {
-            let _retrying = Retrying {
-                store: &stranded,
-                pending: std::mem::take(&mut *stranded.lock()),
-            };
+            let _retrying = Retrying::take(&stranded);
             assert!(stranded.addresses().is_empty());
             panic!("a handoff panicked");
         });
         assert!(taken.is_err());
         assert_eq!(stranded.addresses(), pairs);
+    }
+
+    #[test]
+    fn a_quit_warns_only_while_a_kept_writer_holds_lamports() {
+        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        // None kept, or every kept writer swept: the quit goes through.
+        assert_eq!(exit_warning(&[], 0), None);
+        assert_eq!(exit_warning(&[(a, Some(0)), (b, Some(0))], 0), None);
+        // A writer still funded names itself and its balance.
+        let warning = exit_warning(&[(a, Some(0)), (b, Some(LAMPORTS_PER_SOL))], 0).unwrap();
+        assert!(warning.contains(&b.to_string()) && warning.contains("1.0000 SOL"));
+        assert!(!warning.contains("more"));
+        // An unread balance warns too, and a second held writer is counted.
+        let warning = exit_warning(&[(a, None), (b, Some(1))], 0).unwrap();
+        assert!(warning.contains(&a.to_string()) && warning.contains("an unread balance"));
+        assert!(warning.contains("(and 1 more)"));
+        // Writers out of the store for a retry warn though none reads as kept.
+        assert!(exit_warning(&[], 2)
+            .unwrap()
+            .contains("2 kept writer(s) are mid-retry"));
+    }
+
+    #[test]
+    fn a_retry_counts_the_writers_it_holds_until_it_returns_them() {
+        let stranded = Stranded::default();
+        stranded.keep(Pubkey::new_unique(), Keypair::new());
+        stranded.keep(Pubkey::new_unique(), Keypair::new());
+        assert_eq!(stranded.retrying(), 0);
+        let retrying = Retrying::take(&stranded);
+        assert!(stranded.addresses().is_empty());
+        assert_eq!(stranded.retrying(), 2);
+        drop(retrying);
+        assert_eq!((stranded.addresses().len(), stranded.retrying()), (2, 0));
     }
 
     #[test]
