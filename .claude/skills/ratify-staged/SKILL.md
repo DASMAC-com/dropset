@@ -96,6 +96,12 @@ session resumed after dying mid-review needs only that number.
 approves every one not passed to `--cancel` — and `gate` judges them
 all and names the set it resolved. `--parent` excludes `--ids`, and a
 parent with no sub-issues is refused rather than read as a clear gate.
+`ask --parent` records the children it carried, and `approve --parent`
+refuses the batch, naming each, while a child it would move is
+missing from that **last** ask's record (filed after it, or left by an
+earlier session). Ask again over them, or pass `--allow <ENG-### …>`
+naming only those the operator did review; never `--allow` a child
+just to clear the refusal.
 
 Build the ask from the filed ids — never compose it by hand:
 

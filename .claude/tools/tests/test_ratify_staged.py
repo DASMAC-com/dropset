@@ -12,8 +12,10 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -200,6 +202,12 @@ class _RunBase(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()
         self.addCleanup(patcher.stop)
+        records = tempfile.TemporaryDirectory()
+        self.addCleanup(records.cleanup)
+        self.records = Path(records.name)
+        patcher = mock.patch.object(rs, "ask_record_dir", lambda: self.records)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _run(self, fake, argv):
         out = io.StringIO()
@@ -310,8 +318,13 @@ class ParentRunTests(_RunBase):
             out.splitlines(), ["APPROVED ENG-2 | Task 2", "APPROVED ENG-3 | Task 3"]
         )
 
+    def _asked(self, fake):
+        """``fake`` after the review ask over ENG-9's staged children."""
+        self._run(fake, ["ask", "--parent", "ENG-9"])
+        return fake
+
     def test_approve_moves_every_staged_sub_issue_not_canceled(self):
-        fake = self._set()
+        fake = self._asked(self._set())
         code, _ = self._run(fake, ["approve", "--parent", "ENG-9", "--cancel", "ENG-3"])
         self.assertEqual(code, 0)
         self.assertEqual(
@@ -337,10 +350,102 @@ class ParentRunTests(_RunBase):
         fake = FakeLinear(
             [_issue(2), _issue(4, milestone=None)], parents={"ENG-9": [2, 4]}
         )
-        code, out = self._run(fake, ["approve", "--parent", "ENG-9"])
+        code, out = self._run(self._asked(fake), ["approve", "--parent", "ENG-9"])
         self.assertEqual(code, 0)
         self.assertIn("SKIPPED ENG-4", out)
         self.assertEqual([w[0] for w in fake.writes], ["uuid-2"])
+
+    def test_approve_refuses_a_child_the_last_ask_did_not_carry(self):
+        fake = self._asked(self._set())
+        # ENG-4 is filed under the parent after the ask went out.
+        fake.issues[4] = _issue(4)
+        fake.parents["ENG-9"].append(4)
+        with self.assertRaisesRegex(
+            RatifyError, "the last ask did not carry: ENG-4; ask over them"
+        ):
+            self._run(fake, ["approve", "--parent", "ENG-9"])
+        self.assertEqual(fake.writes, [])
+        code, _ = self._run(fake, ["approve", "--parent", "ENG-9", "--allow", "4"])
+        self.assertEqual(code, 0)
+        self.assertEqual([w[0] for w in fake.writes], ["uuid-2", "uuid-3", "uuid-4"])
+
+    def test_approve_with_no_recorded_ask_refuses_every_staged_child(self):
+        fake = self._set()
+        with self.assertRaisesRegex(
+            RatifyError, "no ask --parent ENG-9 is recorded.*: ENG-2, ENG-3"
+        ):
+            self._run(fake, ["approve", "--parent", "ENG-9", "--dry-run"])
+        self.assertEqual(fake.writes, [])
+
+    def test_only_the_last_ask_counts(self):
+        fake = self._asked(self._set())
+        # A later round carried only ENG-3, say after ENG-2 was fully reviewed
+        # by hand; the record is that round's, so ENG-2 needs --allow.
+        fake.issues[2] = _issue(2, milestone="Other")
+        self._run(fake, ["ask", "--parent", "ENG-9"])
+        fake.issues[2] = _issue(2)
+        with self.assertRaisesRegex(RatifyError, "did not carry: ENG-2;"):
+            self._run(fake, ["approve", "--parent", "ENG-9"])
+        self.assertEqual(
+            json.loads((self.records / "ratify-ask-ENG-9.json").read_text()),
+            {"parent": "ENG-9", "ids": ["ENG-3"]},
+        )
+
+    def test_a_cancel_of_an_unasked_child_needs_no_allow(self):
+        fake = self._asked(self._set())
+        fake.issues[4] = _issue(4)
+        fake.parents["ENG-9"].append(4)
+        code, _ = self._run(fake, ["approve", "--parent", "ENG-9", "--cancel", "ENG-4"])
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.writes[-1][1]["stateId"], "s-Canceled")
+
+    def test_a_bare_number_cancel_is_accepted_on_the_parent_path(self):
+        fake = self._asked(self._set())
+        code, _ = self._run(fake, ["approve", "--parent", "ENG-9", "--cancel", "3"])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.writes,
+            [
+                ("uuid-2", {"projectMilestoneId": None, "stateId": "s-Todo"}),
+                ("uuid-3", {"projectMilestoneId": None, "stateId": "s-Canceled"}),
+            ],
+        )
+
+    def test_allow_is_refused_off_the_parent_path_and_outside_the_set(self):
+        fake = self._asked(self._set())
+        with self.assertRaisesRegex(RatifyError, "pass it with --parent"):
+            self._run(fake, ["approve", "--ids", "ENG-2", "--allow", "ENG-2"])
+        with self.assertRaisesRegex(RatifyError, "--allow names ids .*: ENG-7"):
+            self._run(fake, ["approve", "--parent", "ENG-9", "--allow", "ENG-7"])
+        self.assertEqual(fake.writes, [])
+
+    def test_an_unknown_parent_is_the_tools_own_error(self):
+        """Live Linear answers an unknown id with a GraphQL error."""
+
+        def not_found(api_key, query, variables):
+            raise board_batch.BoardBatchError("Linear GraphQL error: Entity not found")
+
+        out = io.StringIO()
+        with mock.patch("board_batch._post", not_found), redirect_stdout(out):
+            with self.assertRaisesRegex(RatifyError, r"^parent ENG-8: no such issue$"):
+                rs.run(["approve", "--parent", "ENG-8"])
+        err = io.StringIO()
+        argv = ["ratify_staged.py", "approve", "--parent", "ENG-8"]
+        with (
+            mock.patch("board_batch._post", not_found),
+            mock.patch("sys.argv", argv),
+            mock.patch("sys.stderr", err),
+        ):
+            self.assertEqual(rs.main(), 2)
+        self.assertEqual(err.getvalue(), "ratify_staged: parent ENG-8: no such issue\n")
+
+    def test_any_other_board_error_still_surfaces(self):
+        def broken(api_key, query, variables):
+            raise board_batch.BoardBatchError("Linear API returned HTTP 500: boom")
+
+        with mock.patch("board_batch._post", broken):
+            with self.assertRaisesRegex(board_batch.BoardBatchError, "HTTP 500"):
+                rs.run(["gate", "--parent", "ENG-8"])
 
     def test_approve_refuses_a_cancel_outside_the_set(self):
         fake = self._set()
