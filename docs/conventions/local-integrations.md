@@ -2742,17 +2742,17 @@ a terminal closed outright, is covered by the next morning's digest.
   switch means a fresh worktree. It was once pinned to anthropic
   because a pre-marker worktree always resumed there.
 
-- **`explore resume <name>` is RETIRED** — the verb now prints a
+- **`explore resume` is RETIRED** — the verb now prints a
   one-line pointer to the plain form rather than launching. Two reasons,
   and the second is the substantive one. It became a pure synonym once
-  `explore <name>` gained idempotency; and it could never resume
+  `explore` gained idempotency; and it could never resume
   deterministically anyway, because **a bare name pre-filters the
   interactive picker** — `-r/--resume` matches on session *ID*, and a
   name is not one, so it meant "pick from a list". That is the same
   underlying fact that made the old planning verb wrong, and it is why
   `plan` / `architect` compute an id of their own.
-  `explore` now computes one too, from its name, so the wart is gone
-  rather than documented.
+  `explore` now computes one too, from its issue number, so the wart is
+  gone rather than documented.
 
 - **`chore [anthropic|bedrock] <n>`** — start **or resume** a chore
   session on issue `n`, on the **helper** tier: the base checkout and
@@ -3224,8 +3224,8 @@ sessions (`task` / `task resume`) run one deterministic spec to completion and
 are addressed by their Linear number; the **daily standing** session (`plan`)
 runs in the base repo, recurs daily, and is addressed by the day
 they started. `architect` and `explore` are a third kind and fit neither row —
-they take a worktree like the first but are addressed by **topic** (or, for an
-issue-keyed explore task, by its number) and are idempotent like the second.
+they take a worktree and are addressed by their Linear number like the first,
+and are idempotent like the second.
 
 ### Driving a headless browser — the two paths that are not guessable
 

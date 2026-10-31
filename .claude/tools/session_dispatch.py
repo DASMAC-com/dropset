@@ -131,9 +131,14 @@ def validate(argv: list[str]) -> list[str]:
                 return ["task", "resume"]
             if len(rest) != 1 or not _TAG.match(rest[0]):
                 raise ValueError(f"`task {sub}` takes one eng-### tag or number")
+            # The shell refuses 0 at launch, as it does on `explore` below.
+            if sub != "resume" and re.fullmatch(r"(?:eng-)?0+", rest[0], re.ASCII):
+                raise ValueError("`task` needs a real issue number; 0 is not one")
             return ["task", sub, rest[0]]
         if len(args) != 1 or not _TAG.match(args[0]):
             raise ValueError("`task` takes one eng-### tag or number")
+        if re.fullmatch(r"(?:eng-)?0+", args[0], re.ASCII):
+            raise ValueError("`task` needs a real issue number; 0 is not one")
         return ["task", args[0]]
 
     if verb == "explore":

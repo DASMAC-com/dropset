@@ -186,6 +186,14 @@ class Grammar(unittest.TestCase):
         with self.assertRaises(ValueError):
             session_dispatch.validate(["task", "main"])
 
+    def test_task_rejects_zero_like_the_shell_does(self):
+        """The shell refuses `task 0` at launch, so a dispatch typing it would
+        open a tab onto that refusal."""
+        for argv in (["task", "0"], ["task", "eng-0"], ["task", "anthropic", "00"]):
+            with self.subTest(argv=argv):
+                with self.assertRaises(ValueError):
+                    session_dispatch.validate(argv)
+
     def test_explore_refuses_a_worded_name(self):
         """The free-form `explore <name>` is retired with `task`'s worded tag:
         a worktree is named for its issue, so the shell refuses a word and a
