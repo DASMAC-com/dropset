@@ -121,7 +121,10 @@ it's a DRY helper that `review-pr` **calls** for the final PR title and
 body (its steps 13–14). It stays independently runnable (still
 user- and model-invocable), but the flow never offers it on its own;
 `init-pr` seeds only the bare `ENG-###` title + empty body, and
-`review-pr` owns the title/body from there.
+`review-pr` owns the title/body from there. A rebase and a lease push
+are routine development on a multi-session fleet, so the session
+resolves its own conflicts and the operator is never asked to rebase
+(operator direction, 2026-10-30).
 
 - **Skill-to-skill handoffs prompt via `AskUserQuestion` with a
   recommended default.** Wherever one skill hands off to another, or a

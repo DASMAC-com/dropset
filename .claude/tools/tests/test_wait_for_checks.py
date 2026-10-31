@@ -3137,5 +3137,197 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(json.loads(buf.getvalue())["pr"], 9)
 
 
+CONFLICT_READ = {
+    "mergeable": "CONFLICTING",
+    "merge_state_status": "DIRTY",
+    "head": "a" * 40,
+    "base": "main",
+    "error": None,
+}
+UNKNOWN_READ = {
+    **CONFLICT_READ,
+    "mergeable": "UNKNOWN",
+    "merge_state_status": "UNKNOWN",
+}
+
+
+class ConflictWhileQueuedTests(unittest.TestCase):
+    """A live queue entry that conflicts concludes ``conflicting`` before
+    GitHub removes it — the shape one PR sat in, waiting for that removal."""
+
+    # The queue harness, borrowed rather than inherited (which would re-run
+    # every QueueWatchTests case under this class's name).
+    setUp = QueueWatchTests.setUp
+    _watch = QueueWatchTests._watch
+
+    def _settle_with(self, *reads):
+        """Stub the settle loop to answer ``reads`` in turn (the last repeats)."""
+        self.settles = []
+
+        def settle(pr, repo, retries, delay, sleep=None):
+            self.settles.append((retries, delay))
+            return dict(reads[min(len(self.settles) - 1, len(reads) - 1)]), 1
+
+        real = wfc.settle_mergeability
+        wfc.settle_mergeability = settle
+        self.addCleanup(setattr, wfc, "settle_mergeability", real)
+
+    def test_a_live_entry_that_conflicts_concludes_conflicting(self):
+        self._settle_with(CONFLICT_READ)
+        dirty = {**snap(entry=QUEUED), "mergeable": "CONFLICTING",
+                 "merge_state_status": "DIRTY"}  # fmt: skip
+        v = self._watch([snap(entry=QUEUED), dirty, snap(gql="MERGED", merged=True)])
+        self.assertEqual(v["conclusion"], "conflicting")
+        self.assertEqual(v["polls"], 2)
+        self.assertEqual(v["mergeable"], "CONFLICTING")
+        self.assertEqual(v["conflict_read"]["head"], "a" * 40)
+        # The gate's settle loop, not the cause probe's shorter one.
+        self.assertEqual(
+            self.settles, [(wfc.MERGEABLE_SETTLE_RETRIES, wfc.MERGEABLE_SETTLE_DELAY)]
+        )
+
+    def test_an_unsettled_UNKNOWN_read_is_never_a_verdict(self):
+        """GraphQL said DIRTY, but the settle loop ran out on UNKNOWN: wait on."""
+        self._settle_with(UNKNOWN_READ)
+        dirty = {**snap(entry=QUEUED), "merge_state_status": "DIRTY"}
+        v = self._watch([dirty, snap(gql="MERGED", merged=True)])
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertEqual(len(self.settles), 1)
+        self.assertNotIn("conflict_read", v)
+
+    def test_a_reused_graphql_read_is_settled_once_not_every_poll(self):
+        self._settle_with(UNKNOWN_READ)
+        dirty = {**snap(entry=QUEUED), "mergeable": "CONFLICTING"}
+        stale = {**dirty, "slow_fresh": False}
+        v = self._watch([dirty, stale, stale, snap(gql="MERGED", merged=True)])
+        self.assertEqual(v["conclusion"], "merged")
+        self.assertEqual(len(self.settles), 1)
+
+    def test_no_entry_means_no_conflict_read(self):
+        """Not queued yet (auto-merge waiting): the gate's own read owns it."""
+        self._settle_with(CONFLICT_READ)
+        dirty = {**snap(auto={"enabledAt": ENQUEUED}), "mergeable": "CONFLICTING"}
+        self._watch([dirty, snap(gql="MERGED", merged=True)])
+        self.assertEqual(self.settles, [])
+
+    def test_watch_queue_fills_base_gained_with_a_null_reason(self):
+        """Step 22's conflicting branch reads `dequeue.base_gained` either way."""
+        verdict = {
+            "pr": 285,
+            "conclusion": "conflicting",
+            "conflict_read": CONFLICT_READ,
+        }
+        gains = []
+        gain = {"base_gained": [{"sha": "8f285869abcd", "subject": "feat: x"}],
+                "base_gained_total": 1, "error": None}  # fmt: skip
+        with (
+            mock.patch.object(wfc, "wait_queue", return_value=dict(verdict)),
+            mock.patch.object(
+                wfc, "base_gain", side_effect=lambda *a: gains.append(a) or gain
+            ),
+            mock.patch.object(wfc, "dismiss_pr_notifications", return_value={}),
+        ):
+            v = wfc.watch_queue(285, "o/r", 60, 7200, since=ENQUEUED)
+        self.assertEqual(gains, [("o/r", "a" * 40, "main")])
+        self.assertIsNone(v["dequeue"]["dequeue_reason"])
+        self.assertEqual(v["dequeue"]["base_gained_total"], 1)
+        self.assertNotIn("conflict_read", v)
+
+
+class ConflictDuringCiWaitTests(unittest.TestCase):
+    """A base move under a PR-mode wait: the watch's pull read sees `dirty`,
+    ends early, and the verdict settles it before saying `conflicting`."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        real_log = wfc.log_path_for
+        wfc.log_path_for = lambda pr: Path(self._tmp.name) / f"w-{pr}.log"
+        self.addCleanup(setattr, wfc, "log_path_for", real_log)
+
+    def _wait(self, watches, checks, view):
+        """``watches``: what each watch round returns (the last repeats);
+        ``view``: the ``gh pr view`` payload; a compare names one commit."""
+        self.calls = []
+
+        def fake_gh(args):
+            self.calls.append(args)
+            if args[0] == "pr":
+                return 0, json.dumps(view), ""
+            commit = {"sha": "8f285869abcdef", "commit": {"message": "feat: x\n\nbody"}}
+            return 0, json.dumps({"ahead_by": 1, "commits": [commit]}), ""
+
+        rounds = []
+
+        def fake_watch(pr, repo, interval, timeout, log):
+            rounds.append(1)
+            return watches[min(len(rounds) - 1, len(watches) - 1)]
+
+        with (
+            mock.patch.object(wfc, "watch_checks", fake_watch),
+            mock.patch.object(wfc, "read_checks", lambda pr, repo: checks),
+            mock.patch.object(wfc, "_gh", fake_gh),
+        ):
+            return wfc.wait(285, repo="o/r", sleep=lambda _s: None)
+
+    def test_a_dirty_read_mid_wait_concludes_conflicting_with_the_base_gain(self):
+        view = {"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY",
+                "headRefOid": "a" * 40, "baseRefName": "main"}  # fmt: skip
+        v = self._wait([wfc.CONFLICT_SEEN], [check("Tests", "pending")], view)
+        self.assertEqual(v["conclusion"], "conflicting")
+        self.assertTrue(v["blocked_by_conflict"])
+        self.assertEqual(v["watch_rounds"], 1)
+        self.assertEqual(
+            v["base_gained"], [{"sha": "8f285869abcd", "subject": "feat: x"}]
+        )
+        self.assertEqual(v["base_gained_total"], 1)
+        self.assertEqual(v["hint"]["gate"], "blocking")
+        self.assertIn("compare/" + "a" * 40 + "...main", self.calls[-1][1])
+
+    def test_an_unconfirmed_dirty_read_waits_on(self):
+        """The settle read disagrees: no verdict from the REST field alone."""
+        view = {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}
+        v = self._wait([wfc.CONFLICT_SEEN, True], [check("Tests", "pass")], view)
+        self.assertEqual(v["conclusion"], "pass")
+        self.assertIsNone(v["base_gained"])
+
+    def test_the_watch_returns_at_once_on_a_dirty_pull(self):
+        log = Path(self._tmp.name) / "watch.log"
+        sleeps = []
+        gh = RecordedGh(
+            {
+                "pull": [pull(), {**pull(), "mergeable_state": "dirty"}],
+                "check_runs": [check_runs("in_progress")],
+            }
+        )
+        got = wfc.watch_checks(
+            285, "o/r", 20, 3600, log, client=wfc.Conditional(gh),
+            sleep=sleeps.append, clock=lambda: float(len(sleeps) * 20),
+        )  # fmt: skip
+        self.assertEqual(got, wfc.CONFLICT_SEEN)
+        self.assertEqual(sleeps, [20])
+        last = json.loads(log.read_text().splitlines()[-1])
+        self.assertEqual(last["mergeable_state"], "dirty")
+
+
+class QueueStateShapeTests(unittest.TestCase):
+    """Step 20's overlap read and the queue watch read one shape."""
+
+    def test_every_queue_state_field_is_in_the_watch_query(self):
+        path = Path(wfc.__file__).with_name("queue_state.graphql")
+        lines = [line.split("#")[0].strip() for line in path.read_text().splitlines()]
+        fields = [
+            line.split()[0].rstrip("{").strip()
+            for line in lines
+            if line
+            and line[0].isalpha()
+            and not line.startswith(("query", "repository", "pullRequest"))
+        ]
+        self.assertIn("mergeable", fields)
+        self.assertIn("mergeStateStatus", fields)
+        for field in fields:
+            self.assertRegex(wfc.QUEUE_QUERY, rf"\b{field}\b")
+
+
 if __name__ == "__main__":
     unittest.main()
