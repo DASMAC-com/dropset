@@ -499,8 +499,9 @@ that may have moved; check the target still exists in the shape the
 rationale describes before spending the fan-out, the same discipline a
 `trim-context` part gets.
 
-**The heartbeat is what keeps the cadence.** Every planning bootstrap
-reads the Planning document's bounded **audit-state table** — one row
+**The heartbeat is what keeps the cadence.** Every start-of-day
+bootstrap — the curator's, since 2026-10-30 (see "The curator owns
+review") — reads the Planning document's bounded **audit-state table** — one row
 per registry unit: last-audited date, finding count, and an outcome
 pointer (issue numbers) — and either files an audit issue or
 **declines with a recorded reason**. The table is **state-shaped, never
@@ -688,20 +689,35 @@ harder, never to re-park.
 ### The curator owns review
 
 Everything between Backlog and Todo belongs to the **curator**, a daily
-advisor-tier session in the base repo (the `curate` skill, dispatched by
-the launcher each morning or by hand with `curate`). It has no governing issue:
-it runs every day, named by its date. The division of labour:
+advisor-tier session in the base repo (the `curate` skill, opened by the
+fresh-day `plan` pre-launch each morning or by hand with `curate`). It has
+no governing issue: it runs every day, named by its date. The division of
+labour, cut for load (2026-10-30):
 
-- **The curator judges** — what to promote, kill or merge.
-- **The scheduler schedules** — the `plan` session owns dispatch,
-  holds and the direction after Todo, and owns the Planning document.
+- **The curator judges and bootstraps** — what to promote, kill or
+  merge; the start-of-day bootstrap (landings, the board, Next and the
+  holds, the parked counts, the audit heartbeat, a first cut of the
+  collision clusters), which rewrites the Planning document to the state
+  of play — its only document write — and ends in
+  `state of play written`; and the ruling on a rebase whose two intents
+  cannot both stand, messaged to the scheduler when it changes an
+  in-flight issue's scope.
+- **The scheduler schedules** — the `plan` session warm-boots from that
+  write and owns the live day: dispatch, kick-offs, the direction, the
+  wind-down, and the Planning document after the bootstrap. A question
+  in the curator's tab never blocks a dispatch.
 - **Both hold priorities** — under the agreement rule below.
-- **The launcher starts the day** — it runs the lever fold, then
-  dispatches the curator with one hand-off message carrying the batches
-  filed and the kill and merge candidates with their evidence. The
-  curator's first ask shows those candidates as checkboxes beside the
-  inbox's first batch; a ticked kill cancels the issue with its reason,
-  a ticked merge runs `merge-tasks`.
+- **The launcher runs the mechanical morning** beside the curator — it
+  runs the lever fold, then sends the curator one hand-off message
+  carrying the batches filed and the kill and merge candidates with
+  their evidence, and opens the scheduler's tab on the curator's
+  `state of play written`. The curator's first ask shows those
+  candidates as checkboxes beside the inbox's first batch; a ticked kill
+  cancels the issue with its reason, a ticked merge runs `merge-tasks`.
+- **Every review ask runs in ascending issue number** — the ratify
+  tool sorts, for the curator's inbox and the seat sessions' staged
+  sets alike — so the operator opens a batch as tabs left to right and
+  reads the dialog top to bottom.
 
 **The pool is the un-parked Backlog**: state Backlog, no milestone,
 `[Operator]` items included. Todo means "should this be done", so an
