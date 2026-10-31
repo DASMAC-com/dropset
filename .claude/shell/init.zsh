@@ -2019,8 +2019,8 @@ _ds_task_resume() {
 # `_ds_task_resume`.
 #
 # THE `resume` TWIN IS GONE, and dropping it removes a wart rather than a
-# feature. `explore <name>` now creates the session if absent and resumes it if
-# present, so `explore resume <name>` would be a pure synonym — and the old
+# feature. `explore <n>` now creates the session if absent and resumes it if
+# present, so `explore resume <n>` would be a pure synonym — and the old
 # resume branch could not resume deterministically anyway: `-r/--resume` matches
 # on session ID, a name is not one, so a bare name PRE-FILTERED THE INTERACTIVE
 # PICKER. Keying on `_ds_topic_sid` computes an id the way `architect` does,
