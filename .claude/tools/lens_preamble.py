@@ -281,7 +281,7 @@ def compose(
             "# Standing brief for this sub-agent",
             "",
             "This file is the standing half of your brief — identical for every "
-            "sub-agent this run spawns. Your own scope follows in the prompt "
+            "sub-agent pointed at it. Your own scope follows in the prompt "
             "that pointed you here.",
         ]
     else:

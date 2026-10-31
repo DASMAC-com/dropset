@@ -1588,8 +1588,9 @@ migrations or generation inputs, and whether it spans crates.
    design question is open and the signer answers. That ratification
    authorizes both the In Review move and the enqueue, so say one line
    naming both identifiers and take the **On approve** path below.
-   **Otherwise the handoff is one `AskUserQuestion`**: it authorizes
-   both. Never advance the issue and enqueue with neither, and never
+   **Otherwise — a session with no bootstrap `[Todo]` line in context
+   included — the handoff is one `AskUserQuestion`**: it authorizes
+   both. Never advance the issue and enqueue without either, and never
    substitute a plain-text "shall I enqueue?". The only paths that
    skip both are the non-happy ones below.
 

@@ -130,7 +130,8 @@ user- and model-invocable), but the flow never offers it on its own;
   sensible default exists, put it **first** and label it
   "(Recommended)". This is the shared pattern behind the
   init-pr → review-pr handoff and review-pr's merge-queue and
-  mark-Done gates. (Session metrics is deliberately **not** a gate:
+  mark-Done gates, the first two waived for an in-band Todo task
+  (the next bullet). (Session metrics is deliberately **not** a gate:
   `review-pr` files it unprompted, just before the close question.)
 - **An in-band Todo task runs review and enqueue unasked.** For an
   issue the operator ratified to Todo, that ratification is the

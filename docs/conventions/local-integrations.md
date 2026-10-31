@@ -877,9 +877,9 @@ hook covers.
 
 `make hook-wiring` reports a missing deny rule as `DENY-MISSING`, the
 way it reports an unwired guard, and the upkeep pass records it as its
-own `deny-rules` line, so the daily upkeep sees either gap. It does not
-check the vault variable, which lives in the shell, not a settings
-file.
+own `deny-rules` line, so the daily upkeep sees either gap. The two
+guard variables live in the shell, not a settings file, so it reports
+them only as the informational `guard-env` line, never as a gap.
 Its rule table (`REQUIRED_DENY_RULES` in `.claude/tools/hook_wiring.py`)
 and the block above are pinned equal by `test_hook_wiring.py`; change
 both together. A rule in any of the three settings scopes counts, and
