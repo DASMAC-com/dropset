@@ -1320,8 +1320,8 @@ memory, pressure and load, and answers how many more sessions of a
 class fit: `building` or `free`, classed per verb as the dispatcher
 does ("Session helpers" → `session_dispatch.py`). Every class spends
 one ceiling on live top-level `claude` clients (a sub-agent runs inside
-its parent's process), the scheduler, curator, analyst and Claude
-subscription sessions included; a builder is further refused on the
+its parent's process), the scheduler, curator, analyst and
+advisor sessions included; a builder is further refused on the
 pool-lock wait. Swap is
 reported, never a refusal — macOS leaves a stale residue paged out long
 after the pressure behind it has gone. Every launch, and every

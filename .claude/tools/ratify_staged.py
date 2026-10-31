@@ -622,7 +622,7 @@ PARENT_ID = re.compile(r"[A-Z]+-\d+")
 
 
 def fetch_children(api_key: str, project: str, parent: str) -> list[dict]:
-    """The sub-issues of ``parent`` within the project, by number — the set a
+    """The sub-issues of ``parent`` within the project, by number — the set an
     advisor session filed with ``linear_issue.py create --parent``.
 
     This is what makes a session that died mid-review resumable from its

@@ -297,12 +297,12 @@ class Grammar(unittest.TestCase):
             with self.assertRaises(ValueError, msg=argv):
                 session_dispatch.validate(argv)
 
-    def test_curate_is_a_free_seat(self):
+    def test_curate_is_a_free_daily_role(self):
         self.assertEqual(
             session_dispatch.classify(["curate"]).cls, session_dispatch.FREE
         )
 
-    def test_analyze_validates_as_a_free_seat(self):
+    def test_analyze_validates_as_a_free_daily_role(self):
         self.assertEqual(session_dispatch.validate(["analyze"]), ["analyze"])
         self.assertEqual(
             session_dispatch.validate(["analyze", "anthropic"]),
