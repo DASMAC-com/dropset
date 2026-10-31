@@ -839,12 +839,13 @@ class Costing(unittest.TestCase):
         self.assertAlmostEqual(report["total_cost"].total(), 28.60, places=6)
 
     def test_the_fable_and_sonnet_rows(self):
-        # Both seeded at the Opus 5.5 row's 1.10x Bedrock premium over list;
-        # each cache read is its own figure, not 0.1x input. Sonnet's was
-        # verified by usage type against a settled day, Fable's not yet.
+        # Each seeded at the Opus 5.5 row's 1.10x Bedrock premium over list
+        # and verified by usage type against a settled day; Fable's and Sonnet
+        # 5.5's cache reads are their own figures, Sonnet 5's is 0.1x input.
         expected = {
-            "claude-fable-5-1": ((11.00, 55.00, 22.00, 0.275), None),
+            "claude-fable-5-1": ((11.00, 55.00, 22.00, 0.275), "2026-10-22"),
             "claude-sonnet-5-5": ((2.20, 11.00, 4.40, 0.11), "2026-10-21"),
+            "claude-sonnet-5": ((2.20, 11.00, 4.40, 0.22), "2026-10-26"),
         }
         for model, ((inp, out, write, read), verified) in expected.items():
             cost = sm.Cost.price(self.MILLION_EACH, model)
