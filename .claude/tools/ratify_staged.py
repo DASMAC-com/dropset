@@ -109,7 +109,11 @@ from its issue number alone. ``review`` and ``approve`` take the sub-issues
 still staged (``approve --parent`` approves every one not given to
 ``--cancel``, reports one an earlier run moved as ``ALREADY``, names any
 other as ``SKIPPED``, and refuses a ``--cancel`` id outside the set); ``gate``
-judges them all. A parent with no sub-issues is refused, never a vacuous
+judges them all. ``ask --parent`` records the children it carried in the base
+checkout's substrate directory, and ``approve --parent`` refuses the batch,
+naming them, while any child it would move is missing from that last record
+— one filed after the ask, or left by an earlier session — unless ``--allow``
+names it. ``--cancel`` and ``--allow`` take ``ENG-###`` or a bare number. A parent with no sub-issues is refused, never a vacuous
 ``CLEAR``, and ``--parent`` is refused on every pool but ``staged``: the
 inbox and operator pools approve by id.
 
@@ -134,6 +138,7 @@ Usage:
     python3 .claude/tools/ratify_staged.py gate --ids ENG-1 ENG-2
     python3 .claude/tools/ratify_staged.py review --parent ENG-9
     python3 .claude/tools/ratify_staged.py approve --parent ENG-9 --cancel ENG-2
+    python3 .claude/tools/ratify_staged.py approve --parent ENG-9 --allow ENG-4
     python3 .claude/tools/ratify_staged.py gate --parent ENG-9
     python3 .claude/tools/ratify_staged.py list --pool inbox
     python3 .claude/tools/ratify_staged.py ask --pool inbox --ids ENG-1 ENG-2 \\
@@ -156,8 +161,10 @@ import datetime
 import json
 import re
 import sys
+from pathlib import Path
 
 import board_batch
+import machine_load
 
 MILESTONE = "Session pending"
 # The curator's under-review mark: stamped on a batch before its ask, cleared by
@@ -619,6 +626,81 @@ query($id: String!) {
 """
 
 PARENT_ID = re.compile(r"[A-Z]+-\d+")
+NOT_FOUND = "Entity not found"
+
+
+def parent_ident(parent: str) -> str:
+    ident = parent.strip().upper()
+    if not PARENT_ID.fullmatch(ident):
+        raise RatifyError(f"--parent wants an ENG-### identifier, got {parent!r}")
+    return ident
+
+
+def ask_record_dir() -> Path:
+    """Where ``ask --parent`` records the set it carried: the base checkout's
+    substrate directory, so the record outlives a temporary worktree."""
+    return machine_load.default_state_dir()
+
+
+def ask_record_path(parent: str) -> Path:
+    return ask_record_dir() / f"ratify-ask-{parent_ident(parent)}.json"
+
+
+def write_ask_record(parent: str, ids: list[str]) -> None:
+    """Record the children the last ``ask --parent`` carried, replacing any
+    earlier round's record."""
+    path = ask_record_path(parent)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"parent": parent_ident(parent), "ids": ids}) + "\n")
+
+
+def read_ask_record(parent: str) -> list[str] | None:
+    """The ids the last ``ask --parent`` carried, or ``None`` with no record."""
+    path = ask_record_path(parent)
+    if not path.is_file():
+        return None
+    try:
+        return list(json.loads(path.read_text())["ids"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RatifyError(f"unreadable ask record {path}: {exc}") from exc
+
+
+def resolve_among(
+    raw: list[str], children: list[dict], flag: str, parent: str
+) -> list[dict]:
+    """The children ``raw`` names, by ``ENG-###`` or bare number as on the ids
+    path; one that is not a sub-issue of ``parent`` refuses the batch. Two
+    spellings of one child (``3`` and ``ENG-3``) name it once."""
+    by_number = board_batch.index_by_number(children)
+    found, stray = [], []
+    for ident in raw:
+        try:
+            issue = board_batch.resolve_issue(ident, by_number, label=flag)
+        except board_batch.BoardBatchError:
+            stray.append(ident)
+            continue
+        if issue not in found:
+            found.append(issue)
+    if stray:
+        raise RatifyError(
+            f"refusing the batch, nothing written — {flag} names ids that are "
+            f"not sub-issues of {parent_ident(parent)}: {', '.join(stray)}"
+        )
+    return found
+
+
+def not_asked(
+    moving: list[dict], asked: list[str] | None, allowed: set[str]
+) -> list[str]:
+    """The ids about to move that the last ask did not carry and ``--allow``
+    did not name: a child filed after the ask, or left by an earlier session,
+    that the operator never ticked."""
+    carried = set(asked or [])
+    return [
+        i["identifier"]
+        for i in moving
+        if i["identifier"] not in carried and i["identifier"] not in allowed
+    ]
 
 
 def fetch_children(api_key: str, project: str, parent: str) -> list[dict]:
@@ -629,10 +711,15 @@ def fetch_children(api_key: str, project: str, parent: str) -> list[dict]:
     governing issue's number alone. A parent that does not resolve, or has no
     children, is refused: an empty set would read as a vacuous ``CLEAR``.
     """
-    ident = parent.strip().upper()
-    if not PARENT_ID.fullmatch(ident):
-        raise RatifyError(f"--parent wants an ENG-### identifier, got {parent!r}")
-    issue = board_batch._post(api_key, _PARENT_QUERY, {"id": ident}).get("issue")
+    ident = parent_ident(parent)
+    try:
+        issue = board_batch._post(api_key, _PARENT_QUERY, {"id": ident}).get("issue")
+    except board_batch.BoardBatchError as exc:
+        # Linear answers an unknown id with a GraphQL error, not a null node;
+        # surface it as this tool's own refusal, not the transport's.
+        if NOT_FOUND not in str(exc):
+            raise
+        issue = None
     if not (issue or {}).get("id"):
         raise RatifyError(f"parent {ident}: no such issue")
     children = board_batch._fetch_filtered(
@@ -802,6 +889,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     approve = sub.add_parser("approve", help="the one batch write at the end")
     approve.add_argument("--cancel", nargs="+", default=[])
     approve.add_argument(
+        "--allow",
+        nargs="+",
+        default=[],
+        help="--parent only: approve these sub-issues though the last ask "
+        "--parent did not carry them (its record: ratify-ask-<parent>.json in "
+        "the base checkout's .claude/session-substrate)",
+    )
+    approve.add_argument(
         "--title",
         help="inbox only: retitle the one approved task in the same write; the "
         "leading token run must not change",
@@ -965,6 +1060,9 @@ def run(argv: list[str]) -> int:
                 "description": operator_note(base, dates, datetime.date.today()),
             }
         payload = build_ask(staged, notes, proposals, operator)
+        if parent is not None:
+            # What `approve --parent` checks its set against.
+            write_ask_record(parent, [i["identifier"] for i in staged])
         if skipped:
             payload["skipped"] = skipped
         text = json.dumps(payload, indent=2)
@@ -1020,15 +1118,20 @@ def run(argv: list[str]) -> int:
                 "--title retitles the one task an inbox approve moves — "
                 "pass it with --pool inbox and exactly one --ids"
             )
+        if args.allow and parent is None:
+            raise RatifyError(
+                "--allow admits a sub-issue the last ask did not carry — pass "
+                "it with --parent"
+            )
         if parent is not None:
             children = fetch_children(key, project, parent)
-            stray = sorted(set(cancel_ids) - {i["identifier"] for i in children})
-            if stray:
-                raise RatifyError(
-                    "refusing the batch, nothing written — --cancel names ids "
-                    f"that are not sub-issues of {parent.upper()}: {', '.join(stray)}"
-                )
-            cancel = [i for i in children if i["identifier"] in cancel_ids]
+            cancel = resolve_among(cancel_ids, children, "--cancel", parent)
+            cancel_ids = [i["identifier"] for i in cancel]
+            allow_ids = parse_ids(args.allow) if args.allow else []
+            allowed = {
+                i["identifier"]
+                for i in resolve_among(allow_ids, children, "--allow", parent)
+            }
             # Every staged sub-issue not rejected is approved — the final
             # answer covers the whole set. One an earlier run already moved
             # rides along so `plan_approval` reports it ALREADY and the same
@@ -1042,6 +1145,22 @@ def run(argv: list[str]) -> int:
                     approve.append(issue)
                 else:
                     print(f"SKIPPED {issue['identifier']} | not {POOL_WHERE[pool]}")
+            # The set was never typed, so it is held to the last ask: a child
+            # the operator never saw is not theirs to have approved.
+            asked = read_ask_record(parent)
+            unseen = not_asked([i for i in approve if in_pool(i, pool)], asked, allowed)
+            if unseen:
+                why = (
+                    f"no ask --parent {parent_ident(parent)} is recorded, so "
+                    "none was reviewed"
+                    if asked is None
+                    else "the last ask did not carry"
+                )
+                raise RatifyError(
+                    f"refusing the batch, nothing written — {why}: "
+                    f"{', '.join(unseen)}; ask over them, or pass --allow "
+                    "naming each the operator did review"
+                )
         else:
             approve = resolve_all(key, project, approve_ids) if approve_ids else []
             cancel = resolve_all(key, project, cancel_ids) if cancel_ids else []
