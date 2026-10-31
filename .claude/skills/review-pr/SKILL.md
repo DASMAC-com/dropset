@@ -1583,11 +1583,12 @@ migrations or generation inputs, and whether it spans crates.
    **For an in-band Todo task the enqueue is unasked**
    (`docs/conventions/commits-and-prs.md` → "The PR workflow and
    skill handoffs"): the issue was dispatched from Todo (the
-   bootstrap's `linear_state` step read `[Todo]`), this review ran at
-   the regular tier, the diff is at most 1,000 changed lines, no
+   bootstrap's `linear_state` step read `[Todo]`), the diff is over
+   the reduced-tier threshold and at most 1,000 changed lines, no
    design question is open and the signer answers. That ratification
-   authorizes both the In Review move and the enqueue, so say one line
-   naming both identifiers and take the **On approve** path below.
+   authorizes both the In Review move and the enqueue: run every check
+   below as usual, and where the ask would be, say one line naming
+   both identifiers instead and take the **On approve** path.
    **Otherwise — a session with no bootstrap `[Todo]` line in context
    included — the handoff is one `AskUserQuestion`**: it authorizes
    both. Never advance the issue and enqueue without either, and never
@@ -1701,7 +1702,8 @@ migrations or generation inputs, and whether it spans crates.
    covers it. A re-sign keeps the reviewed fingerprint.
 
    Then move the issue (the step-3 tag) to **In Review**, with or just
-   before the prompt — skip only if no tag resolved. A state-only write
+   before the prompt (or the in-band line) — skip only if no tag
+   resolved. A state-only write
    takes the zero-echo path
    (`docs/conventions/linear-automation.md` → "Field-only writes go
    through `board_batch.py`, not the MCP"); the session has held the
