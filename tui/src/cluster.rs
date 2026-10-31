@@ -77,16 +77,17 @@ pub enum Cluster {
 }
 
 impl Cluster {
-    /// Parse the `--cluster` value. Accepts `mainnet` and `mainnet-beta` for
-    /// the same chain, since both spellings are in common use and rejecting
-    /// one would be a pointless trap at a confirm-gated entry point. The maker
-    /// bot keeps a copy (`bots/maker-bot/src/cluster.rs`); change the two
-    /// together.
+    /// Parse the `--cluster` value with the SDK's [`Deployment`] parser, which
+    /// accepts `mainnet` and `mainnet-beta` for the same chain, since both
+    /// spellings are in common use and rejecting one would be a pointless trap
+    /// at a confirm-gated entry point.
     pub fn parse(s: &str) -> Result<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "localnet" => Ok(Cluster::Localnet),
-            "mainnet" | "mainnet-beta" => Ok(Cluster::Mainnet),
-            other => bail!("unknown cluster `{other}` (expected localnet or mainnet)"),
+        match s
+            .parse::<Deployment>()
+            .map_err(|e| anyhow!("--cluster: {e}"))?
+        {
+            Deployment::Localnet => Ok(Cluster::Localnet),
+            Deployment::Mainnet => Ok(Cluster::Mainnet),
         }
     }
 
@@ -438,8 +439,12 @@ mod tests {
         assert_eq!(Cluster::parse("mainnet").unwrap(), Cluster::Mainnet);
         assert_eq!(Cluster::parse("mainnet-beta").unwrap(), Cluster::Mainnet);
         assert_eq!(Cluster::parse("MAINNET").unwrap(), Cluster::Mainnet);
-        assert!(Cluster::parse("devnet").is_err());
         assert!(Cluster::parse("").is_err());
+        let err = Cluster::parse("devnet").unwrap_err().to_string();
+        assert!(
+            err.starts_with("--cluster: unknown cluster `devnet`"),
+            "{err}"
+        );
     }
 
     #[test]

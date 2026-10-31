@@ -13,7 +13,11 @@
 //! never by default: every instruction builder (the generated ones, rewritten
 //! by `sdk/codama/generate.mjs`, and the hand-written [`crate::quoting`] and
 //! [`crate::adapters::amm`] surfaces) takes a [`Deployment`], and PDAs are
-//! derived through the helpers here with [`Deployment::program_id`].
+//! derived through the helpers here with [`Deployment::program_id`]. An
+//! `#[event_cpi]` instruction's program and event-authority accounts follow
+//! the same deployment: the generated `<Name>Builder` defaults both from it,
+//! and every generated builder panics on an explicit account for another
+//! cluster before any instruction is built.
 //!
 //! The localnet id's secret is committed, so anyone can deploy a program at
 //! that address on a public cluster. A [`Deployment`] can never resolve to
@@ -253,6 +257,62 @@ mod tests {
                 "absent optional placeholder"
             );
         }
+    }
+
+    /// A minimal `#[event_cpi]` builder: `withdraw_leader`'s accounts plus
+    /// its args, leaving the program and event authority to the deployment.
+    fn withdraw_leader_builder() -> crate::instructions::WithdrawLeaderBuilder {
+        let key = Pubkey::new_unique();
+        let mut builder = crate::instructions::WithdrawLeaderBuilder::new();
+        builder
+            .signer(key)
+            .market(key)
+            .base_mint(key)
+            .quote_mint(key)
+            .base_token_program(key)
+            .quote_token_program(key)
+            .signer_base_ata(key)
+            .signer_quote_ata(key)
+            .market_base_treasury(key)
+            .market_quote_treasury(key)
+            .vault_idx(0)
+            .shares_in(0)
+            .min_base_out(0)
+            .min_quote_out(0);
+        builder
+    }
+
+    /// The generated builders default an `#[event_cpi]` instruction's
+    /// program and event-authority accounts from the deployment, so a
+    /// caller cannot name them for the wrong cluster by omission.
+    #[test]
+    fn builders_default_the_self_cpi_accounts_from_the_deployment() {
+        for deployment in [Deployment::Localnet, Deployment::Mainnet] {
+            let program = deployment.program_id();
+            let ix = withdraw_leader_builder().instruction(deployment);
+            let tail = &ix.accounts[ix.accounts.len() - 2..];
+            assert_eq!(tail[0].pubkey, event_authority(&program));
+            assert_eq!(tail[1].pubkey, program);
+        }
+    }
+
+    /// An explicit self-CPI account for another cluster is refused locally,
+    /// before any instruction exists, rather than by the chain after the
+    /// transaction is signed and sent.
+    #[test]
+    #[should_panic(expected = "program account is not the Mainnet program id")]
+    fn a_mismatched_explicit_program_account_is_refused() {
+        withdraw_leader_builder()
+            .program(DROPSET_ID)
+            .instruction(Deployment::Mainnet);
+    }
+
+    #[test]
+    #[should_panic(expected = "event_authority is not the Mainnet program's event authority")]
+    fn a_mismatched_explicit_event_authority_is_refused() {
+        withdraw_leader_builder()
+            .event_authority(event_authority(&DROPSET_ID))
+            .instruction(Deployment::Mainnet);
     }
 
     #[test]
