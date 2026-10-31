@@ -184,7 +184,14 @@ fn main() -> Result<()> {
         mainnet_log,
     )?;
     let ceremony_log = log_path
-        .map(|path| CeremonyLog::open(&path, &repo_root, args.cluster).map(Arc::new))
+        .map(|path| {
+            if args.rehearsal_loopback {
+                CeremonyLog::open_rehearsal(&path, &repo_root)
+            } else {
+                CeremonyLog::open(&path, &repo_root, args.cluster)
+            }
+            .map(Arc::new)
+        })
         .transpose()?;
 
     let rpc_url = args.cluster.rpc_url()?;
@@ -326,8 +333,10 @@ fn quote_address(
 /// mainnet's default `mainnet_log`, else none.
 ///
 /// A rehearsal must name its own log, and never the mainnet default: that
-/// file is the real ceremony record, and its lines carry no rehearsal mark,
-/// so a localnet signature appended there could not be told from a real one.
+/// file is the real ceremony record. The guarantee is the `rehearsal=1` mark
+/// on every rehearsal line ([`CeremonyLog::open_rehearsal`]); this path check
+/// only catches the obvious mistake, since a case variant or a `..` through a
+/// missing directory can still spell the same file.
 fn ceremony_log_path(
     cluster: Cluster,
     rehearsal_loopback: bool,
