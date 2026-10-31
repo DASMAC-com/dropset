@@ -82,10 +82,8 @@ impl Cluster {
     /// spellings are in common use and rejecting one would be a pointless trap
     /// at a confirm-gated entry point.
     pub fn parse(s: &str) -> Result<Self> {
-        match s
-            .parse::<Deployment>()
-            .map_err(|e| anyhow!("--cluster: {e}"))?
-        {
+        let deployment: Deployment = s.parse().map_err(|e| anyhow!("--cluster: {e}"))?;
+        match deployment {
             Deployment::Localnet => Ok(Cluster::Localnet),
             Deployment::Mainnet => Ok(Cluster::Mainnet),
         }

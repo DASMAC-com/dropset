@@ -51,10 +51,8 @@ impl Cluster {
     /// Parse a `--cluster` value with the SDK's [`Deployment`] parser:
     /// `localnet`, or `mainnet` / `mainnet-beta`, case-insensitively.
     pub fn parse(value: &str) -> Result<Self> {
-        match value
-            .parse::<Deployment>()
-            .map_err(|e| anyhow!("--cluster: {e}"))?
-        {
+        let deployment: Deployment = value.parse().map_err(|e| anyhow!("--cluster: {e}"))?;
+        match deployment {
             Deployment::Localnet => Ok(Cluster::Localnet),
             Deployment::Mainnet => Ok(Cluster::Mainnet),
         }

@@ -16,8 +16,8 @@
 //! derived through the helpers here with [`Deployment::program_id`]. An
 //! `#[event_cpi]` instruction's program and event-authority accounts follow
 //! the same deployment: the generated `<Name>Builder` defaults both from it,
-//! and every generated builder panics on an explicit account for another
-//! cluster before any instruction is built.
+//! and every such generated builder panics on an explicit account for
+//! another cluster before any instruction is built.
 //!
 //! The localnet id's secret is committed, so anyone can deploy a program at
 //! that address on a public cluster. A [`Deployment`] can never resolve to
