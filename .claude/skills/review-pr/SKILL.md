@@ -135,13 +135,20 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/resign_branch.py count --base <base>
    ```
 
-   - **On conflict: `git rebase --abort`, catalogue it as blocking
-     (step 7), and tell the user to resolve and re-run. Never
-     auto-resolve** — not even an adjacent insertion into a sorted
-     list, which lints clean after silently losing one side.
-     `merge_completeness.py` makes a *manual* resolution auditable and
-     never licenses an automatic one (`history.md` →
-     "Merge-completeness evidence"):
+   - **On conflict, resolve it here — the operator is never asked to
+     rebase** (`docs/conventions/commits-and-prs.md`). **Mechanical**
+     (generated families, lock files, formatting, union-merge files,
+     the sorted dictionary): resolve by the rules below, silently.
+     **Semantic** (both sides changed the same logic): resolve toward
+     both intents, read from the merged sibling's commit message and
+     issue body; step 5's lenses re-run over the resolution hunks, and
+     the summary reports it. **Irreconcilable** (both intents cannot
+     hold): `SendMessage` the live `curate` session both intents and a
+     proposed resolution, and proceed on its reply; with none live, or
+     no reply within a turn, append the question to the issue and park
+     In Progress. Every resolution is audited, a sorted list's above
+     all — an adjacent insertion lints clean after silently losing one
+     side (`history.md` → "Merge-completeness evidence"):
 
      ```sh
      python3 .claude/tools/merge_completeness.py --path <file>
@@ -163,8 +170,7 @@ migrations or generation inputs, and whether it spans crates.
      for a 2-line change). Inspect the other hunks with `Read`
      `offset` / `limit` (`history.md` → "Conflict inspection").
 
-     **When a resolution is made by hand — the user's, or at their
-     explicit direction — format it before `git rebase --continue`.**
+     **Format every resolution before `git rebase --continue`.**
      No commit here runs the formatters (no git `pre-commit` hook is
      installed), so an unformatted resolution reaches CI and turns
      `Lint` red — a fix commit and a whole CI cycle. Run the hooks over
@@ -256,9 +262,14 @@ migrations or generation inputs, and whether it spans crates.
    - **Grade every requirement** — checkboxes (an `[x]` is a claim to
      verify) and requirement-phrased scope bullets — from
      `git diff origin/<base>..HEAD` and the commits, as **addressed**,
-     **partial** or **missing**. A deferral is addressed only if it is
-     recorded (a commit, a PR-body note, a `/linear-task` follow-up);
-     a silent omission is missing.
+     **partial** or **missing**. **A part the PR does not satisfy is
+     addressed only when filed or dropped**: filed through
+     `/linear-task`, named by number in the summary, its box ticked
+     and `deferred to ENG-###` appended; or put to the live `curate`
+     session with its reason and dropped on its ruling, the summary
+     and the issue body both saying what went and why. A PR-body or
+     summary note alone is a **blocking finding**; a silent omission
+     is missing.
 
    - **One write**: the addressed ticks and the move to In Progress,
      zero-echo, one `--box` per box (any unique part of its text, with
@@ -282,8 +293,8 @@ migrations or generation inputs, and whether it spans crates.
      write** (`tick --state "In Review"`) — never a write of their own
      (`history.md` → "Deferred-tick echoes").
 
-   - **A body addition that ticks nothing** — a deferral note, a
-     remaining-scope line — goes through
+   - **A body addition that ticks nothing** — a `deferred to ENG-###`
+     or dropped-and-why record, a remaining-scope line — goes through
      `linear_issue.py append --id <ENG-###> --file <path>`, never
      `save_issue` (`CLAUDE.md` → "Partial edits").
 
@@ -292,9 +303,10 @@ migrations or generation inputs, and whether it spans crates.
      `file:line` or absence.
 
    - **"This will not fit in one PR" is not a second PR** on the same
-     issue: finish this one self-contained, message the live
-     scheduler the remainder, and record the split as a PR-body deferral,
-     which makes it addressed (`docs/conventions/commits-and-prs.md`).
+     issue: finish this one self-contained and message the live
+     scheduler the remainder as pullable units; it files them, and
+     each number it returns is recorded as above
+     (`docs/conventions/commits-and-prs.md`).
 
 1. **Run lint — every lint point is one call** that races the abridged
    lint and tests against CI for HEAD (`docs/ci.md` → "Racing local
@@ -1415,11 +1427,9 @@ migrations or generation inputs, and whether it spans crates.
    ```
 
    Act on `hint.gate`: `green` (`mergeable`) proceeds; `blocking`
-   (`conflicting`) means don't mark ready — tell the user to rebase onto
-   `origin/<base>`, resolve, and re-run `/review-pr`; this skill **never
-   auto-resolves a conflict** (step 2 says why, even for a trivial
-   sorted-list collision); `unverified` (`unknown`, `probe_failed`)
-   holds.
+   (`conflicting`) means don't mark ready — rebase onto
+   `origin/<base>`, resolve by step 2's tiers, and re-run from step 2;
+   `unverified` (`unknown`, `probe_failed`) holds.
 
 1. **Gate.** Mark the PR ready only when **every** local CI-mirroring
    check is green: **zero blocking issues** (every Linear checklist
@@ -1508,7 +1518,8 @@ migrations or generation inputs, and whether it spans crates.
    **Act on `hint`** — `gate` is exhaustive and `do` names the action:
    `green` (`pass`, or a `none` whose conflict probe read `MERGEABLE`)
    prints the summary; `blocking` is `conflicting` (no run will ever
-   arrive — rebase) or `fail`; `unverified` (`timeout`, an unsettled
+   arrive, or the base moved mid-wait — rebase from `base_gained`) or
+   `fail`; `unverified` (`timeout`, an unsettled
    `none`, any other conclusion) is never a pass; `retry` (a
    `--no-watch` `pending`) re-runs plain.
 
@@ -1595,9 +1606,11 @@ migrations or generation inputs, and whether it spans crates.
    ```
 
    With the stakes raised: on `blocking` neither enqueue nor advance
-   the issue — report it, tell the human to rebase, leave the issue In
-   Progress, and stop. On `unverified`, say so and hold. Only `green`
-   proceeds.
+   the issue — rebase and resolve by step 2's tiers, then re-run from
+   step 2. On `unverified`, say so and hold. Only `green` proceeds.
+
+   **Re-grade step 3's unsatisfied parts**: one neither filed nor
+   dropped on the curator's ruling blocks the handoff.
 
    **Then re-read each PR step 5's overlap probe named** — one that
    lands while this PR is queued dequeues it with `merge_conflict`
@@ -1811,11 +1824,12 @@ migrations or generation inputs, and whether it spans crates.
      long queue ahead is the usual cause.
    - **`conflicting`** (or `dequeue_reason: merge_conflict`) → step 2's
      rebase straight from `dequeue.base_gained`, then re-run; on
-     `dequeue.error`, read by hand only what is `null`.
+     `dequeue.error`, read by hand only what is `null`. A null
+     `dequeue_reason` means the watch saw it while still queued.
    - **`dequeued`** → `dequeue.classification.cause`: **`transient`**
      re-enqueue, saying why; **`integration`** do **not** — catalogue
-     it as blocking, re-draft, and tell the user to rebase and re-run
-     `/review-pr`; **`unknown`** read `next_command` (or weigh the
+     it as blocking, re-draft, rebase, fix it here and re-run from
+     step 2; **`unknown`** read `next_command` (or weigh the
      `reason`) before deciding. Report the removal naming the job.
    - **`timeout`** / **`probe_failed`** → report `last` and `error`,
      restart the watch; never report it as queued-and-fine.

@@ -118,9 +118,12 @@ Prints JSON::
       "counts": {"pass": 12, "fail": 0, "pending": 0, "skipping": 3},
       "failing": [{"name": "…", "workflow": "…", "link": "…", "run_id": "…"}],
       "pending_checks": [],      // names still outstanding, when any are
-      "mergeable": null,         // probed only when the conclusion was `none`
+      "mergeable": null,         // probed on `none`, or a `dirty` watch read
       "merge_state_status": null,
       "blocked_by_conflict": false,
+      "base_gained": null,       // on `conflicting` only, as in `dequeue`
+      "base_gained_total": null,
+      "base_gained_error": null,
       "failed_steps": [{"check": "…", "job_id": "…", "step": "…",
                         "kind": "test_runner", "next_command": "…"}],
       "snapshot": {"path": "…", "bytes": 4096, "uncommitted": [], …},
@@ -143,6 +146,14 @@ including an amend-and-force-push nudge at an event that could never fire. So
 on ``none`` this tool probes ``mergeable`` and reports ``conflicting`` when
 that is the cause. Treat ``none`` as "no checks apply"; treat ``conflicting``
 as **blocking** — rebase, then re-run.
+
+A base move **during** the wait is caught too: the watch's own pull read
+carries ``mergeable_state``, and a ``dirty`` one ends the watch early, so a
+conflict never sits out the CI run it has already made moot. The verdict
+settles it (:data:`MERGEABLE_SETTLE_RETRIES` reads, never concluding from
+``UNKNOWN``) before reporting ``conflicting``. Every ``conflicting`` verdict
+carries ``base_gained`` / ``base_gained_total`` / ``base_gained_error`` (see
+:func:`base_gain`), so the rebase starts from it.
 
 or, under ``--run``::
 
@@ -256,6 +267,12 @@ A dequeue with **no** queue run also settles the PR's ``mergeable`` (reported
 beside ``merge_state_status`` and ``mergeable_error``); a ``CONFLICTING`` / ``DIRTY`` read turns the
 conclusion into ``conflicting``, ``dequeue`` filled the same way, with
 ``base_gained`` read whatever the timeline's reason says.
+
+A conflict is also seen **while the entry is still live**: the once-a-minute
+GraphQL read carries ``mergeable`` and ``mergeStateStatus``, and a
+``CONFLICTING`` / ``DIRTY`` one is settled the same way and, if it holds,
+concludes ``conflicting`` before GitHub removes the PR — ``dequeue`` then
+carries a null reason (nothing has dequeued yet) beside ``base_gained``.
 
 Exit code is 0 when ``conclusion`` is ``pass`` (or ``merged``, or
 ``mergeable``), else 1 — so a
@@ -405,6 +422,11 @@ STEP_KIND_NOTES = {
 # Re-reads after the first, so the bound is one more read than this.
 MERGEABLE_SETTLE_RETRIES = 6
 MERGEABLE_SETTLE_DELAY = 5
+
+# What :func:`watch_checks` returns when its pull read says ``dirty``: truthy,
+# since the watch did end, but not ``True``, so the caller settles the
+# conflict instead of reading the checks it cut short.
+CONFLICT_SEEN = "conflict_seen"
 
 
 class WaitForChecksError(Exception):
@@ -599,12 +621,15 @@ def watch_checks(
     client: Conditional | None = None,
     sleep=None,
     clock=None,
-) -> bool:
+) -> bool | str:
     """Block until the PR head's check runs all complete. ``False`` on timeout.
 
     Each poll is two conditional reads — the pull, for the head SHA (so a push
     mid-wait moves the watch with it), and that SHA's check runs — and one log
-    line. No check run at all settles at once, as gh's watch did: the caller's
+    line. The pull also carries ``mergeable_state``: a ``dirty`` one (the base
+    moved under the wait and the PR now conflicts) returns
+    :data:`CONFLICT_SEEN` at once, open runs or not, for the caller to settle
+    — no extra read, so a clean PR's wait costs what it did. No check run at all settles at once, as gh's watch did: the caller's
     ``none`` rounds own the registration race. A read failing
     :data:`MAX_PROBE_ERRORS` times running also returns, settled, so the
     caller's verdict read surfaces the failure rather than the watch spinning
@@ -633,6 +658,10 @@ def watch_checks(
                 sha = str(((pull or {}).get("head") or {}).get("sha") or "")
                 if not sha:
                     raise WaitForChecksError("pull read carried no head SHA")
+                if str((pull or {}).get("mergeable_state") or "").lower() == "dirty":
+                    line |= {"sha": sha[:12], "mergeable_state": "dirty"}
+                    fh.write(json.dumps(line) + "\n")
+                    return CONFLICT_SEEN
                 runs = _check_runs(client, repo, sha)
                 errors = 0
                 open_runs = [r for r in runs if r.get("status") != "completed"]
@@ -762,6 +791,7 @@ query($owner: String!, $name: String!, $number: Int!) {
     pullRequest(number: $number) {
       state
       merged
+      mergeable
       mergeStateStatus
       mergeQueueEntry { state enqueuedAt position }
       autoMergeRequest { enabledAt }
@@ -964,6 +994,7 @@ def _queue_graphql(pr: int, repo: str) -> dict:
         "gql_merged": bool(node.get("merged")),
         "entry": node.get("mergeQueueEntry"),
         "auto": node.get("autoMergeRequest"),
+        "mergeable": node.get("mergeable"),
         "merge_state_status": node.get("mergeStateStatus"),
         "pending_checks": pending_contexts(node),
     }
@@ -1049,16 +1080,20 @@ class QueueProbe:
         # once-a-minute pace, since GraphQL reads are never conditional.
         fresh_removal = events["removed_at"] not in (None, self._removed_at)
         self._removed_at = events["removed_at"]
-        if (
+        slow_fresh = (
             fresh_removal
             or self._slow_at is None
             or now - self._slow_at >= CORROBORATE_SECONDS
-        ):
+        )
+        if slow_fresh:
             self._slow = _queue_graphql(pr, repo)
             self._slow["queue_runs"] = _queue_runs(self.client, repo, pr)
             self._slow_at = now
         return {
             **self._slow,
+            # Whether the GraphQL fields were re-read on this call: a conflict
+            # in them is settled once per read, not once per poll.
+            "slow_fresh": slow_fresh,
             "rest_state": "MERGED"
             if pull.get("merged")
             else (str(pull.get("state") or "").upper() or None),
@@ -1109,9 +1144,12 @@ def wait_queue(
     across turns, which nothing woke the session for, and a session-scoped
     cron, which the Bedrock auto-mode classifier can deny as persistence.
 
-    ``conclusion`` is ``merged`` (exit 0), or ``dequeued`` / ``closed`` /
-    ``not_queued`` / ``auto_merge_waiting`` / ``queued_no_group`` /
-    ``timeout`` / ``probe_failed`` (exit 1). A terminal
+    ``conclusion`` is ``merged`` (exit 0), or ``dequeued`` / ``conflicting``
+    / ``closed`` / ``not_queued`` / ``auto_merge_waiting`` /
+    ``queued_no_group`` / ``timeout`` / ``probe_failed`` (exit 1).
+    ``conflicting`` here is a **live** entry whose fresh GraphQL read says
+    ``CONFLICTING`` / ``DIRTY`` and whose settled :func:`settle_mergeability`
+    read agrees — the queue would remove it, so the watch does not wait. A terminal
     ``MERGED`` from **any** source wins — the REST pull, the timeline's
     ``merged`` event, or GraphQL — and is checked before anything else.
 
@@ -1164,6 +1202,7 @@ def wait_queue(
     # This PR's queue runs before the window floor drops a previous cycle's:
     # what tells a `not_queued` that never entered from one beside an old run.
     every_run: list[dict] = []
+    conflict_read: dict | None = None
     conclusion = "timeout"
     error = None
 
@@ -1266,6 +1305,21 @@ def wait_queue(
                     null_since = None
                     auto_since = None
                     dequeue_streak = 0
+                    # A live entry that conflicts is one GitHub will remove
+                    # minutes from now; seen here, the rebase starts at once.
+                    # Settled first, so an UNKNOWN read is never a verdict.
+                    if entry and snap.get("slow_fresh", True) and _is_conflicting(snap):
+                        state, _ = settle_mergeability(
+                            pr,
+                            repo,
+                            MERGEABLE_SETTLE_RETRIES,
+                            MERGEABLE_SETTLE_DELAY,
+                            sleep,
+                        )
+                        if not state.get("error") and _is_conflicting(state):
+                            conflict_read = state
+                            conclusion = "conflicting"
+                            break
                     # In the queue: a run on its branch is the group, and an
                     # entry that never gets one is told apart from a running
                     # group rather than sitting silent to the timeout.
@@ -1361,6 +1415,11 @@ def wait_queue(
     }
     if conclusion == "not_queued":
         verdict["not_queued"] = not_queued_reading(every_run)
+    if conflict_read is not None:
+        verdict["mergeable"] = conflict_read["mergeable"]
+        verdict["merge_state_status"] = conflict_read["merge_state_status"]
+        verdict["mergeable_error"] = conflict_read["error"]
+        verdict["conflict_read"] = conflict_read
     return verdict
 
 
@@ -1570,24 +1629,41 @@ def dequeue_cause(
         cause["dequeued_at"] = last.get("createdAt")
     if not conflicting and "conflict" not in str(cause["dequeue_reason"]).lower():
         return cause
+    gain = base_gain(repo, head, base)
+    cause["base_gained"] = gain["base_gained"]
+    cause["base_gained_total"] = gain["base_gained_total"]
+    cause["error"] = "; ".join(e for e in (cause["error"], gain["error"]) if e) or None
+    return cause
+
+
+def base_gain(repo: str, head: str | None, base: str | None) -> dict:
+    """``{"base_gained", "base_gained_total", "error"}``: what ``base`` has
+    that ``head`` lacks — the PRs a conflict's rebase must absorb.
+
+    ``base_gained`` is the last :data:`BASE_GAINED_LIMIT` of the compare's
+    first page, oldest first; ``base_gained_total`` counts all. Never raises:
+    a failed read (or a missing ref) leaves both ``None`` and says why.
+    """
+    gain: dict = {"base_gained": None, "base_gained_total": None, "error": None}
+    if not head or not base:
+        gain["error"] = "base compare: no head SHA or base branch to compare"
+        return gain
     try:
         compare = _gh_json(
             ["api", f"/repos/{repo}/compare/{quote(head)}...{quote(base)}"],
             "base compare",
         )
         commits = compare["commits"]
-        cause["base_gained_total"] = int(compare["ahead_by"])
+        gain["base_gained_total"] = int(compare["ahead_by"])
     except (WaitForChecksError, KeyError, TypeError, ValueError) as exc:
-        cause["error"] = "; ".join(
-            e for e in (cause["error"], f"base compare: {exc!r}") if e
-        )
-        return cause
-    cause["base_gained"] = [
+        gain["error"] = f"base compare: {exc!r}"
+        return gain
+    gain["base_gained"] = [
         {"sha": str(c.get("sha", ""))[:12], "subject": _subject(c)}
         for c in (commits if isinstance(commits, list) else [])[-BASE_GAINED_LIMIT:]
         if isinstance(c, dict)
     ]
-    return cause
+    return gain
 
 
 def read_checks(pr: int, repo: str) -> list[dict]:
@@ -1935,12 +2011,14 @@ def summarize(checks: list[dict]) -> dict:
 
 
 def mergeability(pr: int, repo: str) -> dict:
-    """``{"mergeable": …, "merge_state_status": …, "error": …}`` for one PR.
+    """``{"mergeable", "merge_state_status", "head", "base", "error"}`` for one PR.
 
-    Read **field-selected**, because the only two fields wanted here sit beside
+    Read **field-selected**, because the fields wanted here sit beside
     collection-valued ones (``files``, ``commits``) that would reintroduce the
-    payload this tool exists to avoid.
+    payload this tool exists to avoid. ``head`` / ``base`` (the head SHA and
+    base branch) ride the same call, for :func:`base_gain` on a conflict.
     """
+    failed = {"mergeable": None, "merge_state_status": None, "head": None, "base": None}
     code, out, err = _gh(
         [
             "pr",
@@ -1949,18 +2027,20 @@ def mergeability(pr: int, repo: str) -> dict:
             "--repo",
             repo,
             "--json",
-            "mergeable,mergeStateStatus",
+            "mergeable,mergeStateStatus,headRefOid,baseRefName",
         ]
     )
     if code != 0:
-        return {"mergeable": None, "merge_state_status": None, "error": err.strip()}
+        return {**failed, "error": err.strip()}
     try:
         payload = json.loads(out or "{}")
     except json.JSONDecodeError as exc:
-        return {"mergeable": None, "merge_state_status": None, "error": str(exc)}
+        return {**failed, "error": str(exc)}
     return {
         "mergeable": payload.get("mergeable"),
         "merge_state_status": payload.get("mergeStateStatus"),
+        "head": payload.get("headRefOid"),
+        "base": payload.get("baseRefName"),
         "error": None,
     }
 
@@ -2002,8 +2082,9 @@ def wait_mergeable(
     ``conclusion`` keys on ``mergeable``, the gh twin of the MCP
     ``mergeable_state``: ``mergeable`` (any ``mergeStateStatus`` — ``BLOCKED``
     / ``UNSTABLE`` mean checks or review outstanding, ``BEHIND`` that the base
-    moved), ``conflicting`` (or ``DIRTY``) — blocking, and never auto-resolved
-    — ``unknown`` once the settle reads run out, and ``probe_failed``. Only
+    moved), ``conflicting`` (or ``DIRTY``) — blocking until the session
+    resolves it — ``unknown`` once the settle reads run out, and
+    ``probe_failed``. Only
     ``mergeable`` exits 0.
     """
     state, reads = settle_mergeability(pr, repo, retries, delay, sleep)
@@ -2020,8 +2101,8 @@ def wait_mergeable(
         hint = {
             "gate": "blocking",
             "do": (
-                "do not mark ready or enqueue; rebase onto origin/<base>, "
-                "resolve, re-run /review-pr — never auto-resolve"
+                "do not mark ready or enqueue; rebase onto origin/<base> and "
+                "resolve by review-pr step 2's conflict tiers, then re-run"
             ),
         }
     elif value == "MERGEABLE":
@@ -2202,6 +2283,10 @@ def wait(
     # Which retryable state spent its own rounds, so an exhausted `none` can be
     # reported as `none` rather than collapsed into `timeout`.
     exhausted_on: str | None = None
+    merge_state: dict = {"mergeable": None, "merge_state_status": None, "error": None}
+    # A base move under the wait: the watch saw `dirty` and this settle agreed.
+    conflict_seen = False
+    saw_pending = False
 
     while watch:
         remaining = int(deadline - time.monotonic())
@@ -2210,20 +2295,40 @@ def wait(
             break
         rounds += 1
         settled = watch_checks(pr, repo, interval, remaining, log)
+        cut_short = settled == CONFLICT_SEEN
+        if cut_short:
+            # The REST read can run ahead of a settled answer, so the gate's
+            # own settle loop decides; an unconfirmed `dirty` waits on.
+            merge_state, _ = settle_mergeability(
+                pr, repo, MERGEABLE_SETTLE_RETRIES, MERGEABLE_SETTLE_DELAY,
+                sleep or time.sleep,
+            )  # fmt: skip
+            settled = True
+            conflict_seen = not merge_state.get("error") and _is_conflicting(
+                merge_state
+            )
         summary = summarize(read_checks(pr, repo))
+        if conflict_seen:
+            break
         state = summary["conclusion"]
         if not settled or state not in RETRY_CONCLUSIONS:
             break
         # The two retryable states get their own cap and pacing: a `none` is a
         # seconds-scale registration race, a `pending` is a whole CI run.
-        state_rounds[state] += 1
+        # A `pending` round an unconfirmed `dirty` cut short was no CI run, so
+        # it spends none of the budget: a lagging REST read must not turn a
+        # live run into `timeout` (the deadline still bounds the loop).
+        if not (cut_short and state == "pending"):
+            state_rounds[state] += 1
+        # Seen, counted or not: the green-`none` guard below asks only that.
+        saw_pending = saw_pending or state == "pending"
         cap = MAX_NONE_ROUNDS if state == "none" else MAX_WATCH_ROUNDS
         if state_rounds[state] >= cap:
             # `none` survives the terminal branch only when EVERY round it saw
             # was `none`. A `none` that followed observed `pending` rounds is a
             # checks-disappeared anomaly, not an absence, and must not read as
             # green.
-            exhausted_on = state if state_rounds.get("pending", 0) == 0 else None
+            exhausted_on = state if not saw_pending else None
             settled = False
             break
         # The watch returns at once when it sees nothing left to wait on, so
@@ -2248,9 +2353,10 @@ def wait(
     # ambiguity is resolved here rather than left to the caller: `none` means
     # either no-checks-apply, or cannot-run-until-the-conflict-clears, and the
     # second is blocking.
-    blocked_by_conflict = False
-    merge_state: dict = {"mergeable": None, "merge_state_status": None, "error": None}
-    if conclusion == "none":
+    blocked_by_conflict = conflict_seen
+    if conflict_seen:
+        conclusion = "conflicting"
+    elif conclusion == "none":
         # Right after a push — precisely the window this probe runs in —
         # `UNKNOWN` is the common answer, and taking it as "not conflicting"
         # would reproduce the 20-minute dead wait this probe prevents.
@@ -2295,12 +2401,20 @@ def wait(
         # signal that it had not been.
         "mergeable_error": merge_state["error"],
         "blocked_by_conflict": blocked_by_conflict,
+        "base_gained": None,
+        "base_gained_total": None,
+        "base_gained_error": None,
         "failed_steps": (
             diagnose_failures(summary["failing"], repo) if conclusion == "fail" else []
         ),
         "snapshot": snap,
         "log_path": str(log),
     }
+    if conclusion == "conflicting":
+        gain = base_gain(repo, merge_state.get("head"), merge_state.get("base"))
+        verdict["base_gained"] = gain["base_gained"]
+        verdict["base_gained_total"] = gain["base_gained_total"]
+        verdict["base_gained_error"] = gain["error"]
     verdict["hint"] = action_hint(verdict)
     return verdict
 
@@ -2512,6 +2626,15 @@ def watch_queue(
             verdict["todays_merge_count"] = todays_merge_count(pr, repo)
         elif verdict["conclusion"] == "dequeued":
             _settle_dequeue(verdict, pr, repo)
+        elif verdict["conclusion"] == "conflicting":
+            # Still queued, so there is no removal to read a reason from; the
+            # same shape keeps step 22's conflicting branch one branch.
+            read = verdict.pop("conflict_read", None) or {}
+            verdict["dequeue"] = {
+                "dequeue_reason": None,
+                "dequeued_at": None,
+                **base_gain(repo, read.get("head"), read.get("base")),
+            }
         elif verdict["conclusion"] == "not_queued":
             # A firing that began after a dequeue sees only that cycle's
             # failed runs: classify them, so a re-enqueue is never blind.
