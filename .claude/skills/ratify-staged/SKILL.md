@@ -117,7 +117,11 @@ python3 .claude/tools/ratify_staged.py ask --ids <ENG-### …> \
 
 Pass each `calls[]` entry's `questions` to `AskUserQuestion`
 unchanged: one checkbox per task, **never grouped**, up to sixteen
-per call, each leading with its filed priority. The text is the
+per call, each leading with its filed priority. The checkboxes run
+in **ascending issue number** across the whole set, whatever order
+the ids were passed in — the tool sorts, for this pool and the
+curator's inbox alike — so the operator can open the set as tabs
+left to right and read the dialog top to bottom. The text is the
 operator's:
 
 > Have you looked at these? Check each one once you have. Leave a

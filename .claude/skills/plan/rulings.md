@@ -47,11 +47,25 @@ the document's state sections.
    planning session, a seat session's filing yes in the operator's
    tab (`ratify-staged`), and an edge the operator ticks in the
    curator's tab (ruling 12). (`SKILL.md` step 2.)
-   **The coordination rule** (2026-10-26, amended 2026-10-28 and
-   2026-10-29): the curator judges — promote, kill, merge; the
-   scheduler schedules, owns the direction and the Planning
-   document; the launcher starts the day and hands the curator its
-   kill and merge candidates. **Both advisors hold priority
+   **The coordination rule** (2026-10-26, amended 2026-10-28,
+   2026-10-29 and 2026-10-30): three roles, cut for load. The
+   **curator judges and bootstraps**: promote, kill, merge; the
+   start-of-day bootstrap, which rewrites the Planning document to
+   the state of play — its only document write; and the ruling on a
+   rebase whose two intents cannot both stand, messaged to the
+   scheduler when it changes an in-flight issue's scope. The
+   **scheduler schedules and owns the live day**: the direction,
+   dispatch and kick-offs, mid-flight splits, the wind-down, and the
+   document after the bootstrap — incremental notes, the close-out
+   rewrite and the day report (PRs merged today plus spend since
+   the previous close-out, under `Session-metrics state`). The
+   **launcher** (to be renamed the
+   analyst) runs the mechanical morning in parallel with the
+   curator — the lever fold, the prune, the destructive ask — hands
+   the curator its kill and merge candidates, and opens the
+   scheduler's tab on the curator's `state of play written`. A
+   question in the curator's tab never blocks a dispatch; nothing is
+   dispatched on the curator's word. **Both advisors hold priority
    authority** (2026-10-29), in Backlog and in Todo alike, under
    the **agreement rule**: a priority write is messaged to the
    other session in the same turn with the reason; the other may
@@ -185,12 +199,14 @@ the document's state sections.
    milestone means "not yet reviewed or assembled", never "not
    now", so nothing sits in a giant backlog (ruling 3).
 
-1. **Parked hygiene is a rhythm.** Every full bootstrap says each
-   parked milestone's count with its direction, machine-written by
-   upkeep; the digest's levers fold there (ruling 23), Audit
-   findings drains by promotion or kill, and Session pending gets
-   a count-and-offer line (`SKILL.md` step 8). Follow-ups and
-   Claude meta left the rhythm 2026-10-26: filers no longer park.
+1. **Parked hygiene is a rhythm.** Every full bootstrap — the
+   curator's, from 2026-10-30 — says each parked milestone's count
+   with its direction, machine-written by upkeep, `Curator pending`
+   included (still inbox, the curator's to clear); the digest's
+   levers fold there (ruling 23), Audit findings drains by
+   promotion or kill, and Session pending gets a count-and-offer
+   line (`SKILL.md` step 8). Follow-ups and Claude meta left the
+   rhythm 2026-10-26: filers no longer park.
 
 1. **Alpenglow proof is explicit.** The v3 port closes only with
    a recorded end-to-end deploy on an Alpenglow-enabled 4.3
@@ -325,9 +341,10 @@ the document's state sections.
 
 1. **Dispatch through the dispatcher tool**, by the scheduler, by
    the curator for the architect tasks it files (2026-10-26), or by
-   the launcher, which dispatches the curator once the scheduler's
-   `state of play written` arrives (2026-10-28), as new tabs in
-   the dispatcher's window, with one consolidated ask; the fleet
+   the launcher, which opens the scheduler's tab once the curator's
+   `state of play written` arrives (2026-10-30; it dispatched the
+   curator on the scheduler's message from 2026-10-28), as new tabs
+   in the dispatcher's window, with one consolidated ask; the fleet
    bound lives in the tool. Ratification and gate approvals are
    per-tab. **Todo is the dispatch authorization** (confirmed
    2026-10-28): a pre-authorized wave needs no ask, and once the
@@ -335,8 +352,8 @@ the document's state sections.
    priorities as they stand (per wave, each one ask, when the
    trigger answered "this wave only") — **save the start of the day**
    (2026-10-29), when `fleet resume` and the first wave wait for
-   the operator's start trigger in the bootstrap ask, the launcher
-   messaged before that ask. The answer is recorded as the
+   the operator's start trigger, which the scheduler asks once the
+   curator's state of play is written. The answer is recorded as the
    document's `Fleet start:` line; a warm bootstrap finding it, with
    the fleet live, asks no trigger, and a machine restart asks it
    again. On the operator's

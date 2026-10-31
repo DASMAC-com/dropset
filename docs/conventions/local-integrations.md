@@ -2820,23 +2820,29 @@ a terminal closed outright, is covered by the next morning's digest.
   what it does, the timeout bounding its slowest call) and ends (the
   elapsed seconds, or `crashed`), then a total, so a hung step names
   itself; Ctrl-C there skips the pass rather than the launch. It then
-  writes the day's marker and opens **two tabs in one
-  `session_dispatch.py plan + launch` batch**: the scheduler's
-  rightmost and the launcher's just left of it. The typed tab's
-  prompt returns with the log in its scrollback. A tab the machine
-  gate **holds** is said out loud and never overridden here. For a
-  tab that neither opened nor was held: a launcher runs in the typed
-  tab instead; with neither open, the launcher runs there with
-  `DS_LAUNCH_SCHEDULER` naming the scheduler verb its skill dispatches
-  as its first act; a scheduler missing beside an open launcher is
-  named for the operator to type. The report
-  lands under the Planning document's upkeep heading, which the
-  bootstrap reads; the launcher prunes finished worktrees unasked,
+  writes the day's marker — holding the scheduler verb, `plan` or
+  `plan anthropic` — and opens **two tabs in one
+  `session_dispatch.py curate + launch` batch**, in parallel: the
+  curator bootstraps the day and writes the state of play while the
+  launcher folds the levers. The **scheduler opens last**: on the
+  curator's `state of play written` the launcher dispatches the verb
+  `DS_LAUNCH_SCHEDULER` names, which the `launch` helper reads from
+  the marker. The pre-launch's last line names the tab the morning
+  waits on (`plan: waiting on curate-<day>'s state of play`), and the
+  typed tab's prompt returns with the log in its scrollback. A tab
+  the machine gate **holds** is said out loud and never overridden
+  here. For a tab that neither opened nor was held: a launcher runs
+  in the typed tab instead, and a launcher that finds no
+  `curate-<day>` live dispatches the curator as its first act. The
+  report lands under the Planning document's upkeep heading, which
+  the curator's bootstrap reads; the launcher prunes finished
+  worktrees unasked,
   and the other destructive items (allowlist cruft,
   permission-refresh additions, judged memories, the purge apply)
   wait for its tab's one `AskUserQuestion`. **Every later
-  `plan` that day is warm** — the one typed into the scheduler's tab
-  first — and runs the scheduler in the tab it was typed in, with no
+  `plan` that day is warm** — the one the launcher types into the
+  scheduler's tab first — and runs the scheduler in the tab it was
+  typed in, with no
   pass and no launcher. The marker is what stops a pass that failed
   to stamp from re-running the pre-launch on each `plan`.
   `DS_SKIP_UPKEEP=1` skips the pass and still opens the tabs; a
@@ -2908,8 +2914,10 @@ a terminal closed outright, is covered by the next morning's digest.
   `schedule-05`.
 
 - **`curate [anthropic|bedrock]`** — start **or resume** the
-  **curator**'s daily session: review between Backlog and Todo, the
-  scheduler's seat-mate. Built from the same parts as `plan` (one
+  **curator**'s daily session: the start-of-day bootstrap that writes
+  the state of play, then review between Backlog and Todo — the
+  scheduler's seat-mate, opened by the fresh-day `plan` pre-launch
+  beside the launcher. Built from the same parts as `plan` (one
   shared `_ds_daily_seat` body): the advisor tier, Bedrock by default
   whatever `DS_MODEL_ADVISOR_SUBSTRATE` says, `anthropic` by word, a
   reopen keeping the substrate its session recorded; the base repo, no
@@ -2928,8 +2936,8 @@ a terminal closed outright, is covered by the next morning's digest.
   `task resume` leave it alone — it names no issue.
 
 - **`launch [anthropic|bedrock]`** — start **or resume** the day's
-  **launcher**, the session the `plan` pre-launch opens just left of
-  the scheduler's tab to dispatch the morning: the **executor** tier,
+  **launcher**, the session the `plan` pre-launch opens beside the
+  curator's tab to run the mechanical morning: the **executor** tier,
   Bedrock by default, `anthropic` by word, a reopen keeping the
   substrate its session recorded; the base repo, no worktree, no PR,
   no issue; display name `launch-<day>`, initial prompt `/launch`, a
@@ -2944,9 +2952,10 @@ a terminal closed outright, is covered by the next morning's digest.
   does is the `launch` skill's: the day's lever fold in this visible
   tab (its stamp, `.claude/.fold-last-run.json`, written by
   `upkeep.py fold-stamp` and said by the scheduler through
-  `upkeep.py fold-today`), the curator's dispatch on the scheduler's
-  `state of play written` message with the fold's hand-off as the
-  curator's first message, and the morning's one destructive ask —
+  `upkeep.py fold-today`), the fold's hand-off to the already-running
+  curator, the scheduler's dispatch on the curator's
+  `state of play written` message, and the morning's one destructive
+  ask —
   the transcript purge, the upkeep report's other destructive items
   (allowlist cruft, permission-refresh candidates) and the judged
   memories, each applied only where the operator ticks it. Two acts
