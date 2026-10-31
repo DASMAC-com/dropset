@@ -992,9 +992,9 @@ lifecycle and rent reclamation**), an admin may additionally
 `force_withdraw_leader` against any vault's `leader_shares`,
 regardless of the vault's state — active, frozen, or tombstoned.
 Together these widen the "only the owner can move their stake"
-property held by every production build (outside funds and
-leader funds both), in service of being able to drain markets to
-zero between testnet / early-mainnet deploy cycles without
+property held by every build without the feature (outside funds
+and leader funds both), in service of being able to drain markets
+to zero between testnet / early-mainnet deploy cycles without
 requiring leader cooperation. A later upgrade may build without the
 feature, and with it absent the original property is restored.
 
@@ -3328,11 +3328,12 @@ every account it ever created can be closed and its rent reclaimed,
 so the program can be upgrade-redeployed against the same program
 id between cycles. The teardown instructions described here are
 **feature-gated** behind a Cargo feature `admin-teardown`, compiled
-into testnet builds and the first mainnet publish. The upgrade
-authority is retained after that publish, probably in perpetuity, and
-no fully immutable deploy is assumed or scheduled: removing the
-feature is a later upgrade under that authority, never a republish
-(operator ruling, 2026-10-30). Authorization while the feature is
+into testnet and early-mainnet builds, the first mainnet publish
+included. The upgrade authority is retained after that publish,
+probably in perpetuity, and no fully immutable deploy is assumed or
+scheduled: removing the feature, if it happens, is a later upgrade
+under that authority, never a republish (operator ruling,
+2026-10-30). Authorization while the feature is
 enabled is the existing Registry admin set (see **Caller mechanics →
 Admin authority**); a reader of the IDL of a build without the feature
 will find these instructions absent.
