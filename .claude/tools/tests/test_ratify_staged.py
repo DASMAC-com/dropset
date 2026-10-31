@@ -68,6 +68,29 @@ class AskTests(unittest.TestCase):
             self.assertLessEqual(len(q["header"]), 12)
         self.assertTrue(call["questions"][1]["question"].endswith("(2 of 2)"))
 
+    def test_checkboxes_run_by_issue_number_whatever_the_caller_passed(self):
+        # Across both questions, not within each: the operator reads the
+        # dialog top to bottom against the batch's tabs left to right.
+        issues = [_issue(n) for n in (40, 7, 112, 9, 31)]
+        issues[0]["title"] = "(carried) folded into Part 2"
+        (call,) = build_ask(issues)["calls"]
+        options = [o for q in call["questions"] for o in q["options"]]
+        self.assertEqual(
+            [o["label"] for o in options],
+            ["ENG-7", "ENG-9", "ENG-31", "ENG-40", "ENG-112"],
+        )
+        # The carried task's description (here its title) rides with it to
+        # its sorted place.
+        self.assertIn("(carried)", options[3]["description"])
+
+    def test_the_sort_reads_the_identifier_when_number_is_absent(self):
+        issues = [_issue(n) for n in (20, 3)]
+        for issue in issues:
+            del issue["number"]
+        (call,) = build_ask(issues)["calls"]
+        labels = [o["label"] for o in call["questions"][0]["options"]]
+        self.assertEqual(labels, ["ENG-3", "ENG-20"])
+
     def test_a_lone_task_gets_a_not_yet_option(self):
         (call,) = build_ask([_issue(7)])["calls"]
         (question,) = call["questions"]

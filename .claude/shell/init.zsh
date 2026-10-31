@@ -2391,11 +2391,12 @@ _ds_plan_cycle() {
 #
 # THE PRE-LAUNCH. On a FRESH day (`_ds_plan_fresh_day`) a bare `plan` starts
 # no session in the typed tab: it runs the AWS gate and the upkeep pass there,
-# in the foreground with the pass's progress lines, then opens the scheduler's
-# tab rightmost and the launcher's just left of it (`_ds_plan_prelaunch`). The
-# typed tab's prompt returns with the log in its scrollback. Any later `plan`
-# that day — the one typed into the scheduler's own tab first — is WARM and
-# runs the scheduler below, in the tab it was typed in, with no pass.
+# in the foreground with the pass's progress lines, then opens the curator's
+# and the launcher's tabs; the launcher opens the scheduler's once the curator
+# has written the state of play (`_ds_plan_prelaunch`). The typed tab's prompt
+# returns with the log in its scrollback. Any later `plan` that day — the one
+# the launcher types into the scheduler's own tab first — is WARM and runs the
+# scheduler below, in the tab it was typed in, with no pass.
 #
 # THE CYCLE LOOP. A scheduler session that cycles (the `plan` skill's "Cycling")
 # closes out, writes `plan-cycle-pending` beside the substrate markers and ends
@@ -2458,55 +2459,68 @@ _ds_plan_fresh_day() {
 # the seat guard would). The day's marker is written only after the pass, so a
 # refused login or a Ctrl-C at the gate leaves the day fresh for a retry.
 #
-# Then ONE dispatch opens both tabs (`session_dispatch.py plan + launch`): a
-# batch, because the scheduler tab's role is not set until its shell runs, and
-# only the batch books it, which is what puts the launcher on its left. What
-# opened is read back from the dispatch's own per-tab lines, failure listing
-# included, and so is what the machine gate HELD: a hold is the gate's
-# refusal, so it is said out loud and never overridden by a fallback here.
+# Then ONE dispatch opens the curator's and the launcher's tabs
+# (`session_dispatch.py curate + launch`), in parallel: the curator runs the
+# day's bootstrap and writes the state of play while the launcher folds the
+# levers. The SCHEDULER opens last — the launcher dispatches it on the
+# curator's `state of play written` — so the day's marker carries the
+# scheduler verb (`plan` plus any substrate word typed), which the `launch`
+# helper exports as `DS_LAUNCH_SCHEDULER`. What opened is read back from the
+# dispatch's own per-tab lines, failure listing included, and so is what the
+# machine gate HELD: a hold is the gate's refusal, so it is said out loud and
+# never overridden by a fallback here. Once a launcher is up, the last line
+# names the tab the morning waits on; a held launcher is itself the wait.
 # FALLBACKS, for a tab that neither opened nor was held: a launcher that did
-# not open runs in this tab instead; with neither open, the launcher runs here
-# with `DS_LAUNCH_SCHEDULER` naming the scheduler verb it dispatches as its
-# first act; a scheduler that did not open beside an open launcher is named for
-# the operator to type.
+# not open runs in this tab instead; a curator that did not open is dispatched
+# by the launcher as its first act, which finds no `curate-<day>` live.
 _ds_plan_prelaunch() {
   setopt localoptions extendedglob
-  local day="$1" word="$2" out rc line plan_tab='' launch_tab=''
+  local day="$1" word="$2" out rc line curate_tab='' launch_tab=''
+  local curator="curate-${${day[7,8]}#0}"
   print -u2 'plan: pre-launch'
   _ds_substrate_unset
   _ds_aws_login 'plan' || return 1
   _ds_upkeep
-  mkdir -p "$_DS_SUBSTRATE_DIR" && : >| "$_DS_SUBSTRATE_DIR/plan-prelaunch-$day"
+  mkdir -p "$_DS_SUBSTRATE_DIR" &&
+    print -r -- "plan${word:+ $word}" >| "$_DS_SUBSTRATE_DIR/plan-prelaunch-$day"
   # Both streams: a driver that fails part-way lists the tabs it DID open on
   # stderr, and those must not be launched a second time here.
   out="$(python3 "$_DS_REPO/.claude/tools/session_dispatch.py" \
-    plan ${word:+"$word"} + launch 2>&1)"
+    curate + launch 2>&1)"
   rc=$?
   print -r -- "$out"
   for line in "${(@f)out}"; do
-    [[ "$line" == [[:space:]]#plan(| *)' -> '* ]] && plan_tab=opened
+    [[ "$line" == [[:space:]]#curate(| *)' -> '* ]] && curate_tab=opened
     [[ "$line" == [[:space:]]#launch(| *)' -> '* ]] && launch_tab=opened
-    [[ "$line" == 'held  plan'(| *)':'* ]] && plan_tab=held
+    [[ "$line" == 'held  curate'(| *)':'* ]] && curate_tab=held
     [[ "$line" == 'held  launch'(| *)':'* ]] && launch_tab=held
   done
-  [[ "$plan_tab" == held ]] && print -u2 'plan: the machine gate held the' \
-    "scheduler — type \`plan${word:+ $word}\` once a slot frees."
+  [[ "$curate_tab" == held ]] && print -u2 'plan: the machine gate held the' \
+    'curator — type `curate` once a slot frees.'
   [[ "$launch_tab" == held ]] && print -u2 'plan: the machine gate held the' \
-    'launcher — type `launch` once a slot frees.'
-  if [[ -n "$launch_tab" ]]; then
-    [[ -z "$plan_tab" ]] && print -u2 "plan: the scheduler's tab did not" \
-      "open (dispatch exit $rc) — type \`plan${word:+ $word}\` in a new tab."
+    "launcher — type \`launch\` once a slot frees; the scheduler waits on it."
+  if [[ "$launch_tab" == held ]]; then
+    [[ -z "$curate_tab" ]] && print -u2 "plan: the curator's tab did not" \
+      "open (dispatch exit $rc) — type \`curate\` in a new tab."
     return 0
   fi
-  if [[ -n "$plan_tab" ]]; then
+  if [[ "$launch_tab" == opened ]]; then
+    [[ -z "$curate_tab" ]] && print -u2 "plan: the curator's tab did not" \
+      "open (dispatch exit $rc) — the launcher dispatches it first."
+    print -u2 "plan: waiting on $curator's state of play — the launcher" \
+      "opens the scheduler's tab on it."
+    return 0
+  fi
+  if [[ -n "$curate_tab" ]]; then
     print -u2 "plan: the launcher's tab did not open (dispatch exit $rc) —" \
       'running it in this tab.'
-    launch
   else
     print -u2 "plan: neither tab opened (dispatch exit $rc) — running the" \
-      'launcher in this tab; it dispatches the scheduler first.'
-    DS_LAUNCH_SCHEDULER="plan${word:+ $word}" launch
+      'launcher in this tab; it dispatches the curator first.'
   fi
+  print -u2 "plan: waiting on $curator's state of play — the launcher" \
+    "opens the scheduler's tab on it."
+  launch
 }
 
 # Internal: refuse to resume daily seat $2 (display name; $1 the verb, for the
@@ -2633,7 +2647,7 @@ if (( $+commands[curate] )); then
 fi
 
 # Start OR resume today's LAUNCHER session — the morning's dispatcher, which the
-# `plan` pre-launch opens just left of the scheduler's tab:
+# `plan` pre-launch opens beside the curator's tab:
 #
 #   launch             the executor tier on Bedrock
 #   launch anthropic   the executor tier on the subscription — the override
@@ -2646,9 +2660,10 @@ fi
 # A free seat verb, stamped `free`. Its tab carries `ds_role=launch`, which
 # rests it left of the curator's (`iterm-reorder.py`) and keeps worker tabs
 # left of it (`session_dispatch.py`). NO AWS GATE and NO UPKEEP PASS — both
-# ran in the pre-launch before this tab opened. `DS_LAUNCH_SCHEDULER`, set
-# only by the pre-launch's last fallback, names the scheduler verb the session
-# dispatches as its first act.
+# ran in the pre-launch before this tab opened. `DS_LAUNCH_SCHEDULER` names
+# the scheduler verb the session dispatches on the curator's `state of play
+# written`: the caller's value when non-empty, else the one the day's
+# pre-launch marker records, else `plan`.
 launch() {
   if [[ -n "$2" || ( -n "$1" && "$1" != (anthropic|bedrock) ) ]]; then
     print -u2 'Usage: launch [anthropic|bedrock]   (the name is derived from the date)'
@@ -2677,10 +2692,13 @@ launch() {
     _ds_substrate_unset
     return 1
   fi
+  local scheduler="${DS_LAUNCH_SCHEDULER-}" mark="$_DS_SUBSTRATE_DIR/plan-prelaunch-$day"
+  [[ -z "$scheduler" && -s "$mark" ]] && scheduler="$(<"$mark")"
   [[ "${DS_PLAN_TAB_RIGHTMOST:-1}" == 1 ]] && _ds_iterm_role launch
   {
     local _ds_class_key="sessions/$sid" _ds_class=free
-    DS_PLAN_DATE="$day" _ds_session "$sid" "$name" '/launch' "$model"
+    DS_LAUNCH_SCHEDULER="${scheduler:-plan}" DS_PLAN_DATE="$day" \
+      _ds_session "$sid" "$name" '/launch' "$model"
   } always {
     _ds_iterm_role ''
   }

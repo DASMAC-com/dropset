@@ -544,6 +544,13 @@ def _questions(options: list[dict], text: str, header: str, filler: dict) -> lis
     return questions
 
 
+def _number(issue: dict) -> int:
+    """``issue``'s number, read from its identifier when the field is absent."""
+    if issue.get("number"):
+        return int(issue["number"])
+    return _issue_id(issue["identifier"])[1]
+
+
 def build_ask(
     issues: list[dict],
     notes: dict[str, str] | None = None,
@@ -552,10 +559,16 @@ def build_ask(
 ) -> dict:
     """The review ask as ``AskUserQuestion`` payloads, one per call: a checkbox
     per task (its priority, then its note or else its title, as the
-    description), then the one ``operator`` option (the fifth box, already
-    described) as its own question, then any proposals as further
-    questions."""
+    description), in ascending issue number across the whole set, then the one
+    ``operator`` option (the fifth box, already described) as its own
+    question, then any proposals as further questions.
+
+    The order is the operator's, never the caller's (operator direction,
+    2026-10-30): the batch's issues open as tabs left to right and the dialog
+    reads top to bottom, so both run by number. A ranking or a carried task
+    shows in its note, not its position."""
     notes = notes or {}
+    issues = sorted(issues, key=_number)
     options = [
         {
             "label": issue["identifier"],

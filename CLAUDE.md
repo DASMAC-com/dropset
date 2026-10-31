@@ -57,9 +57,10 @@ Board work — staging issues, keeping the Queue honest, placing
 blocking edges, carrying direction across days — happens in a
 **scheduler session**, the complement to a worktree implementation
 session. It runs in the base repo (started and resumed with `plan`,
-never a worktree), bootstraps from the
-"Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), and writes its
-decisions back there. The `plan` skill is its method; the document is
+never a worktree), warm-boots from the state of play the **curator's**
+start-of-day bootstrap writes to the "Planning" Linear document
+(`LINEAR_PLANNING_DOC_ID`), owns the live day, and writes every later
+decision back there. The `plan` skill is its method; the document is
 the state. Detail — the env var, and where blocking edges are
 placed: `docs/conventions/linear-automation.md`.
 
@@ -205,10 +206,12 @@ curator. Every full bootstrap says each parked count **out loud**; a
 genuinely urgent stray (a broken guard) is promoted on the spot.
 
 **The curator owns review** — `curate`, a daily advisor-tier base-repo
-session the launcher dispatches. It walks the operator through the
-un-parked Backlog (`[Operator]` items included) four at a time and
-moves each ticked, uncommented task to Todo one at a time, the tick
-being the operator's move. Detail:
+session the `plan` pre-launch opens. It runs the start-of-day
+bootstrap (ending in `state of play written`), rules on irreconcilable
+rebases, walks the operator through the un-parked Backlog
+(`[Operator]` items included) four at a time in ascending issue
+order, and moves each ticked, uncommented task to Todo one at a time,
+the tick being the operator's move. Detail:
 `docs/conventions/linear-automation.md` → "The curator owns review".
 
 ### An audit is a board issue, not a directive
@@ -220,7 +223,7 @@ exactly that as one scoped `audit-scope` run. Findings land **staged**
 (`Backlog` plus `Session pending`) and are ratified in the audit
 session's own tab through `ratify-staged`, never promoted by planning.
 
-Cadence is the **audit heartbeat**: every full planning bootstrap reads
+Cadence is the **audit heartbeat**: every curator bootstrap reads
 the Planning document's bounded **audit-state table** (one row per
 registry unit) and either files an audit issue or **declines with a
 recorded reason** — never an unrecorded non-decision. The random
@@ -239,8 +242,9 @@ once, dedups by fingerprint and Backlog title (folding a near-match
 into the existing issue), and files **small themed `Claude:` batches
 of ~4–5 parts** into Backlog, no milestone. A rejection filed Canceled
 with its reason is permanent. The **launcher** (`launch`, its own tab)
-runs that fold each morning, dispatches the curator on the scheduler's
-`state of play written` with the kill and merge candidates, and asks
+runs that fold each morning beside the curator, hands it the kill and
+merge candidates, opens the scheduler on the curator's
+`state of play written`, and asks
 the day's **one destructive question**. Detail:
 `docs/conventions/linear-automation.md`, `trim-context` and `launch`.
 

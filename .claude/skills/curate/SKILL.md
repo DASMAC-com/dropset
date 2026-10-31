@@ -1,19 +1,25 @@
 ---
 name: curate
-description: Run the curator — the daily advisor-tier session that owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Dispatched by the launcher each morning, or by hand with the `curate` verb (Bedrock; `curate anthropic` is the escape). Bootstraps from the Planning document, the rulings file and one compact pool listing; ranks the un-parked Backlog against the day's direction; walks the operator through it four tasks at a time, one checkbox each with a line of commentary, plus a second checklist of proposed edges and, in the first ask, the launcher's kill and merge candidates. Moves each ticked, uncommented task to Todo one at a time, folds comments into the task's body, places only the edges, kills and merges the operator ticks, writes priorities under the agreement rule, and spins off an architect task when a spec needs a design conversation first. Messages the scheduler every move it makes. Event-driven, never polls; stops on the scheduler's closing message.
+description: Run the curator — the daily advisor-tier session that runs the start-of-day bootstrap and owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Opened by the fresh-day `plan` pre-launch beside the launcher, or typed as `curate` (Bedrock; `curate anthropic` is the escape). Bootstraps the day — landings, the board, Next and holds, parked counts, the audit heartbeat, first-cut collision clusters — rewrites the Planning document to the state of play and sends `state of play written`; rules on irreconcilable rebases. Walks the operator through the ranked Backlog four tasks at a time, in ascending issue order, one checkbox each with commentary, plus proposed edges and the launcher's kill and merge candidates. Moves each ticked, uncommented task to Todo, folds comments, places only ticked edges, kills and merges, writes priorities under the agreement rule, and spins off architect tasks. Messages the scheduler every move. Event-driven; stops on the scheduler's close message.
 user-invocable: true
 ---
 
 # `curate`
 
-The **curator** judges: everything between Backlog and Todo —
-what to promote, kill or merge. The **scheduler** (the `plan`
-session) schedules — dispatch, holds, the direction — and owns the
-Planning document. **Both hold priorities**, under the agreement
-rule (below). The **launcher** starts the day:
-it runs the lever fold and hands its kill and merge candidates to
-this session. Todo means "should this be done", and the operator
-answers that question in this tab, four tasks at a time.
+The **curator** judges and bootstraps: it runs the start-of-day
+bootstrap that writes the state of play, then owns everything
+between Backlog and Todo — what to promote, kill or merge — and
+rules on a rebase whose two intents cannot both stand. The
+**scheduler** (the `plan` session) warm-boots from that write and
+owns the live day — dispatch, the direction, the close-out — and
+the Planning document after the bootstrap. **Both hold
+priorities**, under the agreement rule (below). The **launcher**
+(to be renamed the analyst) runs the mechanical morning beside
+this tab: the lever fold, whose kill and merge candidates it hands
+here, and the scheduler's tab, opened on this session's
+`state of play written`. Todo means "should this be done", and the
+operator answers that question in this tab, four tasks at a time;
+an ask here never blocks a dispatch.
 
 The sibling shapes: `architect` for the seat-session discipline,
 `ratify-staged` for the review round this reuses — the same ask
@@ -25,8 +31,10 @@ batch at the end.
 
 The **base repo**, never a worktree; no branch, no commits, no PR.
 It is advisor tier, **Bedrock** by default; `curate anthropic` is
-the escape. The launcher session dispatches it each morning, or
-the operator types `curate`. The `curate` shell verb pins the
+the escape. The fresh-day `plan` pre-launch opens it each morning
+beside the launcher's tab (the launcher dispatches it when that tab
+did not open), or the operator types `curate`. The `curate` shell
+verb pins the
 model and refuses an unresolved tier, so there is no in-session
 model check
 (`docs/conventions/local-integrations.md`).
@@ -35,48 +43,170 @@ There is **no governing issue**: the curator is a session that
 runs every day, named by its date, so it writes no issue state of
 its own and has no close tool.
 
-## Bootstrap: three reads
+## Bootstrap: the state of play
 
-1. The Planning document — resolve its id with its own bare call:
+**The curator runs the start-of-day bootstrap** (ruling 2, amended
+2026-10-30). The heavy payload — the board, the PR list, the
+upkeep report — belongs in the session with the fewest turns after
+it, and the scheduler, which carries the day's messages and every
+dispatch, warm-boots from what this writes. "Start of day" means
+the operator's `plan`, not a clock: its pre-launch opens this tab
+beside the launcher's, and the bootstrap starts at once. It runs
+**unattended until its write** — no ask before the state of play
+is written, because the scheduler's start trigger waits on it.
+
+**Warm or full.** Resolve the document's id with its own bare
+call, then spill it:
+
+```sh
+printenv LINEAR_PLANNING_DOC_ID
+```
+
+Unset: say so and stop. Read the rulings file,
+`.claude/skills/plan/rulings.md`, then the document with
+`python3 .claude/tools/planning_doc.py --out <scratch>`, slicing
+it by `--section`. A `Bootstrap stamp` of **today** means the
+state of play is already written (a cycle, a relaunch mid-day):
+skip to the pool listing below and write nothing to the document.
+Otherwise, the full bootstrap:
+
+1. **Verify overnight landings with `git log`** and the In Review
+   listing, never the Done column; name each chain a landing
+   released.
+
+1. **Say the upkeep report's highlights, with the parked counts.**
+   The pre-launch ran `.claude/tools/upkeep.py` and spliced its
+   report under the document's `Upkeep report` heading, so the
+   spill holds it; never re-run the pass. Say its `parked` line —
+   each pool's count and direction (ruling 23), `Curator pending`
+   among them — what was pruned and dismissed (or would have been,
+   unarmed), each refusal (a live session lock, an open PR —
+   reported, never retried) and each pruned name's ahead count, any
+   inert guard, dangling reference or file near its size cap, and
+   the `fleet-cost` day lines, any flagged day first. Say the run
+   line's duration and a failed `auth` line as the one
+   re-authentication it names — the steps it gates were skipped,
+   not broken. A run stamp older than today means
+   the pass did not reach the document — say so. The destructive
+   items are the launcher's one ask, never asked here.
+
+1. **Read the board**, two calls; `list` defaults to Backlog,
+   milestoned issues dropped:
 
    ```sh
-   printenv LINEAR_PLANNING_DOC_ID
-   ```
-
-   Unset: say so and stop.
-
-1. The rulings file, `.claude/skills/plan/rulings.md`.
-
-1. One compact listing of each pool, the inbox and the operator
-   items:
-
-   ```sh
-   python3 .claude/tools/ratify_staged.py list --pool inbox
+   python3 .claude/tools/board_batch.py list --include-milestoned \
+     --show-milestone
    ```
 
    ```sh
-   python3 .claude/tools/ratify_staged.py list --pool operator
+   python3 .claude/tools/board_batch.py list --state Todo
    ```
 
-   A row marked `[curator pending]` is a **leftover** from a curator
-   that stopped mid-day: clear it before the first batch with one
-   sweep, `python3 .claude/tools/ratify_staged.py unmark --all`.
+   Say three counts: the inbox (untagged Backlog), its Urgent
+   subset, and Todo. Pull a body only when a decision turns on it.
 
-**Nothing else.** No issue bodies — a body is read when its batch
-comes up. No PR checks, no parked counts, no audit heartbeat:
-those are the scheduler's. The **launcher's hand-off** arrives as
-one message, not a read: its first line names the sender,
+1. **Read Next as the operator sees it** (`board_batch.py view`)
+   and **verify it against the holds**: name each row the
+   scheduler should not dispatch, with its blocker. A hold is an
+   edge or it does not exist, so each one rides the first ask's
+   question 2 as an edge proposal; the state of play records it as
+   pending until the tick. Look for the two scheduling smells too —
+   an edge whose blocker is already closed, an unblocked Urgent
+   issue sitting behind one — and record each for the scheduler.
+
+1. **Run the audit heartbeat — every full bootstrap, unprompted.**
+   The document carries a bounded **audit-state table**, one row
+   per unit in `docs/conventions/audit-registry.md` (unit, last
+   audited, finding count, outcome pointer). A unit **stale** —
+   judged against the code, not the calendar: rewritten since its
+   last audit, while one untouched because its subsystem is
+   untouched is not urgent for being old — or one that just
+   settled, is about to be built on, or is suspect → **file an
+   audit issue**. Nothing qualifies →
+   **decline and record the reason** in the state of play. An
+   unrecorded non-decision is the failure this exists to catch.
+
+   An audit issue is a **Backlog** task, no milestone, naming one
+   registry **target** (subsystem, interface, or a random-target
+   pass for breadth), its **scope**, its **rationale** (which
+   criterion fired, with evidence) and its **sequencing** as prose.
+   It competes in the queue like any capacity spend — an audit that
+   cannot win that argument should not run this week. Title it
+   `[Explore/Bedrock]` (`[Explore/Anthropic]` when it needs the
+   web): it runs as `explore`, never `task` (operator rule,
+   2026-09-11) — a
+   temporary worktree, no PR
+   (`docs/conventions/local-integrations.md` → "Architect and
+   explore sessions: temporary worktree, no PR"). The pulling
+   session runs one scoped `audit-scope`, fan-out included, and
+   sits In Progress until its findings are ratified, so an old In
+   Progress audit is live, not stalled. It reaches this pool like
+   any filing.
+
+1. **Cut the collision clusters from file overlap**, per
+   `docs/conventions/linear-automation.md` → "Overlap is a
+   cluster, never an ordering": per shared area, as prose, judged
+   from the titles and any prose already held — a body only where
+   the overlap turns on it. It is a
+   **first cut**: the scheduler revises it as it dispatches, and
+   nothing is dispatched on this session's word.
+
+1. **Write the state of play** — the document rewritten wholesale
+   to `plan`'s ephemeral shape ("The Planning document is the
+   living state"), under its composition rules (no inline code
+   spans, no emphasis span crossing a newline, no machine-parsed
+   field opening with a bare hostname-valid `name.ext`): today's
+   `Bootstrap stamp`, no `Fleet start:` line (the scheduler writes
+   today's), `Discuss with operator` **carried verbatim** for the
+   scheduler to act on, the direction carried forward, the fleet
+   state and parked counts from the reads above, the clusters, the
+   audit table with the heartbeat's decision, the upkeep report
+   verbatim through its `End of upkeep report.` line, and every
+   foreign or unconsolidated note swept into its section. **Read it
+   back** once: a write against a stale snapshot saves the stale
+   base. This is the curator's **only** document write; the
+   incremental notes, the close-out and the day report are the
+   scheduler's.
+
+1. **Send `state of play written`**, exactly, once, in one turn:
+   `ListAgents`, then one `SendMessage` to the live `launch-<day>`
+   (its cue to open the scheduler's tab) and one to a live
+   `schedule-<day>` (an operator who started it by hand). Neither
+   live: say `launcher: not live` and tell the operator to type
+   `plan` in a new tab. A launcher that comes up **after** the send
+   messages `launcher up`; answer it with `state of play written`
+   again, once, so it opens the scheduler. A `launcher up` that
+   arrives **before** the write gets no reply: the one send covers
+   it.
+
+**Then the pool**, one compact listing of each, the inbox and the
+operator items:
+
+```sh
+python3 .claude/tools/ratify_staged.py list --pool inbox
+```
+
+```sh
+python3 .claude/tools/ratify_staged.py list --pool operator
+```
+
+A row marked `[curator pending]` is a **leftover** from a curator
+that stopped mid-day: clear it before the first batch with one
+sweep, `python3 .claude/tools/ratify_staged.py unmark --all`.
+
+The **launcher's hand-off** arrives as one message, not a read,
+when its lever fold finishes — usually during this bootstrap, never
+waited for. Its first line names the sender,
 `Hand-off from launch-<day>: …`, then five labelled lists (`none`
 when empty).
 Two feed the first ask — `Kill candidates:` and
 `Merge candidates:`, each with its evidence — and
 `Batches filed:` leads its first batch; `Folds made:` and
 `Levers rejected:` are context only. A hand-off that arrives
-**after** the first ask (a held dispatch, the operator typing
-`curate` by hand) is never dropped: its candidates and batches
-ride the next batch's ask instead. The fold is finished before
-the launcher sends it; the only folding here is a review comment
-into a task body.
+**after** the first ask is never dropped: its candidates and
+batches ride the next batch's ask instead. The fold is finished
+before the launcher sends it; the only folding here is a review
+comment into a task body.
 
 Then state, in a few lines:
 
@@ -139,14 +269,17 @@ python3 .claude/tools/ratify_staged.py ask --pool inbox \
   --proposals <scratchpad>/proposals.json --out <scratchpad>/ask.json
 ```
 
-`--ids` is the batch: the tool never ranks or chooses, and the
-checkboxes come out in the order passed, so your ranking takes
-effect only through it — carried tasks first, then the top of the
-ranking, four ids. `--notes` maps each of those ids to its line of
-commentary (an id with no note falls back to its title; a note for
-an id not in `--ids` is refused). Pass each `calls[]` entry's
-`questions` to `AskUserQuestion` unchanged. The ask text is the
-operator's, verbatim:
+`--ids` is the batch: the tool never ranks or chooses, so your
+ranking takes effect only through which four ids you pass —
+carried tasks first, then the top of the ranking. The checkboxes
+come out in **ascending issue number** whatever order you pass
+(the tool sorts, for this pool and the seat sessions' staged sets
+alike), so the operator opens the batch as tabs left to right and
+reads the dialog top to bottom. `--notes` maps each of those ids
+to its line of commentary (an id with no note falls back to its
+title; a note for an id not in `--ids` is refused). Pass each
+`calls[]` entry's `questions` to `AskUserQuestion` unchanged. The
+ask text is the operator's, verbatim:
 
 > Have you looked at these? Check each one once you have. Leave a
 > comment on it and I will revise it; leave nothing and I will take
@@ -162,8 +295,9 @@ hand-off's `Batches filed:` lead.
 The commentary line, by case:
 
 - **A fresh spec**: what it buys, where it ranks and why.
-- **A carried task**: what happened — "your comment was folded into
-  Part 2 and the thread resolved".
+- **A carried task**: the line opens `(carried)`, since its place
+  no longer says so, then what happened — "(carried) your comment
+  was folded into Part 2 and the thread resolved".
 - **An `[Operator]` item**: "yours to do; a tick moves it to Todo,
   and I carry it in the fifth box until your Done" — what it
   unblocks, and why now.
@@ -181,7 +315,8 @@ don't retitle around it.
 
 **Question 2**, only when there is something to propose, passed as
 `--proposals`: **edges**, one checkbox per proposal with its
-one-line reason (what it consumes, what it unblocks). In the
+one-line reason (what it consumes, what it unblocks) — the
+bootstrap's holds among them, in the first ask. In the
 **first ask** it also carries the launcher's hand-off, one
 checkbox per candidate with its evidence as the reason —
 `{"kill": <id>}` and `{"merge": [<ids> …]}`. A re-rank the curator
@@ -372,6 +507,11 @@ lacks. So:
 - The Planning document records the result at the scheduler's next
   write-back — the curator does not write it there.
 
+**The document has one write each.** The curator's is the
+bootstrap rewrite; everything after it — incremental notes, the
+close-out rewrite, the day report — is the scheduler's, and the
+document's header line says so.
+
 **What the curator never writes:**
 
 - a priority without the same-turn message to the scheduler;
@@ -385,11 +525,38 @@ lacks. So:
   or merge, the ticked task's Todo move or cancel, and the fifth
   box's Done, cancel or deferral reply;
 - a chore's dispatch: a chore-token item in Todo is the
-  scheduler's.
+  scheduler's;
+- the Planning document, outside the bootstrap rewrite.
 
-The one filing it makes is the architect task below, drafted with
-the operator in the tab; its Backlog state is fixed by this method,
-and its priority is a proposal like any filer's.
+Its filings are the bootstrap's audit issue and the architect task
+below, drafted with the operator in the tab; each one's Backlog
+state is fixed by this method, and its priority is a proposal like
+any filer's.
+
+## Rebase adjudication
+
+An executor rebasing onto main can meet two intents that cannot
+both stand — its issue's and a landed sibling's — where a mechanical
+merge would silently drop one. It messages this session the two
+intents and its proposed resolution. **Rule on it in the same
+turn**, the batch in flight notwithstanding:
+
+1. Read the state of play's `Collision clusters` section
+   (`planning_doc.py --section 'Collision clusters'`) and the two
+   issues' bodies.
+1. Rule: which intent stands, or the combined form both survive
+   as, with the reason in a line. Accepting the executor's proposal
+   is a ruling too.
+1. Reply to the executor with the ruling.
+1. **Message the scheduler** when the ruling changes an in-flight
+   issue's scope — what is built, not only how the conflict
+   resolves — since the live picture and any re-sequencing are its.
+   The message is the reconciliation point when a ruling and a
+   dispatch cross.
+
+The ruling is never a body write: the executor carries it in its
+own PR, and a scope change that needs a follow-up is filed by
+whoever owns it, messaged like any filing.
 
 ## The architecture spin-off
 
@@ -438,8 +605,9 @@ re-list, never the state. **Never poll** the board between messages.
 
 **Cycling** reuses the scheduler's mechanics: at each idle point,
 `python3 .claude/tools/plan_cycle.py check`, and on `"due": true`
-ask once whether to cycle (`plan` → "Cycling"). The pool listing
-is the state, so a relaunch re-lists and carries on.
+ask once whether to cycle (`plan` → "Cycling"). Today's
+`Bootstrap stamp` makes a relaunch warm, and the pool listing is
+the state, so it re-lists and carries on.
 
 **The stop.** The scheduler's close-out sends the line "closing
 for the day". On it:
