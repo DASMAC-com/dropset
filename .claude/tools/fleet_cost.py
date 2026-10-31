@@ -972,6 +972,7 @@ def reconcile_day(summary: dict, billed: dict[str, float], tolerance: float) -> 
         "billed_background": background,
         "raw_drift": drift(metered, matched),
         "drift": d,
+        "tolerance": tolerance,
         "flagged": flagged,
     }
 
@@ -989,18 +990,25 @@ def classifier_split(
     The **classifier** half is the fresh tiers' gap once the whole
     `CLASSIFIER_OVERHEAD` allowance is charged to them; the **rest** half is the
     cache tiers' gap, plus any unrecognized usage type, which no transcript
-    prices. Each is a fraction of the matched bill, signed as `drift` is, and
-    the two sum to `reconcile_day`'s drift, so ``moved`` names the half that
-    carries more of it. ``overhead`` is the day's measured classifier share
-    (the fresh tiers' billed excess over metered, over the matched bill), the
-    figure to set beside the constant when re-measuring it.
+    prices, and the whole expected figure of a metered service with no usage
+    billed yet. Each is a fraction of the matched bill, signed as `drift` is,
+    and the two sum to `reconcile_day`'s drift, so ``moved`` names the half
+    that carries more of it. ``overhead`` is the day's measured classifier
+    share (the fresh tiers' billed excess over metered, over the matched bill),
+    the figure to set beside the constant when re-measuring it.
     """
     metered = {"fresh": 0.0, "cache": 0.0}
+    no_usage = 0.0
     for model, tokens in summary["bedrock_tokens"].items():
         service = service_for_model(model)
-        if service not in usage or service not in summary["bedrock_by_service"]:
+        # Only a priced model reaches `bedrock_by_service`; an unpriced one is
+        # `reconcile_day`'s unpriced line, outside the drift.
+        if service not in summary["bedrock_by_service"]:
             continue
         cost = sm.Cost.price(sm.Tokens(**tokens), model)
+        if service not in usage:
+            no_usage += cost.total()
+            continue
         metered["fresh"] += cost.input + cost.output
         metered["cache"] += cost.cache_read + cost.cache_write
     billed = {"fresh": 0.0, "cache": 0.0}
@@ -1015,7 +1023,9 @@ def classifier_split(
         CLASSIFIER_OVERHEAD / (1 - CLASSIFIER_OVERHEAD)
     )
     classifier = (metered["fresh"] + allowance - billed["fresh"]) / matched
-    rest = (metered["cache"] - billed["cache"]) / matched
+    rest = (
+        metered["cache"] + no_usage / (1 - CLASSIFIER_OVERHEAD) - billed["cache"]
+    ) / matched
     return {
         "classifier": classifier,
         "rest": rest,
@@ -1024,11 +1034,20 @@ def classifier_split(
     }
 
 
-def render_split(split: dict, flagged: bool) -> str:
-    """The drift's two halves, naming the one that moved on a flagged day."""
+def drift_tripped(rec: dict) -> bool:
+    """Whether `reconcile_day` flagged the day for its drift, which it records
+    beside the tolerance it judged against."""
+    d = rec["drift"]
+    return rec["flagged"] and d is not None and abs(d) > rec["tolerance"]
+
+
+def render_split(split: dict, tripped: bool) -> str:
+    """The drift's two halves, naming the one that moved when the drift itself
+    tripped the flag — not a background-share or no-bill flag, which the split
+    does not explain."""
     overhead = split["overhead"]
     measured = "n/a" if overhead is None else f"{overhead * 100:.1f}%"
-    moved = f"  ({split['moved']} moved)" if flagged and split["moved"] else ""
+    moved = f"  ({split['moved']} moved)" if tripped and split["moved"] else ""
     return (
         f"  split         classifier {pct(split['classifier'])}, "
         f"rest {pct(split['rest'])}; overhead {measured} measured, "
@@ -1449,7 +1468,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     split = classifier_split(summary, fetch_usage(day))
                     rec["split"] = split
-                    lines.append(render_split(split, rec["flagged"]))
+                    lines.append(render_split(split, drift_tripped(rec)))
                 if "friction" in summary:
                     lines.append(
                         f"  friction      {render_friction(summary['friction'])}"
