@@ -24,7 +24,9 @@
 //!    bytes and the same domain error codes. They **skip** (rather than
 //!    fail) when the reference oracle `.so` is absent, so a plain
 //!    `cargo test` — which only builds the default asm `.so` — stays green.
-//!    `make program-parity` builds both.
+//!    `make program-parity` builds both, and `make program` (so `make test`)
+//!    deletes the oracle, so one built before a rebase skips rather than
+//!    failing like a regression.
 //!
 //!    That skip is convenience for a bare local run and **must never be
 //!    what CI does**, because a skipped test is scored as a passing one:
