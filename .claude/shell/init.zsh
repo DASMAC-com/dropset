@@ -165,7 +165,8 @@ _ds_cargo_pool() {
   # checkout gets its own slots while dependencies stay shared. Measured on two
   # checkouts sharing one target dir, a sibling's newer build skipped under no
   # wrapper or a shared one, and each of check, build, test and build-sbf
-  # compiled the checkout's own source under its own; `make program` is
+  # compiled the checkout's own source under its own, run at once as well as
+  # in turn (the lock serializes them); `make program` is
   # build-sbf and `make wasm` runs the wrapper under wasm-pack (both
   # measured), while `make idl`, anchor's host `cargo test`, is inferred and
   # not measured. Rustdoc is not wrapped but
