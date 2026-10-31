@@ -308,17 +308,17 @@ def resolve(tag: str, repo: Path) -> dict:
 
 
 #: The kinds `.claude/shell/init.zsh` actually seeds a daily id with — the
-#: scheduler's `plan`, the curator's `curate` and the launcher's `launch` (the
+#: scheduler's `plan`, the curator's `curate` and the analyst's `analyze` (the
 #: `housekeeping` verb retired). Anything else has no session to name.
-DAILY_KINDS = ("plan", "curate", "launch")
+DAILY_KINDS = ("plan", "curate", "analyze")
 
-#: The daily kinds that cycle; `launch` always seeds cycle 0
-#: (`_ds_daily_sid launch 0`), so no counter file can move it.
+#: The daily kinds that cycle; `analyze` always seeds cycle 0
+#: (`_ds_daily_sid analyze 0`), so no counter file can move it.
 CYCLING_KINDS = ("plan", "curate")
 
 #: The kinds seeded by issue number instead of by day (`_ds_topic_sid chore
 #: <n>`), reached through ``--daily-id chore --tag <n>`` so a chore's tail has
-#: the same one computed path a seat's does.
+#: the same one computed path a daily role's does.
 TOPIC_KINDS = ("chore",)
 
 _DAILY_DATE_RE = re.compile(r"^\d{8}$")
@@ -370,7 +370,7 @@ def launch_date() -> str:
 def daily_session_id(kind: str, date: str, cycle: int = 0) -> str:
     """The session id a daily verb (`plan`, `curate`) computes for itself.
 
-    A seat session's id is **deterministic**, not discovered: an md5 of
+    A daily-role session's id is **deterministic**, not discovered: an md5 of
     ``dropset-<kind>-<YYYYMMDD>`` formatted as a UUID. So a session wanting its
     own transcript — to run the metrics tool over it at close-out — computes the
     id rather than searching for it.
@@ -458,7 +458,7 @@ def run(argv: list[str]) -> int:
         default=None,
         metavar="KIND",
         help="print the deterministic session id for a daily verb (plan, "
-        "curate, launch), or a chore with --tag <n>, and "
+        "curate, analyze), or a chore with --tag <n>, and "
         "exit — compute your own id rather than listing the "
         "projects directory to find it",
     )

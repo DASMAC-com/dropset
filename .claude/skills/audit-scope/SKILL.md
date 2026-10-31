@@ -32,9 +32,9 @@ the shared `ratify-staged` skill (step 8); planning is
 consulted for feedback, never for ratification.
 
 **Staged means state Backlog plus `Session pending`**, both set
-in the creating call — the staging lane every seat session's
-filings share. The milestone keeps a finding out of the review
-inbox until the operator has ticked it here; only the
+in the creating call — every advisor session's staging lane.
+The milestone keeps a finding out of the review inbox until the
+operator has ticked it here; only the
 operator's final answer moves it to Todo, in `ratify-staged`'s
 one batch write. `Audit findings` takes no new filings: it is a
 legacy pool planning drains. See

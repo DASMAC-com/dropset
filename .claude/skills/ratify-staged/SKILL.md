@@ -6,8 +6,9 @@ user-invocable: true
 
 # `ratify-staged`
 
-Stage 2 of a seat session's output, written once for every consumer
-(`architect`, `explore` and `audit-scope`'s findings). Stage 1 — the
+Stage 2 of an advisor session's output, written once for
+every consumer (`architect`, `explore` and `audit-scope`'s findings).
+Stage 1 — the
 spec and its read-back loop — belongs to the consumer and ends with
 the task list the spec will file. **An audit enters at step 3**: its
 findings are the adversarial cross-check's survivors and carry no
@@ -24,7 +25,7 @@ The curator drives the same tool over the **inbox pool** with
 curator's own `Curator pending` mark, `[Operator]` items included and
 marked) rather than over `Session pending`. There
 `ask` takes the session's per-task `--notes` and its `--proposals`
-(edges, priority changes, and the launcher's kill and merge
+(edges, priority changes, and the analyst's kill and merge
 candidates, asked as a further question), `approve` takes one id at a
 time plus
 any rejects, and `gate` is refused, since nothing is staged. The steps

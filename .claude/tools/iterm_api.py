@@ -87,15 +87,15 @@ PER_TAB_TIMEOUT_SECONDS = 10
 #: a malformed `ps` answer cannot loop forever.
 CALLER_TTY_MAX_HOPS = 32
 
-#: The iTerm user variable the `plan`, `curate` and `launch` launchers set, and
-#: their values. Read here to place new tabs left of the seat tabs resting at
+#: The iTerm user variable the `plan`, `curate` and `analyze` launchers set, and
+#: their values. Read here to place new tabs left of the daily-role tabs resting at
 #: the right edge; `iterm-reorder.py` reads the same pairs to keep them there.
 #: Outermost first: a tab whose panes carry two reads as the first.
 ROLE_VARIABLE = "user.ds_role"
 PLAN_ROLE = "plan"
 CURATE_ROLE = "curate"
-LAUNCH_ROLE = "launch"
-SEAT_ROLES = (PLAN_ROLE, CURATE_ROLE, LAUNCH_ROLE)
+ANALYZE_ROLE = "analyze"
+DAILY_ROLES = (PLAN_ROLE, CURATE_ROLE, ANALYZE_ROLE)
 
 #: The attend-mark script, shared by both launchers.
 ATTEND_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "iterm-attend.sh"
@@ -367,7 +367,7 @@ def open_tabs(
 ) -> list[str | None]:
     """Open one tab per command in the caller's window, typing each. Returns ttys.
 
-    ``roles`` names the seat role each command's tab will carry (positional,
+    ``roles`` names the daily role each command's tab will carry (positional,
     None for a worker), which places it by :func:`insert_index`; omitted, every
     tab is a worker's.
 
@@ -579,46 +579,46 @@ def _focus_to_restore(window, caller_tab):
 
 
 async def _tab_role(tab) -> str | None:
-    """The seat role if ANY pane of ``tab`` carries one, else None — the
-    outermost (`SEAT_ROLES` order) when panes carry two."""
+    """The daily role if ANY pane of ``tab`` carries one, else None — the
+    outermost (`DAILY_ROLES` order) when panes carry two."""
     found = set()
     for session in getattr(tab, "sessions", None) or []:
         try:
             found.add(await session.async_get_variable(ROLE_VARIABLE))
-        except Exception:  # noqa: BLE001 - an unreadable role is no seat tab
+        except Exception:  # noqa: BLE001 - an unreadable role is no daily-role tab
             continue
-    return next((role for role in SEAT_ROLES if role in found), None)
+    return next((role for role in DAILY_ROLES if role in found), None)
 
 
 async def _tab_roles(window) -> list[str | None]:
-    """Each tab's seat role, left to right."""
+    """Each tab's daily role, left to right."""
     return [await _tab_role(tab) for tab in getattr(window, "tabs", None) or []]
 
 
 def insert_index(tab_roles: list[str | None], role: str | None) -> int | None:
     """Where a new tab that will carry ``role`` is created, given each existing
-    tab's seat role left to right; None is iTerm's default, the end.
+    tab's daily role left to right; None is iTerm's default, the end.
 
     * The scheduler's (``plan``) goes RIGHTMOST, where Command-9 reaches it.
-    * Any other seat goes just left of the rightmost scheduler tab, so a
-      later seat lands nearest the scheduler: the morning's `plan + launch`
-      batch, then a dispatched `curate`, rests as plan, curate, launch from
+    * Any other daily role goes just left of the rightmost scheduler tab, so a
+      later one lands nearest the scheduler: the morning's `plan + analyze`
+      batch, then a dispatched `curate`, rests as plan, curate, analyze from
       the right, and any other order is the reorderer's to repair. With no
-      scheduler tab a seat takes a worker's place.
-    * Everything else goes just left of the run of seat tabs at the right
+      scheduler tab a daily role takes a worker's place.
+    * Everything else goes just left of the run of daily-role tabs at the right
       edge, so they stay outermost without waiting on a reorder pass. While the
-      reorderer runs, a seat tab not at the edge is in an attention group on
+      reorderer runs, a daily-role tab not at the edge is in an attention group on
       the left, and appending is then already its resting order. iTerm has no
       tab pin to use instead.
     """
     if role == PLAN_ROLE:
         return None
-    if role in SEAT_ROLES:
+    if role in DAILY_ROLES:
         plans = [i for i, r in enumerate(tab_roles) if r == PLAN_ROLE]
         if plans:
             return plans[-1]
     index = len(tab_roles)
-    while index and tab_roles[index - 1] in SEAT_ROLES:
+    while index and tab_roles[index - 1] in DAILY_ROLES:
         index -= 1
     return None if index == len(tab_roles) else index
 
@@ -631,10 +631,10 @@ async def _open_and_type(
     Mutates ``ttys`` / ``untyped`` in place. The driver published both into its
     result before calling, which is what lets a mid-batch failure report them.
     ``tab_roles`` is the window's from :func:`_tab_roles`, or None to append
-    every tab; ``roles`` the seat role each command's tab will carry. Each new
+    every tab; ``roles`` the daily role each command's tab will carry. Each new
     tab's role is booked into ``tab_roles`` as it is created, since its shell
-    has not set the variable yet — so a ``plan + launch`` batch puts the
-    launcher left of the scheduler tab it just opened.
+    has not set the variable yet — so a ``plan + analyze`` batch puts the
+    analyst left of the scheduler tab it just opened.
     """
     roles = list(roles or [])
     for index, command in enumerate(commands):

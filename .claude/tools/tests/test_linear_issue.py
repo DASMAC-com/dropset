@@ -982,7 +982,7 @@ class BodyDir(_Stubbed):
         self.assertIn("milestone Session pending", out)
 
     def test_one_parent_flag_files_the_whole_directory_under_it(self):
-        # A seat session files its set as sub-issues of the governing issue,
+        # An advisor session files its set as sub-issues of the governing issue,
         # so `--parent` is the batch default and a header may override it.
         tmp = self.write_dir(
             {"a.md": "title: A\n\nb", "b.md": "title: B\nparent: ENG-9\n\nb"}

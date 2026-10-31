@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""The daily seats' cycle mechanics — the `plan` skill's "Cycling" section.
+"""The daily roles' cycle mechanics — the `plan` skill's "Cycling" section.
 
-A daily seat session (the scheduler's `plan`, the curator's `curate`) is a hub,
+A daily-role session (the scheduler's `plan`, the curator's `curate`) is a hub,
 so its prefix only grows: every consult, board write and handoff is replayed on
 every later turn, and session cost is roughly quadratic in length
 (``docs/conventions/context-economy.md``). Cycling bounds that: close out, exit,
@@ -28,7 +28,7 @@ The daily kind defaults to ``$DS_DAILY_KIND``, which each launcher sets, else
   sub-agents included, priced as session metrics prices it. ``due`` fires on
   ``replay_usd``: a fresh session pays the write too, so cycling does not save
   it, and at 40-80x the read rate one tool result's write would otherwise swamp
-  the length signal. A seat session records the same model id as a Bedrock one, so it is
+  the length signal. A Claude subscription session records the same model id as a Bedrock one, so it is
   priced at Bedrock rates too, as ``fleet_cost.py`` prices it; only a model
   with no row falls back to the token threshold, and the line says so. Exit 0
   either way; the caller branches on ``due``.
@@ -100,7 +100,7 @@ def snooze_name(kind: str) -> str:
 
 #: The marker the launcher's loop checks on exit, beside the substrate markers,
 #: and the snooze file — the scheduler's; each daily kind has its own pair
-#: (`marker_name` / `snooze_name`), so the two seats never trip each other.
+#: (`marker_name` / `snooze_name`), so the two daily roles never trip each other.
 MARKER = marker_name("plan")
 SNOOZE = snooze_name("plan")
 

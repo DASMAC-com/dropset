@@ -1,13 +1,13 @@
 ---
-name: launch
-description: Run the launcher — the executor-tier session that starts the day, opened by the fresh-day `plan` pre-launch in a tab left of the scheduler's (or typed as `launch`), in the base repo with no worktree, branch or PR. Runs the trim-context lever fold in its own visible tab, filing the Claude: batches into Backlog and writing the fold stamp; gathers kill and merge candidates, filing nothing on them. Then prunes, unasked, every worktree (once the digest has read its session) and stray branch whose issue is Done or Canceled, reporting each tip. Waits, event-driven, for the scheduler's `state of play written`, then dispatches the curator with the hand-off. Weekly, a read-only sub-agent judges every memory stale, superseded, repo-bound or keep. Then asks the one destructive question — the transcript purge, the upkeep report's other destructive items and the judged memories — applying only what is ticked. Ends with session metrics and its cost; the tab stays open.
+name: analyze
+description: Run the analyst — the executor-tier session that starts the day, opened by the fresh-day `plan` pre-launch in a tab left of the scheduler's (or typed as `analyze`), in the base repo with no worktree, branch or PR. Runs the trim-context lever fold in its own visible tab, filing the Claude: batches into Backlog and writing the fold stamp; gathers kill and merge candidates, filing nothing on them. Then prunes, unasked, every worktree (once the digest has read its session) and stray branch whose issue is Done or Canceled, reporting each tip. Waits, event-driven, for the scheduler's `state of play written`, then dispatches the curator with the hand-off. Weekly, a read-only sub-agent judges every memory stale, superseded, repo-bound or keep. Then asks the one destructive question — the transcript purge, the upkeep report's other destructive items and the judged memories — applying only what is ticked. Ends with session metrics and its cost; the tab stays open.
 disable-model-invocation: false
 user-invocable: true
 ---
 
-# `launch`
+# `analyze`
 
-The **launcher** starts the day. The pre-launch (a fresh-day `plan`
+The **analyst** starts the day. The pre-launch (a fresh-day `plan`
 in the typed tab) ran the AWS gate and the upkeep pass, then opened
 two tabs: the scheduler's, rightmost, and this one just left of it
 (`docs/conventions/local-integrations.md` → the verb table). The
@@ -15,28 +15,28 @@ scheduler bootstraps the board while this tab folds the levers, so
 both finish around the same time; the curator starts only once both
 have.
 
-Three seats, three jobs:
+Three daily roles, three jobs:
 
 - the **scheduler** (`plan`) owns the board's schedule and the
   Planning document;
 - the **curator** (`curate`) owns review — Backlog to Todo, kills
   and merges;
-- the **launcher** files the levers, hands the curator its
+- the **analyst** files the levers, hands the curator its
   candidates, brings it up, and asks the destructive question.
 
 ## Where it runs
 
 The **base repo**, never a worktree; no branch, no commits, no PR.
-Executor tier, **Bedrock** by default (`launch anthropic` is the
-escape). The `launch` helper pins the model and refuses an
+Executor tier, **Bedrock** by default (`analyze anthropic` is the
+escape). The `analyze` helper pins the model and refuses an
 unresolved tier, so there is no in-session model check. There is
 **no governing issue**: no state write, no close tool. It does not
-cycle — one session a day, `launch-<day>`.
+cycle — one session a day, `analyze-<day>`.
 
-**`DS_LAUNCH_SCHEDULER` first.** Read it with its own bare call:
+**`DS_ANALYZE_SCHEDULER` first.** Read it with its own bare call:
 
 ```sh
-printenv DS_LAUNCH_SCHEDULER
+printenv DS_ANALYZE_SCHEDULER
 ```
 
 Set only by the pre-launch's last fallback (neither tab opened), it
@@ -110,7 +110,7 @@ say so.
 ## 2. The hand-off and the curator
 
 **Wait for the scheduler's message.** Its bootstrap sends exactly
-`state of play written` to `launch-<day>` once the Planning document
+`state of play written` to `analyze-<day>` once the Planning document
 holds the state of play. The two run side by side, so it may land
 **while the fold is still running**: then go straight on to the
 dispatch once the fold is done. Otherwise run `ListAgents` once to
@@ -144,7 +144,7 @@ re-list at most three times), then send it **one** message, this
 shape exactly, with each list's lines or `none`:
 
 ```txt
-Hand-off from launch-<day>: lever fold done, state of play written.
+Hand-off from analyze-<day>: lever fold done, state of play written.
 Batches filed:
 - ENG-### — <title> (<n> parts)
 Folds made:
@@ -168,7 +168,7 @@ pass `--over-budget`. On a tab that opened but whose session is not
 listed after the three re-lists, say so. Either way, print the
 hand-off block in this tab and tell the operator to type `curate`
 once a slot frees, then `curator up` here: that message re-lists
-and sends the block, so nothing nudges the launcher unasked and
+and sends the block, so nothing nudges the analyst unasked and
 nothing is lost.
 
 **No message by the time the fold is done** means idling at no

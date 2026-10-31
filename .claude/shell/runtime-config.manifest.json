@@ -19,6 +19,16 @@
       ]
     },
     {
+      "anchor": "docs/conventions/local-integrations.md \u2192 The family, one line each",
+      "default": null,
+      "kind": "launcher-set",
+      "name": "DS_ANALYZE_SCHEDULER",
+      "required": false,
+      "verbs": [
+        "analyze"
+      ]
+    },
+    {
       "anchor": "docs/conventions/local-integrations.md \u2192 The AWS login gate",
       "default": null,
       "kind": "knob",
@@ -98,7 +108,7 @@
       "verbs": [
         "plan",
         "curate",
-        "launch"
+        "analyze"
       ]
     },
     {
@@ -172,16 +182,6 @@
       ]
     },
     {
-      "anchor": "docs/conventions/local-integrations.md \u2192 The family, one line each",
-      "default": null,
-      "kind": "launcher-set",
-      "name": "DS_LAUNCH_SCHEDULER",
-      "required": false,
-      "verbs": [
-        "launch"
-      ]
-    },
-    {
       "anchor": "docs/conventions/local-integrations.md \u2192 Model tiers: the role \u2192 model table",
       "default": null,
       "kind": "model-id",
@@ -225,7 +225,7 @@
       "required": true,
       "verbs": [
         "task",
-        "launch",
+        "analyze",
         "every Bedrock launch"
       ]
     },
@@ -237,7 +237,7 @@
       "required": false,
       "verbs": [
         "task",
-        "launch"
+        "analyze"
       ]
     },
     {
@@ -310,7 +310,7 @@
       "verbs": [
         "plan",
         "curate",
-        "launch"
+        "analyze"
       ]
     },
     {
@@ -321,7 +321,7 @@
       "required": false,
       "verbs": [
         "plan",
-        "launch"
+        "analyze"
       ]
     },
     {
@@ -396,7 +396,7 @@
       "verbs": [
         "plan",
         "curate",
-        "launch",
+        "analyze",
         "upkeep"
       ]
     },

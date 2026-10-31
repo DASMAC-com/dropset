@@ -969,17 +969,17 @@ class SubstrateDetection(unittest.TestCase):
     def test_a_path_ending_at_the_segment_is_not_called_a_base_repo_session(self):
         # Base resolves but no tag does: malformed, not a base-repo session.
         substrate, reason = sm.resolve_substrate(f"{self.base}{sm.WORKTREE_SEGMENT}")
-        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertEqual(substrate, sm.SUBSTRATE_SUBSCRIPTION)
         self.assertIn("no worktree tag", reason)
         self.assertNotIn("base-repo", reason)
 
-    def test_a_malformed_marker_degrades_to_seat_rather_than_raising(self):
+    def test_a_malformed_marker_degrades_to_subscription_rather_than_raising(self):
         # A strict UTF-8 read raises `UnicodeDecodeError` (a `ValueError`, not an
         # `OSError`), and nothing up the call chain handles it — so catching only
         # `OSError` let a torn marker write kill the entire report.
         (self.markers / "eng-1364").write_bytes(b"\xff\xfe bedrock")
         substrate, _ = sm.resolve_substrate(self.worktree)
-        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertEqual(substrate, sm.SUBSTRATE_SUBSCRIPTION)
 
     def test_an_unrecognized_marker_is_truncated_in_the_reason(self):
         self._write("eng-1364", "x" * 200)
@@ -1007,29 +1007,29 @@ class SubstrateDetection(unittest.TestCase):
         self.assertEqual(substrate, sm.SUBSTRATE_BEDROCK)
         self.assertIn("launch verb", reason)
 
-    def test_a_recorded_seat_marker_is_read(self):
+    def test_a_retired_subscription_marker_is_read(self):
         self._write("eng-1364", "seat\n")
         substrate, _ = sm.resolve_substrate(self.worktree)
-        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertEqual(substrate, sm.SUBSTRATE_SUBSCRIPTION)
 
-    def test_a_recorded_anthropic_marker_reads_as_the_seat_branch(self):
+    def test_a_recorded_anthropic_marker_reads_as_the_subscription_branch(self):
         # The launcher's current spelling for the subscription substrate.
         self._write("eng-1364", "anthropic\n")
         substrate, reason = sm.resolve_substrate(self.worktree)
-        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertEqual(substrate, sm.SUBSTRATE_SUBSCRIPTION)
         self.assertIn("launch verb", reason)
 
-    def test_an_absent_marker_reads_as_seat(self):
+    def test_an_absent_marker_reads_as_subscription(self):
         # Matches `_ds_substrate_read` in `.claude/shell/init.zsh`, and fails
         # toward the branch that prints no dollar figure.
         self.assertIsNone(sm.read_substrate_marker(self.worktree))
         substrate, reason = sm.resolve_substrate(self.worktree)
-        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertEqual(substrate, sm.SUBSTRATE_SUBSCRIPTION)
         self.assertIn("no substrate marker", reason)
 
-    def test_a_base_repo_session_is_a_seat_verb(self):
+    def test_a_base_repo_session_is_a_subscription_verb(self):
         substrate, reason = sm.resolve_substrate(str(self.base))
-        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertEqual(substrate, sm.SUBSTRATE_SUBSCRIPTION)
         self.assertIn("base-repo", reason)
 
     def _write_session(self, session_id, text):
@@ -1038,14 +1038,14 @@ class SubstrateDetection(unittest.TestCase):
 
     def test_a_base_repo_session_record_is_read(self):
         # A Bedrock `plan` is a base-repo session: before the per-session
-        # record it had no marker and read as seat, unpriced.
+        # record it had no marker and read as the subscription, unpriced.
         self._write_session("sid-1", "bedrock\n")
         substrate, reason = sm.resolve_substrate(str(self.base), "sid-1")
         self.assertEqual(substrate, sm.SUBSTRATE_BEDROCK)
         self.assertIn("launch verb", reason)
         # Another session in the same checkout is not affected.
         substrate, _ = sm.resolve_substrate(str(self.base), "sid-2")
-        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertEqual(substrate, sm.SUBSTRATE_SUBSCRIPTION)
 
     def test_a_session_record_beats_a_relaunched_tag_marker(self):
         # The relaunch blind spot: a later anthropic launch rewrote the tag
@@ -1060,7 +1060,7 @@ class SubstrateDetection(unittest.TestCase):
         self.assertEqual(substrate, sm.SUBSTRATE_BEDROCK)
         self.assertIn(sm.MARKER_SESSION, reason)
         substrate, reason = sm.resolve_substrate(self.worktree, "sid-2")
-        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertEqual(substrate, sm.SUBSTRATE_SUBSCRIPTION)
         self.assertIn(sm.MARKER_TAG, reason)
 
     def test_a_base_repo_session_record_prices_on_the_bedrock_branch(self):
@@ -1090,26 +1090,26 @@ class SubstrateDetection(unittest.TestCase):
         self.assertIn(sm.MARKER_SESSION, report["substrate_reason"])
         self.assertIn("at Bedrock rates", sm.to_markdown(report, "sid-plan"))
 
-    def test_an_unrecognized_marker_fails_toward_seat(self):
+    def test_an_unrecognized_marker_fails_toward_subscription(self):
         self._write("eng-1364", "vertex")
         substrate, reason = sm.resolve_substrate(self.worktree)
-        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertEqual(substrate, sm.SUBSTRATE_SUBSCRIPTION)
         self.assertIn("unrecognized", reason)
 
-    def test_a_missing_cwd_is_seat_rather_than_a_crash(self):
+    def test_a_missing_cwd_is_subscription_rather_than_a_crash(self):
         substrate, _ = sm.resolve_substrate(None)
-        self.assertEqual(substrate, sm.SUBSTRATE_SEAT)
+        self.assertEqual(substrate, sm.SUBSTRATE_SUBSCRIPTION)
 
     def test_an_explicit_substrate_beats_a_contradicting_marker(self):
         # The whole point of the `--substrate` escape hatch: a worktree that was
         # pruned may have taken its marker with it, and an absent marker reads
-        # as seat, so an operator must be able to assert bedrock over what the
+        # as the subscription, so an operator must be able to assert bedrock over what the
         # marker says.
         self._write("eng-1364", "bedrock")
         agg = sm.SessionAggregator()
         agg.ingest_main_line(self._record())
-        report = agg.finish(sm.SUBSTRATE_SEAT)
-        self.assertEqual(report["substrate"], sm.SUBSTRATE_SEAT)
+        report = agg.finish(sm.SUBSTRATE_SUBSCRIPTION)
+        self.assertEqual(report["substrate"], sm.SUBSTRATE_SUBSCRIPTION)
         self.assertEqual(report["substrate_reason"], "given explicitly")
 
     def test_the_override_reaches_the_report_through_aggregate(self):
@@ -1121,15 +1121,15 @@ class SubstrateDetection(unittest.TestCase):
         transcript = pathlib.Path(self._tmp.name) / "session.jsonl"
         transcript.write_text(self._record() + "\n", encoding="utf-8")
 
-        overridden = sm.aggregate(transcript, "session", sm.SUBSTRATE_SEAT)
-        self.assertEqual(overridden["substrate"], sm.SUBSTRATE_SEAT)
+        overridden = sm.aggregate(transcript, "session", sm.SUBSTRATE_SUBSCRIPTION)
+        self.assertEqual(overridden["substrate"], sm.SUBSTRATE_SUBSCRIPTION)
 
         from_marker = sm.aggregate(transcript, "session")
         self.assertEqual(from_marker["substrate"], sm.SUBSTRATE_BEDROCK)
 
     def test_the_session_id_reaches_the_lookup_through_aggregate(self):
         # A Bedrock `plan`: base-repo cwd, so only the session record answers.
-        # Drop `session_id` from `aggregate`'s `finish` call and this reads seat.
+        # Drop `session_id` from `aggregate`'s `finish` call and this reads as the subscription.
         self._write_session("plan-sid", "bedrock\n")
         transcript = pathlib.Path(self._tmp.name) / "plan-sid.jsonl"
         transcript.write_text(self._record(str(self.base)) + "\n", encoding="utf-8")
@@ -1157,7 +1157,8 @@ class SubstrateDetection(unittest.TestCase):
         base = ["--session-id", "mined", "--json"]
         self.assertEqual(run(base)["substrate"], sm.SUBSTRATE_BEDROCK)
         self.assertEqual(
-            run([*base, "--substrate", "seat"])["substrate"], sm.SUBSTRATE_SEAT
+            run([*base, "--substrate", "subscription"])["substrate"],
+            sm.SUBSTRATE_SUBSCRIPTION,
         )
 
     def test_the_cwd_comes_from_the_transcript(self):
@@ -1170,7 +1171,7 @@ class SubstrateDetection(unittest.TestCase):
 
 
 class SubstrateRendering(unittest.TestCase):
-    """A seat session must never be handed a worker-rate dollar figure."""
+    """A subscription session must never be handed a worker-rate dollar figure."""
 
     def _report(self, substrate: str) -> dict:
         agg = sm.SessionAggregator()
@@ -1227,12 +1228,12 @@ class SubstrateRendering(unittest.TestCase):
         self.assertIn("`claude-opus-5` verified 2026-09-11", md)
         self.assertIn("`claude-haiku-5-5` projected, unverified", md)
 
-    def test_a_seat_session_on_an_unpriced_model_withholds_like_bedrock(self):
-        # No Bedrock row means no figure at Bedrock rates either: the seat
+    def test_a_subscription_session_on_an_unpriced_model_withholds_like_bedrock(self):
+        # No Bedrock row means no figure at Bedrock rates either: the subscription
         # branch refuses by name, exactly as the Bedrock one does.
         agg = sm.SessionAggregator()
         agg.ingest_main_line(assistant('{"output_tokens":1000}', "", "claude-x"))
-        report = agg.finish(sm.SUBSTRATE_SEAT)
+        report = agg.finish(sm.SUBSTRATE_SUBSCRIPTION)
         md = sm.to_markdown(report, "abcd1234")
         self.assertIsNone(report["total_cost"])
         self.assertNotIn("$", md)
@@ -1252,8 +1253,8 @@ class SubstrateRendering(unittest.TestCase):
             parsed["subagents"][0]["by_model"]["claude-opus-5"]["cache_read"], 9
         )
 
-    def test_a_seat_session_is_priced_at_bedrock_rates_and_labelled(self):
-        md = sm.to_markdown(self._report(sm.SUBSTRATE_SEAT), "abcd1234")
+    def test_a_subscription_session_is_priced_at_bedrock_rates_and_labelled(self):
+        md = sm.to_markdown(self._report(sm.SUBSTRATE_SUBSCRIPTION), "abcd1234")
         # The figure leads, as on Bedrock, but every dollar line says it was
         # never charged, so it cannot be read as a bill line.
         self.assertIn("**This session would have cost about $", md)
@@ -1262,7 +1263,7 @@ class SubstrateRendering(unittest.TestCase):
         self.assertNotIn("This session cost about", md)
 
     def test_both_branches_report_the_token_profile(self):
-        for substrate in (sm.SUBSTRATE_BEDROCK, sm.SUBSTRATE_SEAT):
+        for substrate in (sm.SUBSTRATE_BEDROCK, sm.SUBSTRATE_SUBSCRIPTION):
             md = sm.to_markdown(self._report(substrate), "abcd1234")
             self.assertIn("**Totals**", md)
             self.assertIn("**Prefix**", md)
@@ -1275,14 +1276,14 @@ class SubstrateRendering(unittest.TestCase):
         self.assertEqual(parsed["totals"]["prefix_first"], 1010)
         self.assertIn("substrate_reason", parsed)
 
-    def test_json_still_carries_cost_fields_for_a_seat_session(self):
+    def test_json_still_carries_cost_fields_for_a_subscription_session(self):
         # The numbers are in the JSON on both substrates, for the digest and
-        # any other tooling that prices a seat session.
-        parsed = json.loads(sm.to_json(self._report(sm.SUBSTRATE_SEAT)))
-        self.assertEqual(parsed["substrate"], "seat")
+        # any other tooling that prices a subscription session.
+        parsed = json.loads(sm.to_json(self._report(sm.SUBSTRATE_SUBSCRIPTION)))
+        self.assertEqual(parsed["substrate"], "subscription")
         # Assert the VALUES, not merely that the keys exist: the comment above
         # is a claim about the numbers surviving, and a key-existence check
-        # stays green if the seat branch ever zeroes or blanks them.
+        # stays green if the subscription branch ever zeroes or blanks them.
         self.assertAlmostEqual(parsed["total_cost"]["output"], 13.75, places=6)
         self.assertAlmostEqual(parsed["session_cost"]["output"], 13.75, places=6)
         self.assertIn("subagent_cost", parsed)
@@ -1304,7 +1305,7 @@ class SubstrateRendering(unittest.TestCase):
                     "",
                 )
             )
-        report = agg.finish(sm.SUBSTRATE_SEAT)
+        report = agg.finish(sm.SUBSTRATE_SUBSCRIPTION)
         md = sm.to_markdown(report, "abcd1234")
         self.assertIn("peak 5.0k", md)
         self.assertIn("→ 70 ", md)
@@ -1526,8 +1527,10 @@ class ResidentProseLine(unittest.TestCase):
         self.assertIn("**Lever**", md)
         self.assertIn("| CLAUDE.md | instructions | 4.0k | 1.0k | 2 | 2.0k |", md)
 
-    def test_a_seat_sessions_resident_figure_is_labelled_not_billed(self):
-        md = sm.to_markdown(self._priced(substrate=sm.SUBSTRATE_SEAT), "abcd1234")
+    def test_a_subscription_sessions_resident_figure_is_labelled_not_billed(self):
+        md = sm.to_markdown(
+            self._priced(substrate=sm.SUBSTRATE_SUBSCRIPTION), "abcd1234"
+        )
         self.assertIn("**Resident instruction prose**", md)
         self.assertIn("at the cache-read rate (at Bedrock rates, not billed)", md)
 
@@ -1583,8 +1586,8 @@ class ExitBrief(unittest.TestCase):
         self.assertNotIn("sub-agents", brief)
         self.assertTrue(brief.rstrip().endswith(sm.BRIEF_CODA))
 
-    def test_a_seat_brief_is_priced_and_says_not_billed(self):
-        brief = sm.to_brief(self._report(sm.SUBSTRATE_SEAT), "abcd1234")
+    def test_a_subscription_brief_is_priced_and_says_not_billed(self):
+        brief = sm.to_brief(self._report(sm.SUBSTRATE_SUBSCRIPTION), "abcd1234")
         self.assertIn("at Bedrock rates, not billed (rates verified", brief)
 
     def test_sub_agents_break_down_by_model(self):
@@ -1611,7 +1614,7 @@ class ExitBrief(unittest.TestCase):
         # Haiku's rate is unverified, so the dates are named per model.
         self.assertIn("claude-haiku-5-5 projected, unverified", brief)
 
-    def test_the_cost_line_is_dollars_on_bedrock_and_tokens_on_the_seat(self):
+    def test_the_cost_line_is_dollars_on_bedrock_and_tokens_on_the_subscription(self):
         bedrock = self._report(sm.SUBSTRATE_BEDROCK)
         line = sm.cost_line(bedrock, "2026-10-27")
         self.assertEqual(
@@ -1621,9 +1624,11 @@ class ExitBrief(unittest.TestCase):
                 sm.human(bedrock["totals"].prefix_max),
             ),
         )
-        seat = sm.cost_line(self._report(sm.SUBSTRATE_SEAT), "2026-10-27")
-        self.assertTrue(seat.startswith("**Token profile**: "))
-        self.assertNotIn("$", seat)
+        subscription = sm.cost_line(
+            self._report(sm.SUBSTRATE_SUBSCRIPTION), "2026-10-27"
+        )
+        self.assertTrue(subscription.startswith("**Token profile**: "))
+        self.assertNotIn("$", subscription)
         withheld = sm.cost_line(self._report(sm.SUBSTRATE_BEDROCK, "claude-x"), "d")
         self.assertIn("withheld, no Bedrock rate for claude-x", withheld)
 

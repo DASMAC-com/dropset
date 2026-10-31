@@ -35,9 +35,9 @@ each window opens where the last digest's closed, so two digests never count
 one message twice. The first request of each later UTC day
 re-writes the whole cached prefix, and that cache-write cost is its own line.
 
-**Seat sessions are priced at Bedrock rates**, labelled "at Bedrock rates, not
-billed" (``session_metrics.NOT_BILLED``); the subscription is those rates
-subsidized, so the figure says what the work would have cost.
+**Claude subscription sessions are priced at Bedrock rates**, labelled "at
+Bedrock rates, not billed" (``session_metrics.NOT_BILLED``); the subscription
+is those rates subsidized, so the figure says what the work would have cost.
 
 **The CI section** (``--ci``, which upkeep passes) is the merge queue over
 the same window, from ``ci_metrics.py``'s day mode: critical paths against the
@@ -385,13 +385,13 @@ def header_figures(sessions: list[SessionDigest]) -> dict:
     figures: dict = {
         "sessions": sum(1 for s in sessions if s.days),
         "bedrock": 0.0,
-        "seat": 0.0,
+        "subscription": 0.0,
     }
     sub = rewarm = 0.0
     rewarm_sessions = 0
     models: dict[str, float] = {}
     for s in sessions:
-        key = "bedrock" if s.substrate == sm.SUBSTRATE_BEDROCK else "seat"
+        key = "bedrock" if s.substrate == sm.SUBSTRATE_BEDROCK else "subscription"
         figures[key] += s.window_dollars
         sub += sum(d["subagents"] for d in s.days.values())
         spent = sum(d["rewarm"] for d in s.days.values())
@@ -400,7 +400,7 @@ def header_figures(sessions: list[SessionDigest]) -> dict:
             rewarm_sessions += 1
         for model, dollars in s.window_models.items():
             models[model] = models.get(model, 0.0) + dollars
-    figures["total"] = figures["bedrock"] + figures["seat"]
+    figures["total"] = figures["bedrock"] + figures["subscription"]
     figures["subagent_share"] = sub / figures["total"] if figures["total"] else 0.0
     figures["rewarm"] = rewarm
     figures["rewarm_sessions"] = rewarm_sessions
@@ -572,14 +572,14 @@ def calibration_lines(calibration: dict | None, flags: list[str]) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def _dollars(value: float | None, seat: bool) -> str:
+def _dollars(value: float | None, subscription: bool) -> str:
     if value is None:
         return "unpriced"
-    return sm.money(value) + (f" ({sm.NOT_BILLED})" if seat else "")
+    return sm.money(value) + (f" ({sm.NOT_BILLED})" if subscription else "")
 
 
 def session_block(s: SessionDigest) -> list[str]:
-    seat = s.substrate != sm.SUBSTRATE_BEDROCK
+    subscription = s.substrate != sm.SUBSTRATE_BEDROCK
     report = s.report
     totals: sm.Totals = report["totals"]
     issue = fleet_cost.issue_of(s.head.cwd) or s.head.issue or fleet_cost.NO_ISSUE
@@ -588,12 +588,12 @@ def session_block(s: SessionDigest) -> list[str]:
         title += " · live"
     lines = [title, ""]
     for day, d in s.days.items():
-        text = f"- {day}: {_dollars(d['dollars'], seat)}, {d['turns']} turn(s)"
+        text = f"- {day}: {_dollars(d['dollars'], subscription)}, {d['turns']} turn(s)"
         if d["rewarm"]:
             text += f"; cache re-warm {sm.money(d['rewarm'])}"
         lines.append(text)
     lines.append(
-        f"- **Cumulative**: {_dollars(s.cumulative, seat)}, {totals.turns} turn(s), "
+        f"- **Cumulative**: {_dollars(s.cumulative, subscription)}, {totals.turns} turn(s), "
         f"peak prefix {sm.human(totals.prefix_max)}"
     )
     if s.estimate is None:
@@ -696,8 +696,10 @@ def render(
     out += calibration_lines(calibration, flags)
     out.append("")
 
-    def points(key: str) -> list[float]:
-        return [float(e[key]) for e in history if isinstance(e.get(key), (int, float))]
+    def points(key: str, retired: str | None = None) -> list[float]:
+        # A row written before a key's rename carries it under the retired name.
+        values = (e.get(key, e.get(retired)) for e in history)
+        return [float(v) for v in values if isinstance(v, (int, float))]
 
     def model_points(model: str) -> list[float]:
         return [
@@ -716,7 +718,13 @@ def render(
     )
     out.append(
         "- "
-        + _figure("Seat", figures["seat"], points("seat"), sm.money, flags)
+        + _figure(
+            "Subscription",
+            figures["subscription"],
+            points("subscription", "seat"),
+            sm.money,
+            flags,
+        )
         + f" — {sm.NOT_BILLED}"
     )
     out.append(
@@ -963,7 +971,7 @@ def main(argv: list[str] | None = None) -> int:
                 "sessions": figures["sessions"],
                 "dollars": round(figures["total"], 2),
                 "bedrock": round(figures["bedrock"], 2),
-                "seat": round(figures["seat"], 2),
+                "subscription": round(figures["subscription"], 2),
                 "flagged": len(flags),
                 "path": str(md_path),
             }

@@ -45,11 +45,11 @@ __pycache__/
 # refreshes were its own.
 .claude/.allowlist-refresh.json
 
-# The retired seat-allowance sample log. Nothing writes it any more; the entry
+# The retired subscription-allowance sample log. Nothing writes it any more; the entry
 # stays until every machine's leftover copy is deleted, so none is committed.
 .claude/.allowance-samples.jsonl
 
-# The launcher's lever-fold stamp, written by .claude/tools/upkeep.py fold-stamp
+# The analyst's lever-fold stamp, written by .claude/tools/upkeep.py fold-stamp
 # and read by the scheduler's bootstrap. Machine-local: it records one
 # machine's day.
 .claude/.fold-last-run.json
@@ -59,11 +59,11 @@ __pycache__/
 # against. Machine-local: it records one machine's last run.
 .claude/.deps-audit-last.json
 
-# Which substrate — Bedrock or the seat — each session launched on, one file
+# Which substrate — Bedrock or the Claude subscription — each session launched on, one file
 # per worktree tag, written by the session verbs in .claude/shell/init.zsh so a
 # resume lands on the provider its session started with. Machine-local runtime
 # state: the same tag means different things on two machines, and an absent
-# marker correctly reads as "seat".
+# marker correctly reads as the subscription.
 .claude/session-substrate/
 
 # The daily session digests and their medians' history, written by the upkeep

@@ -12,7 +12,7 @@ coherent, this one asks whether the thing on the board is the
 right thing to build — "market-making versus volatility", not
 "which of these three issues goes first".
 
-**Same seat quality, different job.** The framing to discard
+**Same advisor tier, different job.** The framing to discard
 first is that `plan` is a weaker version of this: it is not.
 Its eight steps are board bookkeeping and they are the right
 steps for that work. A bookkeeper has no mandate to expand or
@@ -309,7 +309,7 @@ the whole reason this process exists, and turning the file back
 into a questionnaire discards the gain.
 
 The other half of the gain is that **turns are the cost here**.
-A seat session's context grows with every exchange, so a design
+An advisor session's context grows with every exchange, so a design
 resolved in four file rounds is dramatically cheaper than the
 same design resolved in forty questions — even though the file
 rounds move more text.
@@ -495,7 +495,7 @@ context economy — and differ in the **briefing**: the duty
 list, and what each is allowed to write.
 
 **One item dropped off that shared list** when the spec home
-moved: the **launch directory**. `plan` is a base-repo seat
+moved: the **launch directory**. `plan` is a base-repo daily-role
 verb; this one runs in its own temporary worktree, and `explore`
 moved the same way, so the worktree home is shared with *it*
 rather than with `plan`.
