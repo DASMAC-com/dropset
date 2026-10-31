@@ -181,7 +181,7 @@ the document's state sections.
 
 1. **Housekeeping never costs an extra tab visit.** Upkeep runs
    as the pre-launch in the typed tab, its report in the
-   scheduler's bootstrap; the lever fold runs in the launcher's
+   curator's bootstrap; the lever fold runs in the launcher's
    tab, and destructive items are asked once there, in one ask,
    applied only on a yes (2026-10-28).
 
