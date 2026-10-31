@@ -189,8 +189,9 @@ open in the curator's tab never holds the trigger or a dispatch.
   milestone, not this phase. Out of scope unless the operator
   names it.
 
-Pull a body or a listing only when a decision turns on it; the
-board read itself is the curator's.
+Pull a body or a listing only when a decision turns on it — step
+8's field-selected `Audit findings` listing is one; the board read
+itself is the curator's.
 
 **The fold protocol**, which every reviser reuses: fold the
 comment into the body, reply saying how it was addressed, then

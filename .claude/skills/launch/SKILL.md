@@ -171,9 +171,10 @@ python3 .claude/tools/session_dispatch.py plan
 `schedule-<day>` is already listed (the operator typed `plan`),
 dispatch nothing and say so. A `held` line is the gate's refusal:
 say it loudly and name the verb for the operator to type. Once the
-scheduler is dispatched and the hand-off sent, a further
-`state of play written`, `curator up` or a pasted line is only
-acknowledged — never a second dispatch or hand-off.
+scheduler is dispatched, a further `state of play written` is only
+acknowledged — never a second dispatch; once the hand-off is sent, a
+further `curator up` or a pasted line is only acknowledged — never a
+second hand-off.
 
 **No message by the time the fold is done** means idling at no
 cost: go on to step 3, so a day whose curator is still
