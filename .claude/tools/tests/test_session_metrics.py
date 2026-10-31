@@ -1855,6 +1855,26 @@ class FrictionLines(unittest.TestCase):
         self.assertEqual(parsed["rebases"][1]["after_tokens"], 1_000_000)
         self.assertEqual(parsed["rebases"][1]["after"][MODEL]["input"], 1_000_000)
 
+    def test_an_api_request_blob_is_skipped(self):
+        # Claude Code writes the blob, unstamped, before the stamped user
+        # record carrying the same result.
+        result = tool_result("t1", '"Successfully rebased"')
+        blob = json.dumps({**json.loads(result), "type": sm.API_REQUEST_BLOB})
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(
+            stamped(
+                self._turn("m1", bash("t1", "git rebase main")), "2026-10-26T10:00:00Z"
+            )
+        )
+        agg.ingest_main_line(blob)
+        agg.ingest_main_line(stamped(result, "2026-10-26T10:00:05Z"))
+        report = agg.finish(sm.SUBSTRATE_BEDROCK)
+        [event] = report["rebases"]
+        self.assertEqual(event.at, "2026-10-26T10:00:05")
+        [line] = report["tools"]
+        self.assertEqual((line.name, line.calls), ("Bash", 1))
+        self.assertEqual(line.result_bytes, sm.value_len("Successfully rebased"))
+
     def test_a_noop_or_continued_rebase_is_not_an_event(self):
         report = self._finish(
             [

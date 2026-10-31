@@ -127,6 +127,13 @@ CALIBRATION_MIN_SHARE = 0.8
 # that motivated the line sat near 19%; a tenth is where it stops being noise.
 RESIDENT_LEVER_SHARE = 0.10
 
+# A record Claude Code writes ahead of the stamped user record carrying the
+# same `tool_result`: a request-body copy with no `timestamp` and no usage.
+# Read as a turn, it pops the pending tool call early (a rebase lands with no
+# stamp, its real result as tool `unknown`) and counts the result bytes twice,
+# so every reader skips it.
+API_REQUEST_BLOB = "api-request-blob"
+
 
 @dataclass(frozen=True)
 class Rates:
@@ -602,6 +609,8 @@ class Friction:
         self._enqueued = False
 
     def observe(self, rec: dict) -> None:
+        if rec.get("type") == API_REQUEST_BLOB:
+            return
         stamp = utc_stamp(rec.get("timestamp"))
         msg = rec.get("message")
         if not isinstance(msg, dict):
@@ -1072,7 +1081,7 @@ class SessionAggregator:
         return True
 
     def _ingest_main_record(self, rec) -> None:
-        if not isinstance(rec, dict):
+        if not isinstance(rec, dict) or rec.get("type") == API_REQUEST_BLOB:
             return
         if self.cwd is None:
             cwd = rec.get("cwd")
