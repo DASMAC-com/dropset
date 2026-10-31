@@ -98,13 +98,13 @@ jobs:
     # merge-queue ref or a new PR, and only the `push: main` trigger makes
     # one: without it every queue entry paid a cold `install-hooks` (median
     # 1.6 min, about a fifth of the queue's critical path). That run keeps
-    # only checkout, the Node and Python setup, the pip install, this
-    # restore, `install-hooks` and the save, so it costs up to about two
-    # runner-minutes after each merge, off the critical path. A same-key
-    # restore on main hits and the save is skipped, so a push rewrites this
-    # cache only when the config, pre-commit, Node, Python or the runner image
-    # moves (the pip cache setup-python keeps follows the requirements file
-    # instead).
+    # only checkout, the Node and Python setup, the pip install, the
+    # runner-image probe, this restore, `install-hooks` and the save, so it
+    # costs up to about two runner-minutes after each merge, off the critical
+    # path. A same-key restore on main hits and the save is skipped, so a
+    # push rewrites this cache only when the config, pre-commit, Node, Python
+    # or the runner image moves (the pip cache setup-python keeps follows the
+    # requirements file instead).
     #
     # The image is in the key because `runner.os` reads `Linux` on every
     # Ubuntu image, while the hook environments link against the image's own
@@ -113,8 +113,8 @@ jobs:
     # the old one. `ImageOS` (`ubuntu24`, `ubuntu26`, ...) is a runner
     # environment variable, not a workflow `env` one, so it cannot be read in
     # an expression and is surfaced as a step output instead. The `:?` fails
-    # the step if it is ever unset, rather than quietly dropping the image
-    # from the key.
+    # the step if it is ever unset or empty, rather than quietly dropping the
+    # image from the key.
     - id: 'runner-image'
       run: 'echo "os=${ImageOS:?}" >> "$GITHUB_OUTPUT"'
     - id: 'pre-commit-cache'
@@ -149,8 +149,8 @@ jobs:
   # The two cargo-backed hooks, one job each, beside `lint` rather than inside
   # it: run serially there they set the merge queue's critical path (clippy
   # about 1.9 min and rustdoc about 1.4 min of a 6.6 min job). Each is its own
-  # check, `Lint (clippy)` and `Lint (rustdoc)`, required once the ruleset
-  # adds them (docs/conventions/github-mcp.md). Both hooks are
+  # required check, `Lint (clippy)` and `Lint (rustdoc)`
+  # (docs/conventions/github-mcp.md). Both hooks are
   # `language: system`, so `pre-commit run <hook>` installs no hook
   # environment and this job needs neither Node nor the hook cache; Python is
   # here only for pre-commit and the hooks' `cargo_scope.py` entry. A `push`

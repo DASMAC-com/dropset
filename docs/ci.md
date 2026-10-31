@@ -211,9 +211,11 @@ The `lint-rust` and `sdk` jobs and the three test jobs all name one cache key,
 the test jobs' `rust-test` one. That input **replaces** rust-cache's
 automatic job-id component, so jobs naming the same key resolve to the same
 entry instead of each storing a near-identical copy. The key names no runner
-image, so every job sharing it must run on the same `runs-on` label: a reader
-pinned to an older Ubuntu release than the writers' would restore build-script
-and proc-macro binaries linked against a newer glibc, which fail to load.
+image, so it is safe only while every job sharing it lands on the same image:
+a reader on an older Ubuntu release than the writer's would restore
+build-script and proc-macro binaries linked against a newer glibc, which fail
+to load. Keep every sharer on one `runs-on` label, and know that even one
+label can span two images while GitHub rolls `ubuntu-latest` forward.
 
 Only the three test jobs **write** that entry, and only on a push to main
 (see above). `lint-rust` and `sdk` set
