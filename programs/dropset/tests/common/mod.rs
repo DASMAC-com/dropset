@@ -444,10 +444,11 @@ pub fn set_token_account_frozen(
 /// Owner of every [`create_token2022_token_account`] account. Read as a
 /// mint, the token account's owner field (bytes 32..64) spans the mint's
 /// supply, decimals and `is_initialized` (byte 45, the owner's byte 13).
-/// A random owner zeroes that byte one run in 256, and Token-2022 then
-/// rejects with `UninitializedAccount` before the extension-layout check
-/// (`InvalidAccountData`) a token-account-as-mint test asserts on; a
-/// fixed nonzero owner makes the rejection the same every run.
+/// A random owner zeroes that byte one run in 256, and Token-2022's
+/// unpack then rejects with `UninitializedAccount` before the
+/// extension-layout check (`InvalidAccountData`) a token-account-as-mint
+/// test asserts on; a fixed nonzero owner makes the rejection the same
+/// every run.
 const TOKEN_2022_TOKEN_ACCOUNT_OWNER: Pubkey = Pubkey::new_from_array([0xA5; 32]);
 
 /// Create a Token-2022 token account (165 bytes) for the given mint,
