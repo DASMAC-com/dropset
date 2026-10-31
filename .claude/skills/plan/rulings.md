@@ -250,9 +250,10 @@ the document's state sections.
    text as its whole brief, on Sonnet-class Bedrock, and the
    launch fails fast if the model is not enabled.
 
-1. **Program-touching work lands before the mainnet publish**,
-   never as a later upgrade; the performance-fee issue is the one
-   ruled exception after C2. The publish ceremony chore carries
+1. **Non-additive program-touching work (a frozen constant, a
+   layout, an existing instruction's behavior) lands before the
+   mainnet publish**; the performance-fee issue is the one ruled
+   exception after C2. The publish ceremony chore carries
    the merged-at-recorded-commit check (2026-10-26). Additive
    upgrades under the retained authority (ruling 26) are possible
    after C2 and are deferred rather than rushed in; what must land
