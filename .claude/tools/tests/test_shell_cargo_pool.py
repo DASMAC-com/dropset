@@ -225,8 +225,10 @@ class TwoCheckoutsTest(unittest.TestCase):
             (self.root / "A" / "a" / "src" / "lib.rs").touch()
             (self.root / "B" / "a" / "src" / "lib.rs").touch()
             a, b = self.spawn("A", "A", "check"), self.spawn("B", "B", "check")
-            self.assertEqual(a.wait(), 0)
-            self.assertNotEqual(b.wait(), 0)
+            # Reap both before asserting, so a failure leaves no cargo running.
+            rc_a, rc_b = a.wait(), b.wait()
+            self.assertEqual(rc_a, 0)
+            self.assertNotEqual(rc_b, 0)
 
     def test_a_shared_key_reuses_the_sibling_s_build(self) -> None:
         # The control: B under A's key passes on A's artifacts, never having
