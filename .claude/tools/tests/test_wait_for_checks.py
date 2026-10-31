@@ -3304,6 +3304,17 @@ class ConflictDuringCiWaitTests(unittest.TestCase):
         self.assertEqual(v["watch_rounds"], cut + 1)
         self.assertIsNone(v["base_gained"])
 
+    def test_uncounted_pending_rounds_still_bar_a_green_none(self):
+        """Checks seen pending, then gone, never read as `none` — even when
+        the pending rounds were cut short and spent no budget."""
+        view = {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}
+        v = self._wait(
+            [wfc.CONFLICT_SEEN, True],
+            [[check("Tests", "pending")], []],
+            view,
+        )
+        self.assertNotEqual(v["conclusion"], "none")
+
     def test_base_gain_without_a_ref_says_so_rather_than_raising(self):
         gain = wfc.base_gain("o/r", None, "main")
         self.assertIsNone(gain["base_gained"])

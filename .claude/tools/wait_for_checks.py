@@ -2286,6 +2286,7 @@ def wait(
     merge_state: dict = {"mergeable": None, "merge_state_status": None, "error": None}
     # A base move under the wait: the watch saw `dirty` and this settle agreed.
     conflict_seen = False
+    saw_pending = False
 
     while watch:
         remaining = int(deadline - time.monotonic())
@@ -2319,13 +2320,15 @@ def wait(
         # live run into `timeout` (the deadline still bounds the loop).
         if not (cut_short and state == "pending"):
             state_rounds[state] += 1
+        # Seen, counted or not: the green-`none` guard below asks only that.
+        saw_pending = saw_pending or state == "pending"
         cap = MAX_NONE_ROUNDS if state == "none" else MAX_WATCH_ROUNDS
         if state_rounds[state] >= cap:
             # `none` survives the terminal branch only when EVERY round it saw
             # was `none`. A `none` that followed observed `pending` rounds is a
             # checks-disappeared anomaly, not an absence, and must not read as
             # green.
-            exhausted_on = state if state_rounds.get("pending", 0) == 0 else None
+            exhausted_on = state if not saw_pending else None
             settled = False
             break
         # The watch returns at once when it sees nothing left to wait on, so
