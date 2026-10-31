@@ -498,7 +498,7 @@ pub fn exit_warning(writers: &[(Pubkey, Option<u64>)], retrying: usize) -> Optio
         return (retrying > 0).then(|| {
             format!(
                 "{retrying} kept writer(s) are mid-retry in \"Close stranded buffers\" — exiting \
-                 before it lands abandons them. `q` again exits anyway; Esc dismisses."
+                 before it lands abandons them. q again exits anyway; Esc cancels."
             )
         });
     };
@@ -509,7 +509,7 @@ pub fn exit_warning(writers: &[(Pubkey, Option<u64>)], retrying: usize) -> Optio
     };
     Some(format!(
         "Kept writer {writer} still holds {balance}{more} — exiting abandons it. Enter retries \
-         the sweep (\"Close stranded buffers\"); `q` again exits anyway; Esc dismisses."
+         the sweep (\"Close stranded buffers\"); q again exits anyway; Esc cancels."
     ))
 }
 

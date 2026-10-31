@@ -204,33 +204,45 @@ impl QuitGuard {
         self.warned = false;
     }
 
-    /// Whether a quit is held, so the next quit exits.
-    fn held(&self) -> bool {
-        self.warned
+    /// Classify `ev` (see [`classify_quit`]) and stand a held quit down on
+    /// anything but a quit or an ignored event. `in_prompt` is whether a
+    /// prompt owns the keys.
+    fn on_event(&mut self, ev: &Event, in_prompt: bool) -> QuitEvent {
+        let class = classify_quit(ev, in_prompt, self.warned);
+        if class == QuitEvent::Other {
+            self.stand_down();
+        }
+        class
     }
 }
 
 /// What an event means to the [`QuitGuard`].
 #[derive(PartialEq, Eq, Debug)]
 enum QuitEvent {
-    /// Not a press: a key release or repeat, which neither quits nor re-arms.
-    /// Only reported once keyboard-enhancement flags are on, where a release
-    /// would otherwise count as the second press.
+    /// Neither quits nor re-arms. A key release or repeat — only reported
+    /// once keyboard-enhancement flags are on, where a release would
+    /// otherwise count as the second press — or a mouse event other than a
+    /// button press: with mouse capture on, a pointer nudge between the two
+    /// presses would otherwise re-arm the hold.
     Ignore,
     /// A quit press on the dashboard.
     Quit,
-    /// Anything else — a prompt's keys, the dashboard's other keys, a resize,
-    /// mouse or focus event — which re-arms a held quit.
+    /// Anything else — a prompt's keys, the dashboard's other keys, a click,
+    /// a resize or focus event — which re-arms a held quit.
     Other,
 }
 
 /// Classify `ev` for the quit guard. `in_prompt` is whether a prompt owns the
 /// keys (there `q` and Esc edit or cancel it, never quit); `held` is whether
-/// a quit is held. Esc dismisses a held warning rather than counting as the
+/// a quit is held. Esc on a held quit cancels it rather than counting as the
 /// second press, so only `q` or Ctrl-C exits with a kept writer's lamports.
 fn classify_quit(ev: &Event, in_prompt: bool, held: bool) -> QuitEvent {
-    let Event::Key(k) = ev else {
-        return QuitEvent::Other;
+    let k = match ev {
+        Event::Key(k) => k,
+        Event::Mouse(m) if !matches!(m.kind, MouseEventKind::Down(_)) => {
+            return QuitEvent::Ignore;
+        }
+        _ => return QuitEvent::Other,
     };
     if k.kind != KeyEventKind::Press {
         return QuitEvent::Ignore;
@@ -623,12 +635,13 @@ impl App {
     }
 
     fn handle_event(&mut self, ev: Event) -> Flow {
-        match classify_quit(&ev, self.in_prompt(), self.quit.held()) {
+        // Every other event stands a held quit down — prompt keys and
+        // non-key events included — so only two quits in a row exit.
+        let in_prompt = self.in_prompt();
+        match self.quit.on_event(&ev, in_prompt) {
             QuitEvent::Ignore => return Flow::Continue,
             QuitEvent::Quit => return self.request_quit(),
-            // Every other event stands a held quit down — prompt keys and
-            // non-key events included — so only two quits in a row exit.
-            QuitEvent::Other => self.quit.stand_down(),
+            QuitEvent::Other => {}
         }
         match ev {
             Event::Key(k) => self.handle_key(k),
@@ -770,8 +783,9 @@ impl App {
             self.handle_ceremony_key(k);
             return Flow::Continue;
         }
-        // The quit keys never reach here: `handle_event` routes them through
-        // the guard first.
+        // A quit never reaches here: `handle_event` routes it through the
+        // guard first. Esc on a held quit does, as a cancel, and falls
+        // through to no arm below.
         match k.code {
             KeyCode::Char('j') | KeyCode::Down => self.menu_step(1),
             KeyCode::Char('k') | KeyCode::Up => self.menu_step(-1),
@@ -2422,7 +2436,10 @@ mod tests {
         classify_basis_line, classify_quit, hit_target, is_confirmation, parse_positive_amount,
         swap_side_label, Action, BasisNote, QuitEvent, QuitGuard, SwapSide,
     };
-    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+    use crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+        MouseEventKind,
+    };
     use ratatui::layout::Rect;
     use solana_pubkey::Pubkey;
 
@@ -2451,10 +2468,10 @@ mod tests {
         Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
     }
 
-    /// Esc quits from the dashboard, but on a held warning it dismisses it:
-    /// the TUI keeps running and the guard re-arms. `q` and Ctrl-C still exit.
+    /// Esc quits from the dashboard, but on a held quit it cancels it: the
+    /// TUI keeps running and the guard re-arms. `q` and Ctrl-C still exit.
     #[test]
-    fn esc_on_a_held_warning_dismisses_rather_than_quits() {
+    fn esc_on_a_held_warning_cancels_rather_than_quits() {
         assert_eq!(
             classify_quit(&press(KeyCode::Esc), false, false),
             QuitEvent::Quit
@@ -2487,6 +2504,48 @@ mod tests {
                 classify_quit(&Event::FocusGained, false, held),
                 QuitEvent::Other
             );
+            assert_eq!(
+                classify_quit(&mouse(MouseEventKind::Down(MouseButton::Left)), false, held),
+                QuitEvent::Other
+            );
+        }
+    }
+
+    fn mouse(kind: MouseEventKind) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    /// Through the guard itself: a held quit survives only ignored events,
+    /// so a prompt key, a resize or Esc between the presses means the next
+    /// `q` warns again, while a pointer nudge does not.
+    #[test]
+    fn the_guard_re_arms_on_every_event_but_a_quit_or_an_ignored_one() {
+        let warn = || Some("kept writer".to_string());
+        let between = [
+            (press(KeyCode::Char('5')), true),
+            (press(KeyCode::Esc), false),
+            (Event::Resize(80, 24), false),
+        ];
+        for (ev, in_prompt) in between {
+            let mut guard = QuitGuard::default();
+            assert!(guard.quit(warn).is_some());
+            assert_eq!(guard.on_event(&ev, in_prompt), QuitEvent::Other);
+            assert!(guard.quit(warn).is_some(), "{ev:?} did not re-arm");
+        }
+        for kind in [
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollDown,
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            let mut guard = QuitGuard::default();
+            assert!(guard.quit(warn).is_some());
+            assert_eq!(guard.on_event(&mouse(kind), false), QuitEvent::Ignore);
+            assert_eq!(guard.quit(warn), None, "{kind:?} re-armed the hold");
         }
     }
 
