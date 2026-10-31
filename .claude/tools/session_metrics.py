@@ -186,12 +186,17 @@ RATES_BY_MODEL: dict[str, Rates] = {
     # The advisor tier. Seeded at the Opus 5.5 row's 1.10x Bedrock premium over
     # the first-party list price, cache read $0.25 list (0.025x input), 1h
     # write 2x input. The first Bedrock Fable day, 2026-10-22, billed exactly
-    # these four rates by usage type (no long-context tier billed), but that
-    # day had not settled when read, so the row stays unverified until it has.
-    "claude-fable-5-1": Rates(11.00, 55.00, 0.275, 22.00, verified=None),
+    # these four rates by usage type (no long-context tier billed), and the
+    # settled day's quantities priced here reproduced its $58.33 to the cent.
+    "claude-fable-5-1": Rates(11.00, 55.00, 0.275, 22.00, verified="2026-10-22"),
     # An audit lane. Cache read is 0.05x input: AWS halved it on 2026-10-07,
     # and 2026-10-21 billed every tier at these rates.
     "claude-sonnet-5-5": Rates(2.20, 11.00, 0.11, 4.40, verified="2026-10-21"),
+    # No lane runs it, yet 2026-10-22 and 10-26 billed it, so it is priced
+    # rather than refused. The 1.10x premium over the first-party list price
+    # ($2 / $10, cache read $0.20 at 0.1x, unlike Sonnet 5.5's halved 0.05x,
+    # 1h write $4); both days reproduced their bill to the cent at these rates.
+    "claude-sonnet-5": Rates(2.20, 11.00, 0.22, 4.40, verified="2026-10-26"),
 }
 
 # The key a message with no recorded model is accumulated under. It is never
