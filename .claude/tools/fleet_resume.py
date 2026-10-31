@@ -42,9 +42,9 @@ the tabs it is creating.
 **The machine gate is the dispatcher's** (`session_dispatch.gate`), read once
 over the resume list with each session's class read back from its launch
 record, never re-inspected. Resume runs before any new dispatch, so in-flight
-work takes the budget first; what the reading cannot seat is listed as held
+work takes the budget first; what the reading cannot admit is listed as held
 with the number that refused it, and ``--over-budget`` (``fleet go
---over-budget``) seats it anyway, ``DS_FLEET_TOTAL`` excepted. A resumed
+--over-budget``) admits it anyway, ``DS_FLEET_TOTAL`` excepted. A resumed
 session spends one of that total like a new one, and a resumed building
 session counts as a builder, since it builds again within minutes.
 
@@ -291,21 +291,21 @@ def admit(result: dict, directory: Path, over_budget: bool) -> list[str]:
     """Gate ``result["resume"]`` on the machine, moving what does not fit to
     ``result["held"]``. Returns the held and note lines to print."""
     entries = result["resume"]
-    seats = []
+    slots = []
     for entry in entries:
         cls = session_dispatch.recorded_class(directory, entry["tag"])
         entry["class"] = cls
         label = "(free)" if cls == session_dispatch.FREE else ""
-        seats.append(session_dispatch.Seat(resume_command(entry["tag"]), cls, label))
-    admitted = session_dispatch.gate(seats, directory, over_budget=over_budget)
-    seated = {id(seat) for seat in admitted.seated}
-    why = {id(seat): reason for seat, reason in admitted.held}
-    result["resume"] = [e for e, s in zip(entries, seats) if id(s) in seated]
+        slots.append(session_dispatch.Slot(resume_command(entry["tag"]), cls, label))
+    gated = session_dispatch.gate(slots, directory, over_budget=over_budget)
+    admitted = {id(slot) for slot in gated.admitted}
+    why = {id(slot): reason for slot, reason in gated.held}
+    result["resume"] = [e for e, s in zip(entries, slots) if id(s) in admitted]
     result["held"] = [
-        {**e, "reason": why[id(s)]} for e, s in zip(entries, seats) if id(s) in why
+        {**e, "reason": why[id(s)]} for e, s in zip(entries, slots) if id(s) in why
     ]
-    clients = [admitted.clients] if admitted.clients else []
-    return admitted.notes + session_dispatch.held_lines(admitted) + clients
+    clients = [gated.clients] if gated.clients else []
+    return gated.notes + session_dispatch.held_lines(gated) + clients
 
 
 def summarize(result: dict) -> str:
