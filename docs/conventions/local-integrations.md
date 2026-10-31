@@ -1543,9 +1543,10 @@ keys exist to prevent. Every launch therefore goes through
 about to start (`_ds_cargo_pool <dir>`, when that directory exists) and
 re-evaluates for the tab's own directory once the session exits, however
 it exits. A fresh `task` once bypassed it and launched on the base keys.
-A worded tag's new worktree is created by the CLI itself, after that
-point, so its session keeps the base keys (and lane 0, which is its lane
-anyway).
+A worded tag's worktree would be created by the CLI itself, after that
+point, and its session would keep the base keys — one reason `task` and
+`explore` refuse a word at launch (see "Architect and explore
+sessions: temporary worktree, no PR").
 
 #### Lanes
 
@@ -1792,20 +1793,20 @@ clean cut with **no aliases** — the family is small and every launcher
 is the operator's own muscle memory, so a half-migration leaving both
 names alive was the outcome to avoid.
 
-| Verb                    | Job                                        | Substrate              | Tier      | Sub-agents          | Title token               |
-| ----------------------- | ------------------------------------------ | ---------------------- | --------- | ------------------- | ------------------------- |
-| `task <n>`              | worktree session on Linear task n          | executor's (Bedrock)   | executor  | the session's       | none (the one elision)    |
-| `task anthropic <n>`    | same, when the work needs web research     | anthropic              | executor  | the session's       | `[Task/Anthropic]`        |
-| `task resume [n]`       | resume by number (bare = the picker)       | as recorded            | re-pinned | as recorded         | —                         |
-| `explore [s] <n\|name>` | research / audit, read-only, temp worktree | Bedrock, or `[s]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
-| `chore [s] <n>`         | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
-| `plan [a]`              | fresh day: pass + seat tabs; else schedule | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
-| `curate [a]`            | the curator: Backlog→Todo review, no PR    | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
-| `launch [a]`            | the morning launcher, base checkout, no PR | Bedrock, or `[a]`      | executor  | the session's       | — (no issue)              |
-| `architect [b] <n>`     | design thread, read-only, temp worktree    | advisor's, or override | advisor   | executor if Bedrock | `[Architect/<Substrate>]` |
-| `fleet [go]`            | batch resume                               | per-window             | re-pinned | per-window          | —                         |
-| `models [check]`        | print the tier table; `check` it for free  | —                      | —         | —                   | —                         |
-| `cdds [n]`              | not a session verb — navigation            | —                      | —         | —                   | —                         |
+| Verb                 | Job                                        | Substrate              | Tier      | Sub-agents          | Title token               |
+| -------------------- | ------------------------------------------ | ---------------------- | --------- | ------------------- | ------------------------- |
+| `task <n>`           | worktree session on Linear task n          | executor's (Bedrock)   | executor  | the session's       | none (the one elision)    |
+| `task anthropic <n>` | same, when the work needs web research     | anthropic              | executor  | the session's       | `[Task/Anthropic]`        |
+| `task resume [n]`    | resume by number (bare = the picker)       | as recorded            | re-pinned | as recorded         | —                         |
+| `explore [s] <n>`    | research / audit, read-only, temp worktree | Bedrock, or `[s]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
+| `chore [s] <n>`      | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
+| `plan [a]`           | fresh day: pass + seat tabs; else schedule | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
+| `curate [a]`         | the curator: Backlog→Todo review, no PR    | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
+| `launch [a]`         | the morning launcher, base checkout, no PR | Bedrock, or `[a]`      | executor  | the session's       | — (no issue)              |
+| `architect [b] <n>`  | design thread, read-only, temp worktree    | advisor's, or override | advisor   | executor if Bedrock | `[Architect/<Substrate>]` |
+| `fleet [go]`         | batch resume                               | per-window             | re-pinned | per-window          | —                         |
+| `models [check]`     | print the tier table; `check` it for free  | —                      | —         | —                   | —                         |
+| `cdds [n]`           | not a session verb — navigation            | —                      | —         | —                   | —                         |
 
 `[b]` is the same optional `anthropic` / `bedrock` word `plan` takes;
 `[s]` is that word too; `[a]` is `anthropic` alone, the web-research
@@ -1833,11 +1834,11 @@ The table names verbs and tiers only, never a model class or id.
 `task local <n>` still works for now, printing a line naming its
 replacement. **The tier table itself is in "Model tiers" below.**
 
-**`explore resume` is gone**, and `explore` now requires a name.
-Both follow from the worktree home below: `explore <n|name>` is
+**`explore resume` is gone**, and `explore` now requires an issue
+number. Both follow from the worktree home below: `explore <n>` is
 idempotent, so the `resume` twin would be a pure synonym, and a
-worktree cannot be named without a name. `plan` remains a
-**base-repo** verb — it touches the board, not a branch.
+worktree is named for its issue. `plan` remains a **base-repo** verb
+— it touches the board, not a branch.
 
 **`housekeeping` is retired — deleted, not aliased.** Its upkeep is
 `upkeep.py`, which the `plan` pre-launch runs before the session starts,
@@ -1849,7 +1850,7 @@ cover upkeep, and audits are planning-filed board work.
 
 #### Architect and explore sessions: temporary worktree, no PR
 
-**`architect <n>` and every `explore <n|name>` task — audits
+**`architect <n>` and every `explore <n>` task — audits
 included — run in their own worktree, but that worktree is
 TEMPORARY WORKING STATE and the session is READ-ONLY toward the
 repo: no commits, no PR.** Durable state is captured in
@@ -1883,19 +1884,26 @@ worktree, branch and purge read the same whatever the verb. This
 table is the canonical statement; the `architect` and `explore`
 sections point here.
 
-| Launch                 | Worktree           | Branch           | Tier     | Pruned when, and how                                   |
-| ---------------------- | ------------------ | ---------------- | -------- | ------------------------------------------------------ |
-| `task 1196`            | `1196`             | `eng-1196`       | executor | issue Done/canceled, no open PR; clean and pushed only |
-| `explore 1196`         | `1196`             | `eng-1196`       | advisor  | issue Done/canceled; spec file discarded               |
-| `architect 1572`       | `1572`             | `eng-1572`       | advisor  | issue Done/canceled; spec file discarded               |
-| `explore skills-audit` | `exp-skills-audit` | `worktree-exp-…` | advisor  | never — names no issue; reported, removed by hand      |
-| `chore 1843`           | none (base)        | none             | helper   | nothing to prune                                       |
+| Launch           | Worktree    | Branch     | Tier     | Pruned when, and how                                   |
+| ---------------- | ----------- | ---------- | -------- | ------------------------------------------------------ |
+| `task 1196`      | `1196`      | `eng-1196` | executor | issue Done/canceled, no open PR; clean and pushed only |
+| `explore 1196`   | `1196`      | `eng-1196` | advisor  | issue Done/canceled; spec file discarded               |
+| `architect 1572` | `1572`      | `eng-1572` | advisor  | issue Done/canceled; spec file discarded               |
+| `chore 1843`     | none (base) | none       | helper   | nothing to prune                                       |
+
+**A worktree is named for its issue, never a word** (operator
+ruling, 2026-10-30): `task` and `explore` refuse a worded tag at
+launch, as `architect` refuses a topic, and the dispatcher's grammar
+refuses one too. The retired free-form `explore <name>` made an
+`exp-<name>` worktree; nothing needed it, and a worded worktree only
+came into existence inside the CLI, after `_ds_claude_pooled` had
+keyed the cargo pool, so its session built on the base checkout's
+slots.
 
 The session name is the worktree column (`1843` for a chore).
 The named exceptions: the daily seats `schedule-<day>` (`plan`) and
-`curate-<day>` keep their day-keyed names (they have no issue), and a
-free-form explore
-keeps `exp-<name>`. **Git branches keep the `eng-` prefix**, because
+`curate-<day>` keep their day-keyed names (they have no issue).
+**Git branches keep the `eng-` prefix**, because
 Linear's GitHub integration links branches and PRs on that form;
 `claude -w` cannot choose a branch name (it would say
 `worktree-<n>`), so `_ds_worktree_ensure` pre-creates the worktree
@@ -1959,14 +1967,14 @@ once the issue is Done. A live lock holds it (a stale one is
 lifted as above), and so does a commit of its own beyond
 `origin/main`, since a read-only session never makes one. The table's
 tier column is each verb's own; the gate follows the marker
-actually on disk, so a pre-marker explore worktree, a free-form
-one, a number whose marker a `task <n>` wrote first, a tree some
+actually on disk, so a pre-marker explore worktree, a number whose
+marker a `task <n>` wrote first, a tree some
 other launch made before `explore` or `architect` reached it
 (neither records its tier on a tree it did not create), and a
 pre-rename-named directory all get the executor gate under
-`--merged`. A worded
-`ceo-<topic>` or `exp-<name>` worktree matches no issue: it is
-reported as unresolvable, never removed. A
+`--merged`. A worded worktree left from before the refusal
+(`ceo-<topic>`, `exp-<name>`) matches no issue: it is reported as
+unresolvable, never removed. A
 canceled issue whose PR is still open is always flagged, never
 pruned.
 
@@ -1994,9 +2002,7 @@ knowing before relying on the inheritance:**
   left alone likewise. Writing one at all (its
   substrate, advisor `.tier`) is what lets a reopen keep its
   provider, the pruner lift the executor gate, and the fleet cost
-  tool meter the session rather than leave it unattributed. A
-  free-form `exp-<name>` tag is marked too, for the reopen; the
-  pruner matches no such tag.
+  tool meter the session rather than leave it unattributed.
 
 Both are the same root: `<n>` is not a single-owner namespace. It
 names a worktree several session kinds can claim, with different
@@ -2031,8 +2037,7 @@ guarantee, a `task` session's marker is left alone, exactly as
 `explore`, so it takes no `resume` word.
 
 There is **no PR to open** — the worktree arrives on its `eng-<n>`
-branch (`worktree-exp-<name>` for a free-form explore; see the table
-above), as any git worktree must carry one;
+branch (see the table above), as any git worktree must carry one;
 these sessions simply never commit to or push it. A spec file,
 when one is warranted at all, sits **untracked** in the worktree
 at the **worktree root**, never under a repo-shaped path (ruling
@@ -2692,28 +2697,25 @@ a terminal closed outright, is covered by the next morning's digest.
   the picker, which is the one form that still reaches a session whose
   worktree has already been pruned.
 
-- **`explore <n|name>`** — start **or resume** an explore session:
+- **`explore <n>`** — start **or resume** an explore session:
   research, audits, and anything else whose output is Linear tasks and
   findings rather than a code change. **It runs in its own temporary
-  worktree, read-only toward the repo**, and a name is **required** —
-  see "Architect and explore sessions: temporary worktree, no PR" above
-  for the naming rule and the lifecycle.
+  worktree, read-only toward the repo**, and an issue number is
+  **required** — see "Architect and explore sessions: temporary
+  worktree, no PR" above for the naming rule and the lifecycle. A
+  word is refused: the free-form `explore <name>` is retired.
 
-  **A bare number keys it to a Linear issue**, and both spellings agree:
+  **The number keys it to a Linear issue**, and both spellings agree:
   `explore 1196` and `explore eng-1196` normalize to the same worktree
   and session name (both `1196`) and the same session id, as do
-  `explore 0123` and `explore 123`. That normalization happens *before*
-  the issue-keyed branch is chosen — an earlier revision decided the
-  branch first, so `explore eng-1196` fell through to the free-form path
-  and produced `exp-eng-1196`, invisible to `cdds`, `fleet` and
-  status-type pruning.
+  `explore 0123` and `explore 123`.
 
   **Idempotent**, like `plan` and `architect`: it creates the session if
   absent and resumes it if present. Keying on a computed id is what
   makes that possible, which also retires the old `explore resume`
   twin — see below.
 
-  **The issue-keyed form carries a bootstrap prompt**, and it has to. A
+  **It carries a bootstrap prompt**, and it has to. A
   session launched with no initial prompt **sits idle until a human
   types something**, which is silent — it looks started. Measured on the
   1196 audit: dispatched into its own tab, the verb typed correctly, and
@@ -2724,15 +2726,11 @@ a terminal closed outright, is covered by the next morning's digest.
   skill, so the prompt is written out in the helper; it names the issue
   and states the research-only posture.
 
-  The free-form form passes **no** prompt — the operator names the
-  subject in their first message, so inventing one would be a guess to
-  correct.
-
   **The advisor tier, on Bedrock.** Explore work is thinking-heavy,
   so it runs the top tier like `plan` and `architect` — but its audits
   fan out sub-agents, so it runs on Bedrock with no word, ignoring
   `DS_MODEL_ADVISOR_SUBSTRATE`, with sub-agents on the executor tier
-  (see "Model tiers"). `explore anthropic <n|name>` launches on the
+  (see "Model tiers"). `explore anthropic <n>` launches on the
   subscription, in `task`'s position. **A launch into an existing
   session or worktree takes the substrate the marker records** —
   anthropic where there is none, so an unmarked or seat-marked tree
@@ -3023,9 +3021,8 @@ a terminal closed outright, is covered by the next morning's digest.
 
   All three standing verbs share one core, `_ds_session`, which takes
   an already-computed id — `plan` hands it a daily id,
-  `architect` and `explore` a computed one keyed on their argument (a
-  topic for `architect`; for `explore` a topic *or* an issue number,
-  which is why the table above reads `<n|name>`). That split is
+  `architect` and `explore` a computed one keyed on their argument, the
+  issue number. That split is
   deliberate: the operator's stated abstraction is that these launchers
   differ **only in the briefing**.
 
