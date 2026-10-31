@@ -1554,11 +1554,11 @@ that is not a permissionless instruction falls under one of them.
      `force_withdraw_leader`, `close_market_treasury`,
      `close_market`, `close_registry_fee_vault`, `close_registry`.
 
-The upgrade authority is intentionally narrow — exactly one
-instruction — so that post-init the admin set is the sole
-governance surface, and absent a program upgrade under the retained
-upgrade authority, the only way to grow or shrink that surface is
-`add_admin` / `remove_admin` signed by an existing admin.
+The upgrade authority's in-program role is intentionally narrow — it
+gates exactly one instruction — so that post-init the admin set is
+the sole in-program governance surface; short of a program upgrade,
+which the same key retains, the only way to grow or shrink that
+surface is `add_admin` / `remove_admin` signed by an existing admin.
 
 ### Error surface
 
