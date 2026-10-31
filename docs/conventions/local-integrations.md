@@ -3128,7 +3128,7 @@ a terminal closed outright, is covered by the next morning's digest.
   number that refused it, plus what would free a slot; unlike a typo, a
   held verb is valid, so a partial batch is correct here. A refusal on
   the pool-lock wait is re-probed once first (the probe is one
-  snapshot). Free and building slots spend the same `DS_FLEET_TOTAL`,
+  snapshot). Every slot, free or building, spends the same `DS_FLEET_TOTAL`,
   and the roll-call ends with `clients N of T (builders B, free F)`.
   `--over-budget` admits past the machine checks; the total has no
   override but the config, and a probe with no reading (exit 3) leaves
