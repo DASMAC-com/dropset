@@ -15,7 +15,7 @@ it runs the lever fold and hands its kill and merge candidates to
 this session. Todo means "should this be done", and the operator
 answers that question in this tab, four tasks at a time.
 
-The sibling shapes: `architect` for the Claude subscription session discipline,
+The sibling shapes: `architect` for the advisor-session discipline,
 `ratify-staged` for the review round this reuses — the same ask
 text, the same fold protocol, the same tool — over a different
 pool, with each approval written as it lands rather than in one

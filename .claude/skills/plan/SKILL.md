@@ -647,7 +647,7 @@ the milestone** in one `board_batch.py fields` write, never by
 closing and refiling. **Do not re-adjudicate a finding** —
 `audit-scope` cross-checked it before filing.
 
-**`Session pending` is never promoted here**: a count is a subscription
+**`Session pending` is never promoted here**: a count is an advisor
 session that died mid-review — offer to resume it.
 
 ## Notes

@@ -44,7 +44,7 @@ the document's state sections.
 1. **Next means dispatchable right now.** A planning hold is a
    blocking edge the operator can see, never prose-only state.
    Automated filers never place an edge; the human sources are a
-   planning session, a subscription session's filing yes in the operator's
+   planning session, an advisor session's filing yes in the operator's
    tab (`ratify-staged`), and an edge the operator ticks in the
    curator's tab (ruling 12). (`SKILL.md` step 2.)
    **The coordination rule** (2026-10-26, amended 2026-10-28 and

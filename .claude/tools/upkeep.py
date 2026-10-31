@@ -204,7 +204,7 @@ OPEN_PR_LIMIT = 100
 
 RESOLVED_TYPES = ("completed", "canceled")
 # The parking milestones, in report order. Session pending is short-lived by
-# design: a count there is a Claude subscription session that died mid-review. Curator pending
+# design: a count there is an advisor session that died mid-review. Curator pending
 # is the curator's in-flight batch, stamped before each ask and cleared on the
 # move, so a count with no live curator is a curator that stopped mid-day.
 # Follow-ups is retired as a parking set: filers now land un-parked in the

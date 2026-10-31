@@ -248,7 +248,7 @@ the day's **one destructive question**. Detail:
 
 **No automated writer files a blocking edge — ever**, semantic ones
 included; a human places them — in the **scheduler**, by a ticked
-curator proposal, or by a Claude subscription session's filing yes.
+curator proposal, or by an advisor session's filing yes.
 The scheduler and curator message each other any change to the other's
 edge; both write priorities under the agreement rule. A spurious edge
 (dropping an issue out of
