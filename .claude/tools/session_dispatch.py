@@ -88,7 +88,6 @@ import machine_load
 #: `eng-١٢٣` would validate as a tag. `shlex.quote` downstream keeps either
 #: from being exploitable; the point of this table is to refuse the shape.
 _TAG = re.compile(r"\A(?:eng-)?\d+\Z", re.ASCII)
-_NAME = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z", re.ASCII)
 
 #: The substrate override words, the same on every verb that takes one.
 _SUBSTRATES = ("anthropic", "bedrock")
@@ -132,33 +131,36 @@ def validate(argv: list[str]) -> list[str]:
                 return ["task", "resume"]
             if len(rest) != 1 or not _TAG.match(rest[0]):
                 raise ValueError(f"`task {sub}` takes one eng-### tag or number")
+            # The shell refuses 0 at launch, as it does on `explore` below.
+            if sub != "resume" and re.fullmatch(r"(?:eng-)?0+", rest[0], re.ASCII):
+                raise ValueError("`task` needs a real issue number; 0 is not one")
             return ["task", sub, rest[0]]
         if len(args) != 1 or not _TAG.match(args[0]):
             raise ValueError("`task` takes one eng-### tag or number")
+        if re.fullmatch(r"(?:eng-)?0+", args[0], re.ASCII):
+            raise ValueError("`task` needs a real issue number; 0 is not one")
         return ["task", args[0]]
 
     if verb == "explore":
-        # A name is REQUIRED (it names a worktree) and the `resume` twin is
-        # retired, since `explore <n|name>` now resumes an existing session
-        # itself. `_NAME` admits a bare number, which is the issue-keyed form an
-        # audit dispatch uses — `explore 1196` lands in the `1196` worktree.
-        # Either substrate word, in `task`'s position, so a `[Explore/Bedrock]`
-        # title types as `explore bedrock <n>` like every other token; the
-        # shell refuses either word as a name, so `explore bedrock` alone is
-        # no `exp-bedrock`.
+        # An issue number is REQUIRED (it names the worktree) and the `resume`
+        # twin is retired, since `explore <n>` now resumes an existing session
+        # itself — `explore 1196` lands in the `1196` worktree. The free-form
+        # `explore <name>` is retired with it: a worktree is named for its
+        # issue, never a word. Either substrate word, in `task`'s position, so a
+        # `[Explore/Bedrock]` title types as `explore bedrock <n>` like every
+        # other token.
         word = [args[0]] if args and args[0] in _SUBSTRATES else []
         args = args[len(word) :]
         if args and args[0] == "resume":
             raise ValueError(
-                "`explore resume` is retired — dispatch `explore <n|name>`, "
+                "`explore resume` is retired — dispatch `explore <n>`, "
                 "which resumes an existing session itself"
             )
-        if len(args) != 1 or not _NAME.match(args[0]) or args[0] in _SUBSTRATES:
+        if len(args) != 1 or not _TAG.match(args[0]):
             raise ValueError(
-                "`explore` takes [anthropic|bedrock] and one lowercase name or "
-                "issue number"
+                "`explore` takes [anthropic|bedrock] and one eng-### tag or number"
             )
-        # `_NAME` admits `0` and `eng-0`; the shell refuses both, since 0 is not a
+        # `_TAG` admits `0` and `eng-0`; the shell refuses both, since 0 is not a
         # Linear issue number. Mirror that here rather than letting the dispatch
         # succeed: it would open a tab, type the verb, and leave a session that
         # LOOKS started and is idle — the exact silent failure the issue-keyed
@@ -218,9 +220,9 @@ def validate(argv: list[str]) -> list[str]:
 #:
 #: A separator rather than inference, deliberately. The verb names are a closed
 #: set, so consecutive verbs look as if they could be split apart without one —
-#: but `explore` takes a
-#: lowercase name and `_NAME` matches `plan`, so `explore plan` is
-#: genuinely ambiguous between one verb and two. On a boundary that types into a
+#: but `explore` once took a lowercase name, which matched `plan`, so
+#: `explore plan` was genuinely ambiguous between one verb and two, and any
+#: future worded argument would make it so again. On a boundary that types into a
 #: live shell, an explicit separator beats a heuristic that is right most of the
 #: time. `+` is not a legal verb or argument under the grammar above, so it can
 #: never collide with one; `--` was rejected because argparse strips a lone `--`

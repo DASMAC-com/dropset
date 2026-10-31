@@ -338,11 +338,25 @@ class LaunchLineGrammarTest(unittest.TestCase):
                     self.assertNotIn("in", sections(got.stdout))
 
     def test_explore_refuses_a_word_as_its_name(self) -> None:
-        for command in ("explore bedrock", "explore bedrock anthropic"):
+        got = run("explore bedrock")
+        self.assertEqual(got.returncode, 1)
+        self.assertIn("Usage: explore [anthropic|bedrock] <n>", got.stderr)
+        # The free-form `explore <name>` is retired: a worktree is named for its
+        # issue, so every word is refused, a substrate word included.
+        for command in ("explore bedrock anthropic", "explore feeds", "explore 0"):
             with self.subTest(command=command):
                 got = run(command)
                 self.assertEqual(got.returncode, 1)
-                self.assertIn("Usage: explore [anthropic|bedrock]", got.stderr)
+                self.assertIn("explore: takes a Linear issue number", got.stderr)
+                self.assertNotIn("in", sections(got.stdout))
+
+    def test_task_refuses_a_worded_tag(self) -> None:
+        for command in ("task my-thing", "task bedrock main", "task 0"):
+            with self.subTest(command=command):
+                got = run(command)
+                self.assertEqual(got.returncode, 1)
+                self.assertIn("task: takes a Linear issue number", got.stderr)
+                self.assertNotIn("in", sections(got.stdout))
 
 
 @unittest.skipUnless(shutil.which("zsh"), "needs zsh")
