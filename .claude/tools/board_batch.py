@@ -35,6 +35,12 @@ ids, never a committed token):
 * ``edges --pairs FILE [--remove]`` — add or remove **operator-directed**
   blocking edges.
 
+Each of ``fields``, ``priorities`` and ``edges`` also takes **one** write as
+flags in place of its file (``--id`` with ``--set`` / ``--priority``;
+``--blocker`` with ``--blocked``), mutually exclusive with the file form and
+widened into the same payload, so both pass the same validation. A single
+write was otherwise a Write turn to compose a one-entry JSON file.
+
 **Relations are not issue fields, and ``fields`` does not take them.** They
 are a separate mutation pair (``issueRelationCreate`` /
 ``issueRelationDelete``), so they live in ``edges`` — which is also where the
@@ -84,10 +90,13 @@ Usage:
     python3 .claude/tools/board_batch.py list --updated-since P1D
     python3 .claude/tools/board_batch.py view
     python3 .claude/tools/board_batch.py fields --updates updates.json
+    python3 .claude/tools/board_batch.py fields --id ENG-123 --set milestone=null
     python3 .claude/tools/board_batch.py priorities --updates priorities.json
+    python3 .claude/tools/board_batch.py priorities --id ENG-123 --priority 2
     python3 .claude/tools/board_batch.py state --id ENG-123 --state "In Review"
     python3 .claude/tools/board_batch.py edges --pairs edges.json
     python3 .claude/tools/board_batch.py edges --pairs edges.json --remove
+    python3 .claude/tools/board_batch.py edges --blocker ENG-1 --blocked ENG-2
 
 ``--dry-run`` prints what each write subcommand *would* do and writes nothing.
 Rehearse an ``edges`` run that way first: a blocking edge drops an issue out
@@ -1146,7 +1155,20 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         ("priorities", "batch priority updates (a thin alias of fields)"),
     ):
         p = sub.add_parser(name, help=help_text)
-        p.add_argument("--updates", required=True, help="path to the updates JSON")
+        source = p.add_mutually_exclusive_group(required=True)
+        source.add_argument("--updates", help="path to the updates JSON")
+        source.add_argument("--id", help="ENG-### for one inline write")
+        if name == "priorities":
+            p.add_argument("--priority", help="with --id: 0-4 or a priority name")
+        else:
+            p.add_argument(
+                "--set",
+                action="append",
+                default=[],
+                metavar="FIELD=VALUE",
+                help="with --id (repeatable); VALUE is JSON-decoded when it "
+                "parses (null, 2, [...]) and a plain string otherwise",
+            )
         _add_dry_run(p, top_level=False)
         if name == "fields":
             p.add_argument(
@@ -1167,7 +1189,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     edges = sub.add_parser(
         "edges", help="add or remove operator-directed blocking edges"
     )
-    edges.add_argument("--pairs", required=True, help="path to the pair-list JSON")
+    pair_source = edges.add_mutually_exclusive_group(required=True)
+    pair_source.add_argument("--pairs", help="path to the pair-list JSON")
+    pair_source.add_argument("--blocker", help="ENG-### for one inline edge")
+    edges.add_argument("--blocked", help="with --blocker: the ENG-### it blocks")
     edges.add_argument(
         "--remove",
         action="store_true",
@@ -1205,6 +1230,58 @@ def _normalize_state_update(identifier: str, state: str) -> dict:
     return {identifier: {"state": state}}
 
 
+def _inline_value(raw: str) -> object:
+    """A ``--set`` value: JSON when it parses, so ``null`` clears a milestone
+    and ``2`` is a number, else the plain string (a state or title)."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+
+
+def inline_updates(args: argparse.Namespace) -> dict:
+    """``fields`` / ``priorities`` given ``--id``: the one-entry payload the
+    file form would have carried, so it meets the same validation."""
+    if args.cmd == "priorities":
+        if args.priority is None:
+            raise BoardBatchError("priorities --id needs --priority")
+        value = args.priority.strip()
+        return {args.id: {"priority": int(value) if value.isdecimal() else value}}
+    if not args.set:
+        raise BoardBatchError("fields --id needs at least one --set FIELD=VALUE")
+    fields: dict = {}
+    for item in args.set:
+        name, sep, raw = item.partition("=")
+        if not sep or not name.strip():
+            raise BoardBatchError(f"--set {item!r} is not FIELD=VALUE")
+        if name.strip() in fields:
+            raise BoardBatchError(f"--set names {name.strip()!r} twice")
+        fields[name.strip()] = _inline_value(raw)
+    return {args.id: fields}
+
+
+def inline_pairs(args: argparse.Namespace) -> list:
+    """``edges`` given ``--blocker``: the one-pair list the file would hold."""
+    if args.blocked is None:
+        raise BoardBatchError("edges --blocker needs --blocked")
+    return [{"blocker": args.blocker, "blocked": args.blocked}]
+
+
+def _refuse_stray_inline(args: argparse.Namespace) -> None:
+    """An inline-only flag beside the file form would be silently ignored."""
+    stray = []
+    if args.cmd == "edges":
+        if args.pairs is not None and args.blocked is not None:
+            stray.append("--blocked")
+    elif args.cmd == "priorities":
+        if args.updates is not None and args.priority is not None:
+            stray.append("--priority")
+    elif args.updates is not None and args.set:
+        stray.append("--set")
+    if stray:
+        raise BoardBatchError(f"{stray[0]} goes with the inline form, not the file")
+
+
 def run(argv: list[str]) -> int:
     args = _parse_args(argv)
     api_key = env_var("LINEAR_API_KEY")
@@ -1234,7 +1311,10 @@ def run(argv: list[str]) -> int:
     if args.cmd in ("fields", "priorities", "state"):
         if args.cmd == "state":
             updates = _normalize_state_update(args.id, args.state)
+        elif args.id is not None:
+            updates = inline_updates(args)
         else:
+            _refuse_stray_inline(args)
             raw = load_json_file(args.updates)
             updates = (
                 _normalize_priority_updates(raw) if args.cmd == "priorities" else raw
@@ -1259,7 +1339,11 @@ def run(argv: list[str]) -> int:
         )
         return 0
 
-    pairs = load_json_file(args.pairs)
+    if args.blocker is not None:
+        pairs = inline_pairs(args)
+    else:
+        _refuse_stray_inline(args)
+        pairs = load_json_file(args.pairs)
     if not isinstance(pairs, list):
         raise BoardBatchError("edges expects a list of {blocker, blocked} objects")
     by_number = index_by_number(
