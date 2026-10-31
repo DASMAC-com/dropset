@@ -32,8 +32,12 @@
 //!
 //! The cockpit pairs them differently, because its policy comes from the
 //! operator's declared `--cluster` rather than from the URL. A mainnet session
-//! is held to [`Cluster::verify_genesis`] at launch. A localnet session cannot
-//! check at launch — its validator is still booting — so it checks **lazily**:
+//! is held to [`Cluster::verify_genesis`] at launch and before every write;
+//! under `--rehearsal-loopback` it inverts, admitting only a `127.0.0.1` or
+//! `localhost` endpoint whose genesis is **not** mainnet-beta, so a dress
+//! rehearsal drives the mainnet signer path and nothing real. A localnet
+//! session cannot check at launch — its validator is still booting — so it
+//! checks **lazily**:
 //! [`Identity::of_local`] classifies the genesis hash on the first poll that
 //! reaches a chain, and until that says [`Identity::Verified`] the cockpit refuses
 //! every write. The case it closes is something other than the spawned
@@ -169,9 +173,35 @@ impl Cluster {
     /// The asymmetry is the point — see [`ensure_not_mainnet`] for the guard
     /// that runs in the other direction, which is where a URL check can be
     /// actively wrong.
-    pub fn verify_genesis(self, client: &RpcClient) -> Result<()> {
+    ///
+    /// `rehearsal_loopback` (the `--rehearsal-loopback` flag) swaps the
+    /// mainnet match for its inverse, so a dress rehearsal can drive the
+    /// mainnet signer path against a local validator: see
+    /// `check_rehearsal` for the whole of what it admits.
+    pub fn verify_genesis(self, client: &RpcClient, rehearsal_loopback: bool) -> Result<()> {
+        self.check_genesis(&client.url(), rehearsal_loopback, || {
+            chain::genesis_hash(client)
+        })
+    }
+
+    /// [`Cluster::verify_genesis`] over an injected `genesis` read, so every
+    /// branch is testable without an endpoint.
+    fn check_genesis(
+        self,
+        rpc_url: &str,
+        rehearsal_loopback: bool,
+        genesis: impl FnOnce() -> Result<String>,
+    ) -> Result<()> {
         if self != Cluster::Mainnet {
+            if rehearsal_loopback {
+                bail!(
+                    "--rehearsal-loopback is mainnet-only — localnet has no mainnet check to swap"
+                );
+            }
             return Ok(());
+        }
+        if rehearsal_loopback {
+            return check_rehearsal(rpc_url, genesis);
         }
         // The source error is deliberately DROPPED rather than chained. It comes
         // from the RPC client's HTTP layer, whose `Display` may include the
@@ -180,7 +210,7 @@ impl Cluster {
         // kept here is printed to stderr in full on the commonest first-run
         // failure. Fixing it by construction beats reasoning about a
         // dependency's formatting.
-        let seen = chain::genesis_hash(client).map_err(|_| {
+        let seen = genesis().map_err(|_| {
             anyhow!(
                 "could not read the genesis hash from the {} endpoint — is it \
                  reachable? (the underlying error is withheld: it can carry the \
@@ -197,6 +227,60 @@ impl Cluster {
         }
         Ok(())
     }
+}
+
+/// A rehearsal session's endpoint check: the `rpc_url` must be on `127.0.0.1`
+/// or `localhost`, and the chain behind it must **not** be mainnet-beta.
+///
+/// The host check is the whole safety property of the flag, so it is decided
+/// before any chain call and narrower than [`is_localnet`] (no `::1` or
+/// `0.0.0.0`). See `is_rehearsal_loopback` for why it is not [`host_of`]. The
+/// genesis read is the second half: a loopback port can still be a tunnel to
+/// mainnet, and a rehearsal that reached it would be a real session nobody
+/// meant to start. A failed read refuses, as the mainnet check does — and
+/// drops the source error for the same reason.
+fn check_rehearsal(rpc_url: &str, genesis: impl FnOnce() -> Result<String>) -> Result<()> {
+    if !is_rehearsal_loopback(rpc_url) {
+        bail!(
+            "--rehearsal-loopback admits only an http(s)://127.0.0.1 or localhost \
+             endpoint, and {MAINNET_RPC_ENV} is not one — refusing the rehearsal"
+        );
+    }
+    let seen = genesis().map_err(|_| {
+        anyhow!(
+            "could not read the genesis hash from the loopback endpoint — is the validator \
+             up? (the underlying error is withheld: it can carry the endpoint URL)"
+        )
+    })?;
+    if seen == MAINNET_GENESIS_HASH {
+        bail!(
+            "the loopback endpoint is MAINNET-BETA (genesis {seen}) — a rehearsal never \
+             signs on mainnet. A tunnel or proxy on the port is the usual cause."
+        );
+    }
+    Ok(())
+}
+
+/// Whether `rpc_url` is exactly `http(s)://` then `127.0.0.1` or `localhost`,
+/// an optional numeric port, and nothing or a `/…` path.
+///
+/// An allowlist of the whole authority, not [`host_of`]: that parser is
+/// best-effort, and where it and the HTTP client's standard URL parser
+/// disagree the client wins. `http://evil.com\@127.0.0.1` reads as loopback to `host_of`
+/// but the client takes `\` for `/` and connects to `evil.com`. Any userinfo,
+/// backslash, query or other punctuation in the authority refuses here.
+fn is_rehearsal_loopback(rpc_url: &str) -> bool {
+    let Some(rest) = rpc_url
+        .strip_prefix("http://")
+        .or_else(|| rpc_url.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let authority = rest.split_once('/').map_or(rest, |(a, _)| a);
+    let (host, port) = authority.split_once(':').unwrap_or((authority, "1"));
+    (host.eq_ignore_ascii_case("127.0.0.1") || host.eq_ignore_ascii_case("localhost"))
+        && !port.is_empty()
+        && port.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Refuse to proceed if `client` is talking to mainnet.
@@ -467,7 +551,95 @@ mod tests {
         // Localnet's check is a no-op by construction, so it must not touch
         // the network: an unreachable URL still succeeds.
         let client = chain::rpc("http://127.0.0.1:1");
-        assert!(Cluster::Localnet.verify_genesis(&client).is_ok());
+        assert!(Cluster::Localnet.verify_genesis(&client, false).is_ok());
+    }
+
+    const LOCAL_GENESIS: &str = "SomeFreshTestValidatorGenesis1111111111111";
+
+    fn check(cluster: Cluster, url: &str, rehearsal: bool, genesis: &str) -> Result<()> {
+        cluster.check_genesis(url, rehearsal, || Ok(genesis.to_string()))
+    }
+
+    #[test]
+    fn rehearsal_admits_a_loopback_local_validator() {
+        assert!(check(
+            Cluster::Mainnet,
+            "http://127.0.0.1:8899",
+            true,
+            LOCAL_GENESIS
+        )
+        .is_ok());
+        assert!(check(
+            Cluster::Mainnet,
+            "http://LOCALHOST:8899/",
+            true,
+            LOCAL_GENESIS
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rehearsal_refuses_any_other_host_before_reading_the_chain() {
+        let unread = || -> Result<String> { panic!("the host check must refuse first") };
+        for url in [
+            "https://api.mainnet-beta.solana.com",
+            "http://127.0.0.1.evil.com/",
+            "https://127.0.0.1@evil.com/",
+            "http://[::1]:8899",
+            "http://0.0.0.0:8899",
+            // Shapes `host_of` reads as loopback while the HTTP client's
+            // standard URL parser connects to the remote host.
+            "http://evil.com\\@127.0.0.1:8899",
+            "http:evil.com/://127.0.0.1",
+            "http://evil@127.0.0.1:8899",
+            "http://127.0.0.1:/",
+            "http://127.0.0.1?x",
+            "127.0.0.1:8899",
+        ] {
+            let err = Cluster::Mainnet
+                .check_genesis(url, true, unread)
+                .unwrap_err();
+            let refusal = format!("{err:#}");
+            assert!(refusal.contains("admits only"), "{url}: {refusal}");
+        }
+    }
+
+    #[test]
+    fn rehearsal_refuses_mainnet_behind_loopback_and_an_unread_genesis() {
+        let url = "http://127.0.0.1:8899";
+        let err = check(Cluster::Mainnet, url, true, MAINNET_GENESIS_HASH).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("never signs on mainnet"),
+            "{err:#}"
+        );
+        let unread = Cluster::Mainnet.check_genesis(url, true, || Err(anyhow!("refused")));
+        assert!(unread.is_err());
+    }
+
+    #[test]
+    fn mainnet_without_the_flag_admits_only_mainnet_beta() {
+        let url = "https://rpc.example.com/";
+        assert!(check(Cluster::Mainnet, url, false, MAINNET_GENESIS_HASH).is_ok());
+        let err = check(Cluster::Mainnet, url, false, LOCAL_GENESIS).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("does not point at mainnet-beta"),
+            "{err:#}"
+        );
+        // A loopback validator is exactly what the plain check exists to refuse.
+        let url = "http://127.0.0.1:8899";
+        assert!(check(Cluster::Mainnet, url, false, LOCAL_GENESIS).is_err());
+    }
+
+    #[test]
+    fn rehearsal_flag_is_refused_outside_mainnet() {
+        let err = check(
+            Cluster::Localnet,
+            "http://127.0.0.1:8899",
+            true,
+            LOCAL_GENESIS,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("mainnet-only"), "{err:#}");
     }
 
     #[test]

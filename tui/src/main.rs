@@ -36,6 +36,7 @@
 //! dropset-tui [--cluster <localnet|mainnet>] [--keys-file <path>] [--wallet <key>]
 //!             [--leader <key>] [--quote <key>] [--program-key <key>]
 //!             [--agent-sock <path>] [--ceremony-log <path>] [--bootstrap]
+//!             [--rehearsal-loopback]
 //! ```
 
 use anyhow::{anyhow, bail, Result};
@@ -94,6 +95,9 @@ fn main() -> Result<()> {
         }
         if args.agent_sock.is_some() {
             bail!("--agent-sock is mainnet-only — localnet signs with the committed keys/ roster");
+        }
+        if args.rehearsal_loopback {
+            bail!("--rehearsal-loopback is mainnet-only — localnet has no mainnet check to swap");
         }
     }
     let agent_sock = args.agent_sock.as_deref().map(Path::new);
@@ -168,25 +172,32 @@ fn main() -> Result<()> {
     // The ceremony record: always kept on mainnet, opt-in on localnet. Opened
     // before the banner so a log that cannot be written refuses the session
     // rather than surfacing after a write has landed unrecorded.
-    let log_path = match &args.ceremony_log {
-        Some(path) => Some(PathBuf::from(path)),
-        None if args.cluster.is_mainnet() => {
-            Some(ceremony::default_path(args.cluster).ok_or_else(|| {
-                anyhow!(
-                    "no ceremony log path — set {} or pass --ceremony-log",
-                    ceremony::CEREMONY_LOG_ENV
-                )
-            })?)
-        }
-        None => None,
-    };
+    let mainnet_log = args
+        .cluster
+        .is_mainnet()
+        .then(|| ceremony::default_path(args.cluster))
+        .flatten();
+    let log_path = ceremony_log_path(
+        args.cluster,
+        args.rehearsal_loopback,
+        args.ceremony_log.as_deref(),
+        mainnet_log,
+    )?;
     let ceremony_log = log_path
-        .map(|path| CeremonyLog::open(&path, &repo_root, args.cluster).map(Arc::new))
+        .map(|path| {
+            if args.rehearsal_loopback {
+                CeremonyLog::open_rehearsal(&path, &repo_root)
+            } else {
+                CeremonyLog::open(&path, &repo_root, args.cluster)
+            }
+            .map(Arc::new)
+        })
         .transpose()?;
 
     let rpc_url = args.cluster.rpc_url()?;
     if args.cluster.is_mainnet() {
-        args.cluster.verify_genesis(&chain::rpc(&rpc_url))?;
+        args.cluster
+            .verify_genesis(&chain::rpc(&rpc_url), args.rehearsal_loopback)?;
         let leader_label = leader.as_ref().map(|k| k.pubkey().to_string());
         let quote_label = quote.as_ref().map(|k| k.pubkey().to_string());
         let program_label = program_key.as_ref().map(|k| k.pubkey().to_string());
@@ -215,6 +226,7 @@ fn main() -> Result<()> {
     let ctx = action::JobContext {
         rpc_url,
         cluster: args.cluster,
+        rehearsal_loopback: args.rehearsal_loopback,
         repo_root,
         wallet_path,
         wallet,
@@ -239,7 +251,8 @@ fn print_help() {
          USAGE:\n    \
          dropset-tui [--cluster <localnet|mainnet>] [--keys-file <path>] [--wallet <key>]\n                \
          [--leader <key>] [--quote <key>] [--program-key <key>]\n                \
-         [--agent-sock <path>] [--ceremony-log <path>] [--bootstrap]\n\n\
+         [--agent-sock <path>] [--ceremony-log <path>] [--bootstrap]\n                \
+         [--rehearsal-loopback]\n\n\
          OPTIONS:\n        \
          --cluster <name>        localnet (default) or mainnet\n        \
          --keys-file <path>      mainnet only: the key-addresses file (tui/private-keys.env)\n    \
@@ -250,7 +263,9 @@ fn print_help() {
          --agent-sock <path>     mainnet only: the SSH agent socket, skipping discovery\n        \
          --ceremony-log <path>   append-only record of every write (mainnet default:\n                                \
          ${} or ~/.dropset/ceremony-mainnet-beta.log)\n        \
-         --bootstrap             localnet only: run \"Bootstrap all\" once at launch\n    \
+         --bootstrap             localnet only: run \"Bootstrap all\" once at launch\n        \
+         --rehearsal-loopback    mainnet only: dress rehearsal against a loopback\n                                \
+         validator (needs --ceremony-log)\n    \
          -h, --help                  show this help\n\n\
          KEYS:\n    \
          Localnet keys are keypair files. Mainnet keys are Solana addresses, each\n    \
@@ -264,7 +279,11 @@ fn print_help() {
          MAINNET:\n    \
          Set {} to the JSON-RPC endpoint — there is deliberately no default.\n    \
          Entry verifies the genesis hash and requires a typed confirmation, and\n    \
-         every ceremony step shows its plan under its own typed confirmation.\n\n\
+         every ceremony step shows its plan under its own typed confirmation.\n    \
+         --rehearsal-loopback instead admits only a 127.0.0.1 or localhost\n    \
+         endpoint whose genesis is NOT mainnet-beta, and needs its own\n    \
+         --ceremony-log; every other mainnet behavior (agent signer, keys,\n    \
+         confirmations) is unchanged.\n\n\
          FAIR PRICE:\n    \
          Optional. Set {} to a Postgres URL logging in as {}\n    \
          (localnet: postgres://dropset_ro:dropset_ro@127.0.0.1:5432/dropset) and a\n    \
@@ -310,6 +329,58 @@ fn quote_address(
     }
 }
 
+/// The ceremony log a launch opens: `given` (`--ceremony-log`) wins, else
+/// mainnet's default `mainnet_log`, else none.
+///
+/// A rehearsal must name its own log, and never the mainnet default: that
+/// file is the real ceremony record. The guarantee is the `rehearsal=1` mark
+/// on every rehearsal line ([`CeremonyLog::open_rehearsal`]); this path check
+/// only catches the obvious mistake, since a case variant or a `..` through a
+/// missing directory can still spell the same file.
+fn ceremony_log_path(
+    cluster: Cluster,
+    rehearsal_loopback: bool,
+    given: Option<&str>,
+    mainnet_log: Option<PathBuf>,
+) -> Result<Option<PathBuf>> {
+    match given {
+        Some(path) if rehearsal_loopback => {
+            let path = PathBuf::from(path);
+            if mainnet_log.is_some_and(|real| resolved(&real) == resolved(&path)) {
+                bail!("--ceremony-log is the mainnet ceremony record — a rehearsal names its own");
+            }
+            Ok(Some(path))
+        }
+        Some(path) => Ok(Some(PathBuf::from(path))),
+        None if rehearsal_loopback => {
+            bail!("--rehearsal-loopback needs --ceremony-log, kept apart from the mainnet record")
+        }
+        None if cluster.is_mainnet() => mainnet_log.map(Some).ok_or_else(|| {
+            anyhow!(
+                "no ceremony log path — set {} or pass --ceremony-log",
+                ceremony::CEREMONY_LOG_ENV
+            )
+        }),
+        None => Ok(None),
+    }
+}
+
+/// `path` with its directory resolved, so two spellings of one file compare
+/// equal whether or not the file exists yet.
+fn resolved(path: &Path) -> PathBuf {
+    if let Ok(full) = std::fs::canonicalize(path) {
+        return full;
+    }
+    let dir = path.parent().filter(|d| !d.as_os_str().is_empty());
+    match (
+        std::fs::canonicalize(dir.unwrap_or(Path::new("."))),
+        path.file_name(),
+    ) {
+        (Ok(dir), Some(name)) => dir.join(name),
+        _ => path.to_path_buf(),
+    }
+}
+
 /// Refuse a launch in which two `roles` name the same key.
 fn refuse_shared_roles(roles: &[(&str, Option<Pubkey>)]) -> Result<()> {
     for (i, (role, key)) in roles.iter().enumerate() {
@@ -351,6 +422,7 @@ struct Args {
     agent_sock: Option<String>,
     ceremony_log: Option<String>,
     bootstrap: bool,
+    rehearsal_loopback: bool,
     help: bool,
 }
 
@@ -366,6 +438,7 @@ impl Args {
             agent_sock: None,
             ceremony_log: None,
             bootstrap: false,
+            rehearsal_loopback: false,
             help: false,
         };
         while let Some(arg) = it.next() {
@@ -379,6 +452,7 @@ impl Args {
                 "--agent-sock" => a.agent_sock = Some(value(&mut it, "--agent-sock")?),
                 "--ceremony-log" => a.ceremony_log = Some(value(&mut it, "--ceremony-log")?),
                 "--bootstrap" => a.bootstrap = true,
+                "--rehearsal-loopback" => a.rehearsal_loopback = true,
                 "--help" | "-h" => a.help = true,
                 // A bare path stays supported as the wallet, which is how the
                 // existing localnet invocations pass it.
@@ -473,6 +547,38 @@ mod tests {
         assert_eq!(b.agent_sock.as_deref(), Some("/tmp/a.sock"));
         assert!(parse(&["--agent-sock", "--bootstrap"]).is_err());
         assert!(parse(&["--ceremony-log", "--bootstrap"]).is_err());
+    }
+
+    #[test]
+    fn rehearsal_loopback_is_an_opt_in_switch() {
+        assert!(!parse(&["--cluster", "mainnet"]).unwrap().rehearsal_loopback);
+        let a = parse(&["--cluster", "mainnet", "--rehearsal-loopback"]).unwrap();
+        assert!(a.rehearsal_loopback);
+        // A switch, not an option: it takes no value, so the next flag parses.
+        let b = parse(&["--rehearsal-loopback", "--cluster", "mainnet"]).unwrap();
+        assert!(b.rehearsal_loopback && b.cluster.is_mainnet());
+    }
+
+    #[test]
+    fn a_rehearsal_names_its_own_ceremony_log() {
+        let dir = std::env::temp_dir().join(format!("dropset-rehearsal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("ceremony-mainnet-beta.log");
+        let main = Cluster::Mainnet;
+        // A plain mainnet launch falls back to the real record.
+        let plain = ceremony_log_path(main, false, None, Some(real.clone())).unwrap();
+        assert_eq!(plain, Some(real.clone()));
+        // A rehearsal with no log, or with the real record by another spelling, refuses.
+        assert!(ceremony_log_path(main, true, None, Some(real.clone())).is_err());
+        let alias = dir.join(".").join("ceremony-mainnet-beta.log");
+        let alias = alias.to_str().unwrap();
+        assert!(ceremony_log_path(main, true, Some(alias), Some(real.clone())).is_err());
+        // Its own file is accepted.
+        let own = dir.join("rehearsal.log");
+        let own = own.to_str().unwrap();
+        let got = ceremony_log_path(main, true, Some(own), Some(real)).unwrap();
+        assert_eq!(got, Some(PathBuf::from(own)));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
