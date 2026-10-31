@@ -6,7 +6,7 @@ user-invocable: true
 
 # `ratify-staged`
 
-Stage 2 of a Claude subscription session's output, written once for
+Stage 2 of an advisor session's output, written once for
 every consumer (`architect`, `explore` and `audit-scope`'s findings).
 Stage 1 — the
 spec and its read-back loop — belongs to the consumer and ends with

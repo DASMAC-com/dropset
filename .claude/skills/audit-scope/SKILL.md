@@ -32,7 +32,7 @@ the shared `ratify-staged` skill (step 8); planning is
 consulted for feedback, never for ratification.
 
 **Staged means state Backlog plus `Session pending`**, both set
-in the creating call — every subscription session's staging lane.
+in the creating call — every advisor session's staging lane.
 The milestone keeps a finding out of the review inbox until the
 operator has ticked it here; only the
 operator's final answer moves it to Todo, in `ratify-staged`'s
