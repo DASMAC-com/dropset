@@ -783,6 +783,10 @@ pub struct JobContext {
     /// forwarded to mainnet — and the operator's declared intent is what the
     /// gates must key on.
     pub cluster: Cluster,
+    /// The `--rehearsal-loopback` flag: a mainnet session against a loopback
+    /// validator. Every genesis check takes it, so a write mid-session is
+    /// held to the same endpoint rule as the launch.
+    pub rehearsal_loopback: bool,
     pub repo_root: PathBuf,
     pub wallet_path: String,
     pub wallet: RoleKey,

@@ -1330,7 +1330,11 @@ impl App {
             return;
         }
         // The same last-moment proof of chain the ceremony prompt takes.
-        if let Err(e) = self.ctx.cluster.verify_genesis(&self.client) {
+        if let Err(e) = self
+            .ctx
+            .cluster
+            .verify_genesis(&self.client, self.ctx.rehearsal_loopback)
+        {
             self.log(LogKind::Err, format!("{label} — {e:#}"));
             return;
         }
@@ -1498,7 +1502,11 @@ impl App {
             self.log(LogKind::Err, format!("{label} — {reason}"));
             return;
         }
-        if let Err(e) = self.ctx.cluster.verify_genesis(&self.client) {
+        if let Err(e) = self
+            .ctx
+            .cluster
+            .verify_genesis(&self.client, self.ctx.rehearsal_loopback)
+        {
             self.log(LogKind::Err, format!("{label} — {e:#}"));
             return;
         }
@@ -1566,7 +1574,11 @@ impl App {
             self.log(LogKind::Err, format!("{label} — {reason}"));
             return;
         }
-        if let Err(e) = self.ctx.cluster.verify_genesis(&self.client) {
+        if let Err(e) = self
+            .ctx
+            .cluster
+            .verify_genesis(&self.client, self.ctx.rehearsal_loopback)
+        {
             self.log(LogKind::Err, format!("{label} — {e:#}"));
             return;
         }
@@ -1910,7 +1922,11 @@ impl App {
             self.log(LogKind::Err, format!("{label} — {reason}"));
             return;
         }
-        if let Err(e) = self.ctx.cluster.verify_genesis(&self.client) {
+        if let Err(e) = self
+            .ctx
+            .cluster
+            .verify_genesis(&self.client, self.ctx.rehearsal_loopback)
+        {
             self.log(LogKind::Err, format!("{label} — {e:#}"));
             return;
         }
@@ -2020,7 +2036,11 @@ impl App {
             self.log(LogKind::Err, format!("{label} — {reason}"));
             return;
         }
-        if let Err(e) = self.ctx.cluster.verify_genesis(&self.client) {
+        if let Err(e) = self
+            .ctx
+            .cluster
+            .verify_genesis(&self.client, self.ctx.rehearsal_loopback)
+        {
             self.log(LogKind::Err, format!("{label} — {e:#}"));
             return;
         }
