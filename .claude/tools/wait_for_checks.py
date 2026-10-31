@@ -2294,7 +2294,8 @@ def wait(
             break
         rounds += 1
         settled = watch_checks(pr, repo, interval, remaining, log)
-        if settled == CONFLICT_SEEN:
+        cut_short = settled == CONFLICT_SEEN
+        if cut_short:
             # The REST read can run ahead of a settled answer, so the gate's
             # own settle loop decides; an unconfirmed `dirty` waits on.
             merge_state, _ = settle_mergeability(
@@ -2313,7 +2314,11 @@ def wait(
             break
         # The two retryable states get their own cap and pacing: a `none` is a
         # seconds-scale registration race, a `pending` is a whole CI run.
-        state_rounds[state] += 1
+        # A `pending` round an unconfirmed `dirty` cut short was no CI run, so
+        # it spends none of the budget: a lagging REST read must not turn a
+        # live run into `timeout` (the deadline still bounds the loop).
+        if not (cut_short and state == "pending"):
+            state_rounds[state] += 1
         cap = MAX_NONE_ROUNDS if state == "none" else MAX_WATCH_ROUNDS
         if state_rounds[state] >= cap:
             # `none` survives the terminal branch only when EVERY round it saw

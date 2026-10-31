@@ -293,8 +293,8 @@ migrations or generation inputs, and whether it spans crates.
      write** (`tick --state "In Review"`) — never a write of their own
      (`history.md` → "Deferred-tick echoes").
 
-   - **A body addition that ticks nothing** — a deferral note, a
-     remaining-scope line — goes through
+   - **A body addition that ticks nothing** — a `deferred to ENG-###`
+     or dropped-and-why record, a remaining-scope line — goes through
      `linear_issue.py append --id <ENG-###> --file <path>`, never
      `save_issue` (`CLAUDE.md` → "Partial edits").
 
@@ -303,8 +303,9 @@ migrations or generation inputs, and whether it spans crates.
      `file:line` or absence.
 
    - **"This will not fit in one PR" is not a second PR** on the same
-     issue: finish this one self-contained, file the remainder as
-     above and message the live scheduler its number
+     issue: finish this one self-contained and message the live
+     scheduler the remainder as pullable units; it files them, and
+     each number it returns is recorded as above
      (`docs/conventions/commits-and-prs.md`).
 
 1. **Run lint — every lint point is one call** that races the abridged
@@ -1606,7 +1607,7 @@ migrations or generation inputs, and whether it spans crates.
 
    With the stakes raised: on `blocking` neither enqueue nor advance
    the issue — rebase and resolve by step 2's tiers, then re-run from
-   step 16. On `unverified`, say so and hold. Only `green` proceeds.
+   step 2. On `unverified`, say so and hold. Only `green` proceeds.
 
    **Re-grade step 3's unsatisfied parts**: one neither filed nor
    dropped on the curator's ruling blocks the handoff.

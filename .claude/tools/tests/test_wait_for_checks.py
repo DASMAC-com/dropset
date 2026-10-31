@@ -3246,8 +3246,10 @@ class ConflictDuringCiWaitTests(unittest.TestCase):
         self.addCleanup(setattr, wfc, "log_path_for", real_log)
 
     def _wait(self, watches, checks, view):
-        """``watches``: what each watch round returns (the last repeats);
+        """``watches`` / ``checks``: what each round's watch and check read
+        return (the last repeats; ``checks`` may be one list for every round);
         ``view``: the ``gh pr view`` payload; a compare names one commit."""
+        reads = checks if checks and isinstance(checks[0], list) else [checks]
         self.calls = []
 
         def fake_gh(args):
@@ -3263,9 +3265,12 @@ class ConflictDuringCiWaitTests(unittest.TestCase):
             rounds.append(1)
             return watches[min(len(rounds) - 1, len(watches) - 1)]
 
+        def fake_read(pr, repo):
+            return reads[min(len(rounds) - 1, len(reads) - 1)]
+
         with (
             mock.patch.object(wfc, "watch_checks", fake_watch),
-            mock.patch.object(wfc, "read_checks", lambda pr, repo: checks),
+            mock.patch.object(wfc, "read_checks", fake_read),
             mock.patch.object(wfc, "_gh", fake_gh),
         ):
             return wfc.wait(285, repo="o/r", sleep=lambda _s: None)
@@ -3284,12 +3289,44 @@ class ConflictDuringCiWaitTests(unittest.TestCase):
         self.assertEqual(v["hint"]["gate"], "blocking")
         self.assertIn("compare/" + "a" * 40 + "...main", self.calls[-1][1])
 
-    def test_an_unconfirmed_dirty_read_waits_on(self):
-        """The settle read disagrees: no verdict from the REST field alone."""
+    def test_an_unconfirmed_dirty_read_waits_on_without_spending_the_budget(self):
+        """The settle read disagrees: no verdict from the REST field alone, and
+        the cut-short rounds (more than the pending cap) are no CI run, so the
+        wait reaches the real `pass` rather than a `timeout`."""
         view = {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}
-        v = self._wait([wfc.CONFLICT_SEEN, True], [check("Tests", "pass")], view)
+        cut = wfc.MAX_WATCH_ROUNDS + 1
+        v = self._wait(
+            [wfc.CONFLICT_SEEN] * cut + [True],
+            [[check("Tests", "pending")]] * cut + [[check("Tests", "pass")]],
+            view,
+        )
         self.assertEqual(v["conclusion"], "pass")
+        self.assertEqual(v["watch_rounds"], cut + 1)
         self.assertIsNone(v["base_gained"])
+
+    def test_base_gain_without_a_ref_says_so_rather_than_raising(self):
+        gain = wfc.base_gain("o/r", None, "main")
+        self.assertIsNone(gain["base_gained"])
+        self.assertIn("no head SHA", gain["error"])
+
+    def test_the_queue_probe_marks_a_reused_graphql_read_stale(self):
+        """`slow_fresh` is what keeps a conflict settled once per read."""
+
+        class Client:
+            def get(self, path):
+                return [] if "/timeline" in path else {"state": "open"}
+
+        now = [0.0]
+        with (
+            mock.patch.object(wfc, "_queue_graphql", lambda pr, repo: {}),
+            mock.patch.object(wfc, "_queue_runs", lambda client, repo, pr: []),
+        ):
+            probe = wfc.QueueProbe(client=Client(), clock=lambda: now[0])
+            fresh = [probe(285, "o/r")["slow_fresh"]]
+            fresh.append(probe(285, "o/r")["slow_fresh"])
+            now[0] += wfc.CORROBORATE_SECONDS
+            fresh.append(probe(285, "o/r")["slow_fresh"])
+        self.assertEqual(fresh, [True, False, True])
 
     def test_the_watch_returns_at_once_on_a_dirty_pull(self):
         log = Path(self._tmp.name) / "watch.log"
