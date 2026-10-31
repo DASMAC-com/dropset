@@ -48,14 +48,13 @@ pub enum Cluster {
 }
 
 impl Cluster {
-    /// Parse a `--cluster` value: `localnet`, or `mainnet` / `mainnet-beta`,
-    /// case-insensitively. A copy of `tui/src/cluster.rs`'s `Cluster::parse`
-    /// (this crate does not depend on the TUI); change the two together.
+    /// Parse a `--cluster` value with the SDK's [`Deployment`] parser:
+    /// `localnet`, or `mainnet` / `mainnet-beta`, case-insensitively.
     pub fn parse(value: &str) -> Result<Self> {
-        match value.to_ascii_lowercase().as_str() {
-            "localnet" => Ok(Cluster::Localnet),
-            "mainnet" | "mainnet-beta" => Ok(Cluster::Mainnet),
-            other => bail!("unknown cluster `{other}` (expected localnet or mainnet)"),
+        let deployment: Deployment = value.parse().map_err(|e| anyhow!("--cluster: {e}"))?;
+        match deployment {
+            Deployment::Localnet => Ok(Cluster::Localnet),
+            Deployment::Mainnet => Ok(Cluster::Mainnet),
         }
     }
 
@@ -184,7 +183,11 @@ mod tests {
         assert_eq!(Cluster::parse("localnet").unwrap(), Cluster::Localnet);
         assert_eq!(Cluster::parse("mainnet").unwrap(), Cluster::Mainnet);
         assert_eq!(Cluster::parse("Mainnet-Beta").unwrap(), Cluster::Mainnet);
-        assert!(Cluster::parse("devnet").is_err());
+        let err = Cluster::parse("devnet").unwrap_err().to_string();
+        assert!(
+            err.starts_with("--cluster: unknown cluster `devnet`"),
+            "{err}"
+        );
     }
 
     /// Mainnet mode aims at the mainnet program, never the localnet id whose
