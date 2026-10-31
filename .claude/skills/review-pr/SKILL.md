@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and offering to enqueue the PR, then watch the queue itself through to merged or dequeued and, on a merge, run the post-merge tail — the session-metrics tail run unprompted, then one mark-Done-and-close question.
+description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and enqueuing the PR (unasked for an in-band Todo task, else offered), then watch the queue itself through to merged or dequeued and, on a merge, run the post-merge tail — the session-metrics tail run unprompted, then one mark-Done-and-close question.
 user-invocable: true
 ---
 
@@ -1580,12 +1580,20 @@ migrations or generation inputs, and whether it spans crates.
    queue.** Only when the CI wait took the **all-checks-green** path
    and the summary is printed; otherwise skip this entirely.
 
-   **The handoff is one `AskUserQuestion`, unconditionally** (the
-   skill-handoff convention, `docs/conventions/commits-and-prs.md`):
-   it authorizes both the In Review move and the enqueue. Never
-   advance the issue and enqueue without it, and never substitute a
-   plain-text "shall I enqueue?". The only paths that skip it are the
-   non-happy ones below.
+   **For an in-band Todo task the enqueue is unasked**
+   (`docs/conventions/commits-and-prs.md` → "The PR workflow and
+   skill handoffs"): the issue was dispatched from Todo (the
+   bootstrap's `linear_state` step read `[Todo]`), the diff is over
+   the reduced-tier threshold and at most 1,000 changed lines, no
+   design question is open and the signer answers. That ratification
+   authorizes both the In Review move and the enqueue: run every check
+   below as usual, and where the ask would be, say one line naming
+   both identifiers instead and take the **On approve** path.
+   **Otherwise — a session with no bootstrap `[Todo]` line in context
+   included — the handoff is one `AskUserQuestion`**: it authorizes
+   both. Never advance the issue and enqueue without either, and never
+   substitute a plain-text "shall I enqueue?". The only paths that
+   skip both are the non-happy ones below.
 
    **First, re-read mergeability** — a PR `MERGEABLE` at the gate can
    turn `CONFLICTING` while CI ran:
@@ -1694,7 +1702,8 @@ migrations or generation inputs, and whether it spans crates.
    covers it. A re-sign keeps the reviewed fingerprint.
 
    Then move the issue (the step-3 tag) to **In Review**, with or just
-   before the prompt — skip only if no tag resolved. A state-only write
+   before the prompt (or the in-band line) — skip only if no tag
+   resolved. A state-only write
    takes the zero-echo path
    (`docs/conventions/linear-automation.md` → "Field-only writes go
    through `board_batch.py`, not the MCP"); the session has held the
@@ -1713,11 +1722,12 @@ migrations or generation inputs, and whether it spans crates.
    **One write, no retry loop**: if it disagrees, verify once, report
    the discrepancy and move on (`history.md` → "State-write echo").
 
-   Ask with `AskUserQuestion`, printing **both identifiers** — the
-   Linear tag (`ENG-536`) and the PR number (`#138`) — with "yes, add
-   it to the merge queue" **first** and "skip, I'll merge by hand"
-   second. With the signer locked, the first option reads "unlocked —
-   sign and enqueue", and the unsigned count is in the question.
+   When asking, ask with `AskUserQuestion`, printing **both
+   identifiers** — the Linear tag (`ENG-536`) and the PR number
+   (`#138`) — with "yes, add it to the merge queue" **first** and
+   "skip, I'll merge by hand" second. With the signer locked, the
+   first option reads "unlocked — sign and enqueue", and the unsigned
+   count is in the question.
 
    - **On approve**, enqueue with one call — the skill's one `gh`
      **write**, made inside the tool (the MCP's `merge_pull_request`

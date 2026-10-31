@@ -278,11 +278,11 @@ def compose(
 
     if lens is None:
         intro = [
-            "# Standing brief for this review",
+            "# Standing brief for this sub-agent",
             "",
-            "This file is the standing half of every lens brief in this run — "
-            "identical across lenses. Your own scope follows in the prompt that "
-            "pointed you here.",
+            "This file is the standing half of your brief — identical for every "
+            "sub-agent pointed at it. Your own scope follows in the prompt "
+            "that pointed you here.",
         ]
     else:
         intro = [

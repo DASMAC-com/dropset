@@ -30,6 +30,10 @@ already work this way. A skeptic's findings, once collected to
 a file, go the same way, as a path (the file-handoff case
 under "Pass the material inline" below).
 
+The bold line below is **load-bearing**: `lens_preamble.py` finds the
+brief by that exact text (`BRIEF_MARKER`), so rewording it breaks the
+tool. Change both together.
+
 **Prepend this standing brief to *every* `Agent` prompt:**
 
 > - You are a **read-only** agent. The material you need to reason

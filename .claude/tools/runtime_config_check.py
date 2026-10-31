@@ -14,8 +14,9 @@ copy of the config itself.
 files, so CI enforces it (a lint hook beside ``skill-size``):
 
 * every ``DS_*`` / ``LINEAR_*`` / ``CARGO_*`` name read in the shell init (a
-  name on a non-comment line) or under ``.claude/tools/`` (a quoted literal,
-  tests excluded) is a manifest row or a listed ``external`` name;
+  name on a non-comment line) or under ``.claude/tools/`` or ``.claude/hooks/``
+  (a quoted literal, tests excluded) is a manifest row or a listed
+  ``external`` name;
 * every row is read somewhere — a stale row fails as an undocumented read does;
 * a knob or toggle row's ``default`` equals every literal default the code
   applies to it (``${NAME:-d}`` in the shell, ``("NAME", d)`` in a tool), and
@@ -58,6 +59,8 @@ MANIFEST = Path(".claude/shell/runtime-config.manifest.json")
 EXAMPLE = Path(".claude/shell/runtime-config.example.zsh")
 SHELL_FILES = (Path(".claude/shell/init.zsh"),)
 TOOLS_DIR = Path(".claude/tools")
+#: Python read the same way as the tools: a quoted name is a read.
+PYTHON_DIRS = (TOOLS_DIR, Path(".claude/hooks"))
 
 KINDS = (
     "knob",
@@ -161,14 +164,14 @@ def scan(root: Path) -> Reads:
                 reads.add(name, f"{rel}:{n}")
             for name, value in SHELL_DEFAULT_RE.findall(line):
                 reads.default(name, value)
-    tools = root / TOOLS_DIR
-    for path in sorted(tools.glob("*.py")):
-        rel = path.relative_to(root)
-        for n, line in enumerate(path.read_text().splitlines(), 1):
-            for name in QUOTED_RE.findall(line):
-                reads.add(name, f"{rel}:{n}")
-            for name, value in TOOL_DEFAULT_RE.findall(line):
-                reads.default(name, value)
+    for directory in PYTHON_DIRS:
+        for path in sorted((root / directory).glob("*.py")):
+            rel = path.relative_to(root)
+            for n, line in enumerate(path.read_text().splitlines(), 1):
+                for name in QUOTED_RE.findall(line):
+                    reads.add(name, f"{rel}:{n}")
+                for name, value in TOOL_DEFAULT_RE.findall(line):
+                    reads.default(name, value)
     return reads
 
 

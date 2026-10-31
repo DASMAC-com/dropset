@@ -130,5 +130,17 @@ user- and model-invocable), but the flow never offers it on its own;
   sensible default exists, put it **first** and label it
   "(Recommended)". This is the shared pattern behind the
   init-pr → review-pr handoff and review-pr's merge-queue and
-  mark-Done gates. (Session metrics is deliberately **not** a gate:
+  mark-Done gates, the first two waived for an in-band Todo task
+  (the next bullet). (Session metrics is deliberately **not** a gate:
   `review-pr` files it unprompted, just before the close question.)
+- **An in-band Todo task runs review and enqueue unasked.** For an
+  issue the operator ratified to Todo, that ratification is the
+  pre-approval: the init-pr → review-pr handoff and the merge-queue
+  enqueue are normal steps in the flow, not gates. The session asks
+  only when the diff falls under the abridged-tier threshold (the
+  opt-down is the operator's to take), when it exceeds the scope band
+  (more than 1,000 changed lines, the split threshold in
+  `docs/conventions/context-economy.md`), when a design question is
+  still open, or when the signer is locked at the enqueue. Each
+  unasked step is announced in one line, not asked. The post-merge
+  Done ratification stays the operator's, always asked.
