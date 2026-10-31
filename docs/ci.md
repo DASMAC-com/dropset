@@ -192,11 +192,12 @@ What it does not cover:
 The `pre-commit` hook cache is lint-only, and its default-branch copy comes
 from a dedicated `push: main` run of `lint.yml`. PR and queue runs still save
 it on a miss, as before. That run executes only checkout, the Node and Python
-setup, the pip install, the hook-cache restore, `install-hooks` and the save;
-every other step carries `if: github.event_name != 'push'`, and setup-node's
-pnpm cache is off there, since nothing installs into the store. Without
-it the cache was cold on every merge-queue run and on the first run of each
-new PR, costing the `install-hooks` step: a median of 1.6 minutes across 86
+setup, the pip install, the runner-image probe that qualifies the cache key,
+the hook-cache restore, `install-hooks` and the save; every other step
+carries `if: github.event_name != 'push'`, and setup-node's pnpm cache is off
+there, since nothing installs into the store. Without it the cache was cold
+on every merge-queue run and on the first run of each new PR, costing the
+`install-hooks` step: a median of 1.6 minutes across 86
 queue Lint jobs in 2026-10-12 to 2026-10-21, about a fifth of the queue's
 critical path, which Lint set on 77 of 88 entries. The warm-up costs up to
 about two runner-minutes per merge, after the merge and so off the critical
@@ -209,7 +210,12 @@ until the next scheduled run, so it is not used.
 The `lint-rust` and `sdk` jobs and the three test jobs all name one cache key,
 the test jobs' `rust-test` one. That input **replaces** rust-cache's
 automatic job-id component, so jobs naming the same key resolve to the same
-entry instead of each storing a near-identical copy.
+entry instead of each storing a near-identical copy. The key names no runner
+image, so it is safe only while every job sharing it lands on the same image:
+a reader on an older Ubuntu release than the writer's would restore
+build-script and proc-macro binaries linked against a newer glibc, which fail
+to load. Keep every sharer on one `runs-on` label, and know that even one
+label can span two images while GitHub rolls `ubuntu-latest` forward.
 
 Only the three test jobs **write** that entry, and only on a push to main
 (see above). `lint-rust` and `sdk` set
