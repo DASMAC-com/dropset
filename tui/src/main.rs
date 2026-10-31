@@ -36,6 +36,7 @@
 //! dropset-tui [--cluster <localnet|mainnet>] [--keys-file <path>] [--wallet <key>]
 //!             [--leader <key>] [--quote <key>] [--program-key <key>]
 //!             [--agent-sock <path>] [--ceremony-log <path>] [--bootstrap]
+//!             [--rehearsal-loopback]
 //! ```
 
 use anyhow::{anyhow, bail, Result};
@@ -94,6 +95,9 @@ fn main() -> Result<()> {
         }
         if args.agent_sock.is_some() {
             bail!("--agent-sock is mainnet-only — localnet signs with the committed keys/ roster");
+        }
+        if args.rehearsal_loopback {
+            bail!("--rehearsal-loopback is mainnet-only — localnet never checks genesis");
         }
     }
     let agent_sock = args.agent_sock.as_deref().map(Path::new);
@@ -168,8 +172,13 @@ fn main() -> Result<()> {
     // The ceremony record: always kept on mainnet, opt-in on localnet. Opened
     // before the banner so a log that cannot be written refuses the session
     // rather than surfacing after a write has landed unrecorded.
+    // A rehearsal names its own log: the mainnet default (or the env override)
+    // is the real ceremony record, and localnet signatures do not belong in it.
     let log_path = match &args.ceremony_log {
         Some(path) => Some(PathBuf::from(path)),
+        None if args.rehearsal_loopback => {
+            bail!("--rehearsal-loopback needs --ceremony-log, kept apart from the mainnet record")
+        }
         None if args.cluster.is_mainnet() => {
             Some(ceremony::default_path(args.cluster).ok_or_else(|| {
                 anyhow!(
@@ -186,7 +195,8 @@ fn main() -> Result<()> {
 
     let rpc_url = args.cluster.rpc_url()?;
     if args.cluster.is_mainnet() {
-        args.cluster.verify_genesis(&chain::rpc(&rpc_url))?;
+        args.cluster
+            .verify_genesis(&chain::rpc(&rpc_url), args.rehearsal_loopback)?;
         let leader_label = leader.as_ref().map(|k| k.pubkey().to_string());
         let quote_label = quote.as_ref().map(|k| k.pubkey().to_string());
         let program_label = program_key.as_ref().map(|k| k.pubkey().to_string());
@@ -215,6 +225,7 @@ fn main() -> Result<()> {
     let ctx = action::JobContext {
         rpc_url,
         cluster: args.cluster,
+        rehearsal_loopback: args.rehearsal_loopback,
         repo_root,
         wallet_path,
         wallet,
@@ -239,7 +250,8 @@ fn print_help() {
          USAGE:\n    \
          dropset-tui [--cluster <localnet|mainnet>] [--keys-file <path>] [--wallet <key>]\n                \
          [--leader <key>] [--quote <key>] [--program-key <key>]\n                \
-         [--agent-sock <path>] [--ceremony-log <path>] [--bootstrap]\n\n\
+         [--agent-sock <path>] [--ceremony-log <path>] [--bootstrap]\n                \
+         [--rehearsal-loopback]\n\n\
          OPTIONS:\n        \
          --cluster <name>        localnet (default) or mainnet\n        \
          --keys-file <path>      mainnet only: the key-addresses file (tui/private-keys.env)\n    \
@@ -250,7 +262,9 @@ fn print_help() {
          --agent-sock <path>     mainnet only: the SSH agent socket, skipping discovery\n        \
          --ceremony-log <path>   append-only record of every write (mainnet default:\n                                \
          ${} or ~/.dropset/ceremony-mainnet-beta.log)\n        \
-         --bootstrap             localnet only: run \"Bootstrap all\" once at launch\n    \
+         --bootstrap             localnet only: run \"Bootstrap all\" once at launch\n        \
+         --rehearsal-loopback    mainnet only: dress rehearsal against a loopback\n                                \
+         validator (needs --ceremony-log)\n    \
          -h, --help                  show this help\n\n\
          KEYS:\n    \
          Localnet keys are keypair files. Mainnet keys are Solana addresses, each\n    \
@@ -264,7 +278,10 @@ fn print_help() {
          MAINNET:\n    \
          Set {} to the JSON-RPC endpoint — there is deliberately no default.\n    \
          Entry verifies the genesis hash and requires a typed confirmation, and\n    \
-         every ceremony step shows its plan under its own typed confirmation.\n\n\
+         every ceremony step shows its plan under its own typed confirmation.\n    \
+         --rehearsal-loopback instead admits only a 127.0.0.1 or localhost\n    \
+         endpoint whose genesis is NOT mainnet-beta; every other mainnet\n    \
+         behavior (agent signer, keys, confirmations) is unchanged.\n\n\
          FAIR PRICE:\n    \
          Optional. Set {} to a Postgres URL logging in as {}\n    \
          (localnet: postgres://dropset_ro:dropset_ro@127.0.0.1:5432/dropset) and a\n    \
@@ -351,6 +368,7 @@ struct Args {
     agent_sock: Option<String>,
     ceremony_log: Option<String>,
     bootstrap: bool,
+    rehearsal_loopback: bool,
     help: bool,
 }
 
@@ -366,6 +384,7 @@ impl Args {
             agent_sock: None,
             ceremony_log: None,
             bootstrap: false,
+            rehearsal_loopback: false,
             help: false,
         };
         while let Some(arg) = it.next() {
@@ -379,6 +398,7 @@ impl Args {
                 "--agent-sock" => a.agent_sock = Some(value(&mut it, "--agent-sock")?),
                 "--ceremony-log" => a.ceremony_log = Some(value(&mut it, "--ceremony-log")?),
                 "--bootstrap" => a.bootstrap = true,
+                "--rehearsal-loopback" => a.rehearsal_loopback = true,
                 "--help" | "-h" => a.help = true,
                 // A bare path stays supported as the wallet, which is how the
                 // existing localnet invocations pass it.
@@ -473,6 +493,16 @@ mod tests {
         assert_eq!(b.agent_sock.as_deref(), Some("/tmp/a.sock"));
         assert!(parse(&["--agent-sock", "--bootstrap"]).is_err());
         assert!(parse(&["--ceremony-log", "--bootstrap"]).is_err());
+    }
+
+    #[test]
+    fn rehearsal_loopback_is_an_opt_in_switch() {
+        assert!(!parse(&["--cluster", "mainnet"]).unwrap().rehearsal_loopback);
+        let a = parse(&["--cluster", "mainnet", "--rehearsal-loopback"]).unwrap();
+        assert!(a.rehearsal_loopback);
+        // A switch, not an option: it takes no value, so the next flag parses.
+        let b = parse(&["--rehearsal-loopback", "--cluster", "mainnet"]).unwrap();
+        assert!(b.rehearsal_loopback && b.cluster.is_mainnet());
     }
 
     #[test]
