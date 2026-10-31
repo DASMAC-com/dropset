@@ -1876,6 +1876,17 @@ class FrictionLines(unittest.TestCase):
         self.assertEqual((line.name, line.calls), ("Bash", 1))
         self.assertEqual(line.result_bytes, sm.value_len("Successfully rebased"))
 
+    def test_friction_skips_an_api_request_blob_fed_directly(self):
+        # The fleet walk feeds `Friction` itself, past the aggregator's guard.
+        result = json.loads(tool_result("t1", '"Successfully rebased"'))
+        friction = sm.Friction()
+        turn = self._turn("m1", bash("t1", "git rebase main"))
+        friction.observe(json.loads(stamped(turn, "2026-10-26T10:00:00Z")))
+        friction.observe({**result, "type": sm.API_REQUEST_BLOB})
+        friction.observe({**result, "timestamp": "2026-10-26T10:00:05Z"})
+        [event] = friction.events
+        self.assertEqual(event.at, "2026-10-26T10:00:05")
+
     def test_a_noop_or_continued_rebase_is_not_an_event(self):
         report = self._finish(
             [
