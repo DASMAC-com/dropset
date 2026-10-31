@@ -190,6 +190,9 @@ class TwoCheckoutsTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def cargo(self, checkout: str, wrapper_of: str, *args: str) -> int:
+        return self.spawn(checkout, wrapper_of, *args).wait()
+
+    def spawn(self, checkout: str, wrapper_of: str, *args: str) -> subprocess.Popen:
         env = {
             k: v
             for k, v in os.environ.items()
@@ -199,13 +202,13 @@ class TwoCheckoutsTest(unittest.TestCase):
         }
         env["CARGO_TARGET_DIR"] = str(self.root / "target")
         env["RUSTC_WORKSPACE_WRAPPER"] = str(self.root / wrapper_of / WRAPPER.name)
-        return subprocess.run(
+        return subprocess.Popen(
             ["cargo", *args, "--quiet"],
             cwd=self.root / checkout,
             env=env,
-            capture_output=True,
-            check=False,
-        ).returncode
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
     def test_each_checkout_builds_its_own_source(self) -> None:
         for args in (["check"], ["test", "--no-run"]):
@@ -213,6 +216,17 @@ class TwoCheckoutsTest(unittest.TestCase):
                 self.assertEqual(self.cargo("A", "A", *args), 0)
                 # B's `b` reads a field B's `a` no longer has: it must fail.
                 self.assertNotEqual(self.cargo("B", "B", *args), 0)
+
+    def test_concurrent_builds_stay_isolated(self) -> None:
+        # Both at once on the one target dir: cargo's lock serializes them and
+        # the keys give each its own slot, so neither reads the other's
+        # artifact mid-build (the race suspected on 2183, not reproduced).
+        for _ in range(3):
+            (self.root / "A" / "a" / "src" / "lib.rs").touch()
+            (self.root / "B" / "a" / "src" / "lib.rs").touch()
+            a, b = self.spawn("A", "A", "check"), self.spawn("B", "B", "check")
+            self.assertEqual(a.wait(), 0)
+            self.assertNotEqual(b.wait(), 0)
 
     def test_a_shared_key_reuses_the_sibling_s_build(self) -> None:
         # The control: B under A's key passes on A's artifacts, never having
