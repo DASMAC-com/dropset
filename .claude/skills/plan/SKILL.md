@@ -248,6 +248,11 @@ with no refactor-later burden a later issue will undo.
   as they stand at that moment, and the next write-back records the
   result. Message the curator every direction change, and any write
   touching an edge it placed, with the reason, in the same turn.
+- **Act on the scheduling smells the state of play records** — an
+  edge whose blocker is already closed, an unblocked Urgent issue
+  sitting behind one. The curator's read finds them; resolving each
+  (through step 3, asked as a hold change is) or recording why it
+  stands is this session's.
 - **A hold is an edge or it does not exist** (ruling 2). An issue
   held behind an in-flight surface or a sequencing reason gets a
   blocking edge on that blocker, proposed in the curator's first

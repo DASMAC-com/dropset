@@ -243,7 +243,8 @@ into the existing issue), and files **small themed `Claude:` batches
 of ~4–5 parts** into Backlog, no milestone. A rejection filed Canceled
 with its reason is permanent. The **launcher** (`launch`, its own tab)
 runs that fold each morning beside the curator, hands it the kill and
-merge candidates, opens the scheduler on its `state of play written`, and asks
+merge candidates, opens the scheduler on the curator's
+`state of play written`, and asks
 the day's **one destructive question**. Detail:
 `docs/conventions/linear-automation.md`, `trim-context` and `launch`.
 

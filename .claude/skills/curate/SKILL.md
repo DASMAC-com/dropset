@@ -79,11 +79,14 @@ Otherwise, the full bootstrap:
    report under the document's `Upkeep report` heading, so the
    spill holds it; never re-run the pass. Say its `parked` line —
    each pool's count and direction (ruling 23), `Curator pending`
-   among them — what was pruned and dismissed, each refusal, any
+   among them — what was pruned and dismissed (or would have been,
+   unarmed), each refusal (a live session lock, an open PR —
+   reported, never retried) and each pruned name's ahead count, any
    inert guard, dangling reference or file near its size cap, and
    the `fleet-cost` day lines, any flagged day first. Say the run
    line's duration and a failed `auth` line as the one
-   re-authentication it names. A run stamp older than today means
+   re-authentication it names — the steps it gates were skipped,
+   not broken. A run stamp older than today means
    the pass did not reach the document — say so. The destructive
    items are the launcher's one ask, never asked here.
 
@@ -125,8 +128,11 @@ Otherwise, the full bootstrap:
    registry **target** (subsystem, interface, or a random-target
    pass for breadth), its **scope**, its **rationale** (which
    criterion fired, with evidence) and its **sequencing** as prose.
-   Title it `[Explore/Bedrock]` (`[Explore/Anthropic]` when it
-   needs the web): it runs as `explore`, never `task` — a
+   It competes in the queue like any capacity spend — an audit that
+   cannot win that argument should not run this week. Title it
+   `[Explore/Bedrock]` (`[Explore/Anthropic]` when it needs the
+   web): it runs as `explore`, never `task` (operator rule,
+   2026-09-11) — a
    temporary worktree, no PR
    (`docs/conventions/local-integrations.md` → "Architect and
    explore sessions: temporary worktree, no PR"). The pulling
@@ -138,7 +144,8 @@ Otherwise, the full bootstrap:
 1. **Cut the collision clusters from file overlap**, per
    `docs/conventions/linear-automation.md` → "Overlap is a
    cluster, never an ordering": per shared area, as prose, judged
-   from the Todo and In Review bodies already in hand. It is a
+   from the titles and any prose already held — a body only where
+   the overlap turns on it. It is a
    **first cut**: the scheduler revises it as it dispatches, and
    nothing is dispatched on this session's word.
 
@@ -164,7 +171,9 @@ Otherwise, the full bootstrap:
    (its cue to open the scheduler's tab) and one to a live
    `schedule-<day>` (an operator who started it by hand). Neither
    live: say `launcher: not live` and tell the operator to type
-   `plan` in a new tab.
+   `plan` in a new tab. A launcher that comes up **after** the send
+   messages `launcher up`; answer it with `state of play written`
+   again, once, so it opens the scheduler.
 
 **Then the pool**, one compact listing of each, the inbox and the
 operator items:

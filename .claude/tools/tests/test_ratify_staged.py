@@ -79,7 +79,8 @@ class AskTests(unittest.TestCase):
             [o["label"] for o in options],
             ["ENG-7", "ENG-9", "ENG-31", "ENG-40", "ENG-112"],
         )
-        # The carried task's note rides with it to its sorted place.
+        # The carried task's description (here its title) rides with it to
+        # its sorted place.
         self.assertIn("(carried)", options[3]["description"])
 
     def test_the_sort_reads_the_identifier_when_number_is_absent(self):
