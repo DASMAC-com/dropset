@@ -309,7 +309,7 @@ the whole reason this process exists, and turning the file back
 into a questionnaire discards the gain.
 
 The other half of the gain is that **turns are the cost here**.
-A Claude subscription session's context grows with every exchange, so a design
+An advisor session's context grows with every exchange, so a design
 resolved in four file rounds is dramatically cheaper than the
 same design resolved in forty questions — even though the file
 rounds move more text.
