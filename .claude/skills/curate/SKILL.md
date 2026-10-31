@@ -119,8 +119,10 @@ Otherwise, the full bootstrap:
    per unit in `docs/conventions/audit-registry.md` (unit, last
    audited, finding count, outcome pointer). A unit **stale** —
    judged against the code, not the calendar: rewritten since its
-   last audit — or one that just settled, is about to be built on,
-   or is suspect → **file an audit issue**. Nothing qualifies →
+   last audit, while one untouched because its subsystem is
+   untouched is not urgent for being old — or one that just
+   settled, is about to be built on, or is suspect → **file an
+   audit issue**. Nothing qualifies →
    **decline and record the reason** in the state of play. An
    unrecorded non-decision is the failure this exists to catch.
 
@@ -173,7 +175,9 @@ Otherwise, the full bootstrap:
    live: say `launcher: not live` and tell the operator to type
    `plan` in a new tab. A launcher that comes up **after** the send
    messages `launcher up`; answer it with `state of play written`
-   again, once, so it opens the scheduler.
+   again, once, so it opens the scheduler. A `launcher up` that
+   arrives **before** the write gets no reply: the one send covers
+   it.
 
 **Then the pool**, one compact listing of each, the inbox and the
 operator items:
