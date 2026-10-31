@@ -470,6 +470,19 @@ describe("the vault pin", () => {
     );
   });
 
+  it("pins every vault one leader leads in the pair", () => {
+    const sibling = chainVault(summary({ seq: 4n }), MARKET, "TGBP", "USDC");
+    const market = resolveVaultMarket(MARKET, "TGBP", "USDC", [sibling, live]);
+    const pin = { base: "TGBP", quote: "USDC", vault: "", leader: LEADER };
+    expect(market.vaults.filter((v) => isVaultPinned(pin, market, v))).toEqual([
+      sibling,
+      live,
+    ]);
+    expect(
+      market.vaults.filter((v) => vaultPinMatches(pin, market, v)),
+    ).toEqual([sibling, live]);
+  });
+
   it("pins nothing with only a pair set", () => {
     const market = markets[0];
     if (!market) throw new Error("fixture market missing");

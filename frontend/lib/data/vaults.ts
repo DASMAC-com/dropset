@@ -356,8 +356,9 @@ export const vaultPinMatches = (
   (!pin.leader ||
     vault.leader.toLowerCase().startsWith(pin.leader.toLowerCase()));
 
-// Whether the pin names exactly this vault (the row's pin toggle): its market,
-// and its full leader address or its number, whichever the pin sets.
+// Whether the pin names this vault (the row's pin toggle): its market, and
+// its full leader address or its number, whichever the pin sets. A leader
+// leading two vaults in one market names both.
 export const isVaultPinned = (
   pin: VaultPin,
   market: Pick<VaultMarket, "base" | "quote">,

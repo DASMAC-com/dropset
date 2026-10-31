@@ -285,9 +285,9 @@ function VaultRow({
       </td>
       <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 align-middle last:border-r-0">
         <div className="flex items-center gap-1">
-          {/* The vault number is the identity (leadership rotates), so it
-              leads, ahead of the leader-set name, which can't then pass for
-              another vault's number. The leader is an attribute: the hover
+          {/* For display the vault number is the identity, so it leads,
+              ahead of the leader-set name, which can't then pass for another
+              vault's number (the pin keys on the leader). The hover
               keeps the full address; its copy and explorer links live in
               the dialog. */}
           <span
@@ -599,8 +599,9 @@ function VaultsInner() {
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });
 
-  // The pin "crosshair" on each row toggles the URL filter to that exact vault,
-  // keyed by its leader's address (never its number).
+  // The pin "crosshair" on each row toggles the URL filter to that vault,
+  // keyed by its leader's address (never its number), so it also shows any
+  // other vault the same leader leads in the pair.
   const isPinnedVault = (e: GroupedVault) =>
     isVaultPinned(pin, e.market, e.vault);
   const togglePinVault = (e: GroupedVault) =>
