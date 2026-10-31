@@ -669,14 +669,18 @@ def resolve_among(
     raw: list[str], children: list[dict], flag: str, parent: str
 ) -> list[dict]:
     """The children ``raw`` names, by ``ENG-###`` or bare number as on the ids
-    path; one that is not a sub-issue of ``parent`` refuses the batch."""
+    path; one that is not a sub-issue of ``parent`` refuses the batch. Two
+    spellings of one child (``3`` and ``ENG-3``) name it once."""
     by_number = board_batch.index_by_number(children)
     found, stray = [], []
     for ident in raw:
         try:
-            found.append(board_batch.resolve_issue(ident, by_number, label=flag))
+            issue = board_batch.resolve_issue(ident, by_number, label=flag)
         except board_batch.BoardBatchError:
             stray.append(ident)
+            continue
+        if issue not in found:
+            found.append(issue)
     if stray:
         raise RatifyError(
             f"refusing the batch, nothing written — {flag} names ids that are "
@@ -889,7 +893,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         nargs="+",
         default=[],
         help="--parent only: approve these sub-issues though the last ask "
-        "did not carry them",
+        "--parent did not carry them (its record: ratify-ask-<parent>.json in "
+        "the base checkout's .claude/session-substrate)",
     )
     approve.add_argument(
         "--title",

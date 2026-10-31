@@ -411,6 +411,14 @@ class ParentRunTests(_RunBase):
             ],
         )
 
+    def test_two_spellings_of_one_cancel_cancel_it_once(self):
+        fake = self._asked(self._set())
+        code, _ = self._run(
+            fake, ["approve", "--parent", "ENG-9", "--cancel", "3", "ENG-3"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual([w[0] for w in fake.writes], ["uuid-2", "uuid-3"])
+
     def test_allow_is_refused_off_the_parent_path_and_outside_the_set(self):
         fake = self._asked(self._set())
         with self.assertRaisesRegex(RatifyError, "pass it with --parent"):
@@ -438,6 +446,17 @@ class ParentRunTests(_RunBase):
         ):
             self.assertEqual(rs.main(), 2)
         self.assertEqual(err.getvalue(), "ratify_staged: parent ENG-8: no such issue\n")
+
+    def test_the_http_400_form_of_not_found_is_mapped_too(self):
+        def not_found(api_key, query, variables):
+            raise board_batch.BoardBatchError(
+                'Linear API returned HTTP 400: {"errors":[{"message":'
+                '"Entity not found"}]}'
+            )
+
+        with mock.patch("board_batch._post", not_found):
+            with self.assertRaisesRegex(RatifyError, "parent ENG-8: no such issue"):
+                rs.run(["gate", "--parent", "ENG-8"])
 
     def test_any_other_board_error_still_surfaces(self):
         def broken(api_key, query, variables):

@@ -110,6 +110,11 @@ python3 .claude/tools/ratify_staged.py ask --ids <ENG-### …> \
   --out <scratchpad>/ask.json
 ```
 
+A session whose tasks are sub-issues of its governing issue builds
+the **first** ask with `--parent <ENG-###>` in place of `--ids`, so
+the record a later `approve --parent` checks exists; an `--ids` ask
+records nothing.
+
 Pass each `calls[]` entry's `questions` to `AskUserQuestion`
 unchanged: one checkbox per task, **never grouped**, up to sixteen
 per call, each leading with its filed priority. The text is the
