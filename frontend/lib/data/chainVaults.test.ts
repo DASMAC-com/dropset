@@ -7,7 +7,7 @@ import {
 import { address } from "@solana/kit";
 import { describe, expect, it } from "vitest";
 import {
-  LEGACY_LEADER_PARAM,
+  VAULT_LEADER_PARAM,
   VAULT_PIN_PARAM,
   VAULT_SEQ_PARAM,
   vaultLinkHref,
@@ -23,11 +23,11 @@ import {
 } from "./chainVaults";
 import { positionPnl } from "./pnl";
 import {
+  cmpPairCode,
   contributeClosedReason,
   depositClosedReason,
   findVaultBySeq,
   isVaultPinned,
-  resolveLegacyLeaderPin,
   resolveVaultMarket,
   tokenUsdPrice,
   vaultLabel,
@@ -372,7 +372,7 @@ describe("the vault pin", () => {
     expect(params.get("quote")).toBe("USDC");
     expect(params.get(VAULT_PIN_PARAM)).toBe("5");
     // Keyed on the number alone: no leader is written.
-    expect(params.has(LEGACY_LEADER_PARAM)).toBe(false);
+    expect(params.has(VAULT_LEADER_PARAM)).toBe(false);
     expect(
       new URL(
         vaultsHref("TGBP", "USDC"),
@@ -405,7 +405,7 @@ describe("the vault pin", () => {
       base: "TGBP",
       quote: "USDC",
       [VAULT_PIN_PARAM]: "5",
-      [LEGACY_LEADER_PARAM]: "",
+      [VAULT_LEADER_PARAM]: "",
     });
     // Another market's vault #5 is not this one.
     expect(vaultPinMatches(pin, { base: "USDC", quote: "TGBP" }, live)).toBe(
@@ -423,42 +423,77 @@ describe("the vault pin", () => {
     }
   });
 
-  it("keeps an unresolved legacy leader as a prefix filter", () => {
+  it("pins a row by its leader's address, never its number", () => {
     const market = markets[0];
     if (!market) throw new Error("fixture market missing");
     const pin = vaultPinFromParams(
       new URLSearchParams({
         base: "TGBP",
         quote: "USDC",
-        [LEGACY_LEADER_PARAM]: "vote",
+        [VAULT_LEADER_PARAM]: LEADER,
       }),
     );
     expect(pin.vault).toBe("");
     expect(
       market.vaults.filter((v) => vaultPinMatches(pin, market, v)),
+    ).toEqual([live]);
+    expect(market.vaults.filter((v) => isVaultPinned(pin, market, v))).toEqual([
+      live,
+    ]);
+    expect(vaultPinParams(pin)).toEqual({
+      base: "TGBP",
+      quote: "USDC",
+      [VAULT_PIN_PARAM]: "",
+      [VAULT_LEADER_PARAM]: LEADER,
+    });
+    // A rotated leader names nothing.
+    const rotated = { ...pin, leader: OTHER };
+    expect(isVaultPinned(rotated, market, live)).toBe(false);
+  });
+
+  it("filters by a leader prefix without naming one vault", () => {
+    const market = markets[0];
+    if (!market) throw new Error("fixture market missing");
+    const pin = vaultPinFromParams(
+      new URLSearchParams({
+        base: "TGBP",
+        quote: "USDC",
+        [VAULT_LEADER_PARAM]: "vote",
+      }),
+    );
+    expect(
+      market.vaults.filter((v) => vaultPinMatches(pin, market, v)),
     ).toHaveLength(1);
+    // A prefix is a filter, not the row's pin.
+    expect(market.vaults.some((v) => isVaultPinned(pin, market, v))).toBe(
+      false,
+    );
   });
 
-  it("resolves an old leader-keyed link to the vault it named", () => {
-    expect(resolveLegacyLeaderPin(markets, "TGBP", "USDC", LEADER)).toBe(5n);
-    // A case-insensitive prefix, as the old filter matched.
-    expect(resolveLegacyLeaderPin(markets, "TGBP", "USDC", "so111")).toBe(5n);
-    expect(resolveLegacyLeaderPin(markets, "TGBP", "USDC", OTHER)).toBe(4n);
+  it("pins nothing with only a pair set", () => {
+    const market = markets[0];
+    if (!market) throw new Error("fixture market missing");
+    const pin = { base: "TGBP", quote: "USDC", vault: "", leader: "" };
+    expect(market.vaults.some((v) => isVaultPinned(pin, market, v))).toBe(
+      false,
+    );
   });
+});
 
-  it("resolves nothing for a rotated leader, another pair, or an ambiguous prefix", () => {
-    const rotated = address("Stake11111111111111111111111111111111111111");
-    expect(resolveLegacyLeaderPin(markets, "TGBP", "USDC", rotated)).toBeNull();
-    expect(resolveLegacyLeaderPin(markets, "USDC", "TGBP", LEADER)).toBeNull();
-    expect(resolveLegacyLeaderPin(markets, "TGBP", "USDC", "")).toBeNull();
-    // One leader leading two vaults in the market names neither.
-    const twice = [
-      resolveVaultMarket(MARKET, "TGBP", "USDC", [
-        chainVault(summary({ seq: 4n }), MARKET, "TGBP", "USDC"),
-        live,
-      ]),
-    ];
-    expect(resolveLegacyLeaderPin(twice, "TGBP", "USDC", LEADER)).toBeNull();
+describe("cmpPairCode", () => {
+  it("orders pairs by base currency code, then quote", () => {
+    const pairs = [
+      { baseCurrency: "SGD", quoteCurrency: "USD" },
+      { baseCurrency: "IDR", quoteCurrency: "USD" },
+      { baseCurrency: "CAD", quoteCurrency: "USD" },
+      { baseCurrency: "CAD", quoteCurrency: "EUR" },
+    ] as const;
+    expect([...pairs].sort(cmpPairCode)).toEqual([
+      { baseCurrency: "CAD", quoteCurrency: "EUR" },
+      { baseCurrency: "CAD", quoteCurrency: "USD" },
+      { baseCurrency: "IDR", quoteCurrency: "USD" },
+      { baseCurrency: "SGD", quoteCurrency: "USD" },
+    ]);
   });
 });
 
