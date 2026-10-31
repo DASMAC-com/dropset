@@ -337,9 +337,10 @@ if (!localnetId) throw new Error('programs.rs: no DROPSET_ID declaration');
 // tie to the deployment the builder aims at. On-chain rejects a mismatch,
 // but only after the transaction is signed and sent. So `<Name>Builder`
 // defaults both from the deployment (an explicit setter still overrides,
-// for tests), and the accounts struct's builder, which every path ends in,
-// panics on a mismatch before an instruction exists — the same local
-// refusal as the builder's `is not set` panics.
+// for tests), and the accounts struct's `instruction_with_remaining_accounts`,
+// which every path ends in, panics on a mismatch before an instruction
+// exists — the same local refusal as the remaining setters' `is not set`
+// panics.
 const eventAuthority = 'crate::cluster::event_authority(&deployment.program_id())';
 function selfCpiAccountsFromDeployment(file, client) {
   const hasEventAuthority = /pub event_authority: solana_pubkey::Pubkey,/.test(client);
@@ -348,23 +349,19 @@ function selfCpiAccountsFromDeployment(file, client) {
     throw new Error(`${file}: event_authority without program, or the reverse`);
   }
   if (!hasEventAuthority) return client;
+  const eventAuthorityDefault = `self.event_authority.unwrap_or_else(|| ${eventAuthority})`;
+  const programDefault = 'self.program.unwrap_or(deployment.program_id())';
   const defaulted = client
-    .replace(
-      'self.event_authority.expect("event_authority is not set")',
-      `self.event_authority.unwrap_or_else(|| ${eventAuthority})`,
-    )
-    .replace(
-      'self.program.expect("program is not set")',
-      'self.program.unwrap_or(deployment.program_id())',
-    );
+    .replace('self.event_authority.expect("event_authority is not set")', eventAuthorityDefault)
+    .replace('self.program.expect("program is not set")', programDefault);
   const checked = defaulted.replace(
     /(pub fn instruction_with_remaining_accounts\(&self, deployment: crate::Deployment,[^{]*\{)/,
     `$1
         assert_eq!(self.program, deployment.program_id(), "program account is not the {deployment:?} program id");
         assert_eq!(self.event_authority, ${eventAuthority}, "event_authority is not the {deployment:?} program's event authority");`,
   );
-  if (/self\.(event_authority|program)\.expect\(/.test(defaulted)) {
-    throw new Error(`${file}: a self-CPI account kept its required-setter panic`);
+  if (!defaulted.includes(eventAuthorityDefault) || !defaulted.includes(programDefault)) {
+    throw new Error(`${file}: a self-CPI account did not take its deployment default`);
   }
   if (checked === defaulted) {
     throw new Error(`${file}: no accounts-struct builder to cross-check in`);

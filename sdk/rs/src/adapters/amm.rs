@@ -139,8 +139,8 @@ pub enum AmmError {
     MintMismatch,
     /// The market account is not owned by the deployment's program, so its
     /// bytes are not a Dropset book on that cluster: a lookalike (for one,
-    /// a market owned by a program at the public-key localnet id, offered
-    /// on mainnet) would quote from data anyone controls.
+    /// a market owned by a program at the localnet id, whose secret is
+    /// committed, offered on mainnet) would quote from data anyone controls.
     WrongOwner {
         expected: Pubkey,
         found: Pubkey,
@@ -530,6 +530,12 @@ mod tests {
                 found: DROPSET_MAINNET_ID,
             }),
         );
+        // The owner is checked before the bytes are read: junk under a wrong
+        // owner reports the owner, not a layout error.
+        assert!(matches!(
+            DropsetAmm::from_account(Deployment::Mainnet, MARKET, DROPSET_ID, &[0u8; 3]).err(),
+            Some(AmmError::WrongOwner { .. }),
+        ));
     }
 
     #[test]
