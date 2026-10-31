@@ -331,6 +331,47 @@ const localnetId = readFileSync(join(rustOut, 'programs.rs'), 'utf8').match(
   /DROPSET_ID: Pubkey = pubkey!\("(\w+)"\)/,
 )?.[1];
 if (!localnetId) throw new Error('programs.rs: no DROPSET_ID declaration');
+
+// An `#[event_cpi]` instruction also carries the program and its event
+// authority as accounts, which the renderer leaves caller-supplied with no
+// tie to the deployment the builder aims at. On-chain rejects a mismatch,
+// but only after the transaction is signed and sent. So `<Name>Builder`
+// defaults both from the deployment (an explicit setter still overrides,
+// for tests), and the accounts struct's builder, which every path ends in,
+// panics on a mismatch before an instruction exists — the same local
+// refusal as the builder's `is not set` panics.
+const eventAuthority = 'crate::cluster::event_authority(&deployment.program_id())';
+function selfCpiAccountsFromDeployment(file, client) {
+  const hasEventAuthority = /pub event_authority: solana_pubkey::Pubkey,/.test(client);
+  const hasProgram = /pub program: solana_pubkey::Pubkey,/.test(client);
+  if (hasEventAuthority !== hasProgram) {
+    throw new Error(`${file}: event_authority without program, or the reverse`);
+  }
+  if (!hasEventAuthority) return client;
+  const defaulted = client
+    .replace(
+      'self.event_authority.expect("event_authority is not set")',
+      `self.event_authority.unwrap_or_else(|| ${eventAuthority})`,
+    )
+    .replace(
+      'self.program.expect("program is not set")',
+      'self.program.unwrap_or(deployment.program_id())',
+    );
+  const checked = defaulted.replace(
+    /(pub fn instruction_with_remaining_accounts\(&self, deployment: crate::Deployment,[^{]*\{)/,
+    `$1
+        assert_eq!(self.program, deployment.program_id(), "program account is not the {deployment:?} program id");
+        assert_eq!(self.event_authority, ${eventAuthority}, "event_authority is not the {deployment:?} program's event authority");`,
+  );
+  if (/self\.(event_authority|program)\.expect\(/.test(defaulted)) {
+    throw new Error(`${file}: a self-CPI account kept its required-setter panic`);
+  }
+  if (checked === defaulted) {
+    throw new Error(`${file}: no accounts-struct builder to cross-check in`);
+  }
+  return checked;
+}
+
 const instructionsOut = join(rustOut, 'instructions');
 for (const file of readdirSync(instructionsOut)) {
   if (!file.endsWith('.rs') || file === 'mod.rs') continue;
@@ -340,7 +381,7 @@ for (const file of readdirSync(instructionsOut)) {
   if (cpiAt === -1) {
     throw new Error(`${file}: no CpiAccounts struct to split on`);
   }
-  const client = source
+  const rewrittenClient = source
     .slice(0, cpiAt)
     .replace(
       /pub fn instruction\(\s*&self/g,
@@ -355,6 +396,7 @@ for (const file of readdirSync(instructionsOut)) {
       '.instruction_with_remaining_accounts(deployment, ',
     )
     .replaceAll('crate::DROPSET_ID', 'deployment.program_id()');
+  const client = selfCpiAccountsFromDeployment(file, rewrittenClient);
   const cpi = source
     .slice(cpiAt)
     .replaceAll('crate::DROPSET_ID', '*self.__program.key');

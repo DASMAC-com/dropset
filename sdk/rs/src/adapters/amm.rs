@@ -137,6 +137,14 @@ pub enum AmmError {
     Layout(LayoutError),
     /// The `(input_mint, output_mint)` pair doesn't match this market's legs.
     MintMismatch,
+    /// The market account is not owned by the deployment's program, so its
+    /// bytes are not a Dropset book on that cluster: a lookalike (for one,
+    /// a market owned by a program at the public-key localnet id, offered
+    /// on mainnet) would quote from data anyone controls.
+    WrongOwner {
+        expected: Pubkey,
+        found: Pubkey,
+    },
 }
 
 impl From<LayoutError> for AmmError {
@@ -146,15 +154,24 @@ impl From<LayoutError> for AmmError {
 }
 
 impl DropsetAmm {
-    /// Build from a market account's key + data (`from_keyed_account` /
-    /// `from_account`) on `deployment`'s cluster. The router traits carry no
-    /// cluster, so the integration names it; there is deliberately no
-    /// default.
+    /// Build from a market account's key, owner + data (`from_keyed_account`
+    /// / `from_account`) on `deployment`'s cluster. The router traits carry
+    /// no cluster, so the integration names it; there is deliberately no
+    /// default. An `owner` other than the deployment's program id is
+    /// refused with [`AmmError::WrongOwner`] before the data is read.
     pub fn from_account(
         deployment: Deployment,
         market_key: Pubkey,
+        owner: Pubkey,
         data: &[u8],
     ) -> Result<Self, AmmError> {
+        let expected = deployment.program_id();
+        if owner != expected {
+            return Err(AmmError::WrongOwner {
+                expected,
+                found: owner,
+            });
+        }
         let view = MarketView::load(data)?;
         let h = view.header;
         Ok(Self {
@@ -337,6 +354,9 @@ mod tests {
     use crate::{DROPSET_ID, DROPSET_MAINNET_ID};
     use bytemuck::Zeroable;
 
+    /// The market account address every test builds from.
+    const MARKET: Pubkey = Pubkey::new_from_array([7u8; 32]);
+
     /// Assemble a market account buffer (8-byte discriminator + header +
     /// slab len + aligned vault sectors) from layout structs, mirroring
     /// the on-chain slab layout (first sector aligned to VAULT_ALIGN).
@@ -383,7 +403,7 @@ mod tests {
     fn quote_buy_against_one_ask_level() {
         let data = one_ask_market(500_000);
         let amm =
-            DropsetAmm::from_account(Deployment::Localnet, Pubkey::from([7u8; 32]), &data).unwrap();
+            DropsetAmm::from_account(Deployment::Localnet, MARKET, DROPSET_ID, &data).unwrap();
 
         assert_eq!(amm.reserve_mints().len(), 2);
         assert_eq!(amm.accounts_to_update(), vec![amm.key()]);
@@ -406,7 +426,7 @@ mod tests {
     fn zero_input_is_safe() {
         let data = one_ask_market(500_000);
         let amm =
-            DropsetAmm::from_account(Deployment::Localnet, Pubkey::from([7u8; 32]), &data).unwrap();
+            DropsetAmm::from_account(Deployment::Localnet, MARKET, DROPSET_ID, &data).unwrap();
         let q = amm
             .quote(&DropsetQuoteParams {
                 input_mint: Pubkey::from([2u8; 32]),
@@ -422,8 +442,8 @@ mod tests {
     #[test]
     fn swap_instruction_shape() {
         let data = one_ask_market(500_000);
-        let amm =
-            DropsetAmm::from_account(Deployment::Mainnet, Pubkey::from([7u8; 32]), &data).unwrap();
+        let amm = DropsetAmm::from_account(Deployment::Mainnet, MARKET, DROPSET_MAINNET_ID, &data)
+            .unwrap();
         let ix = amm
             .swap_instruction(&DropsetSwapParams {
                 taker: Pubkey::from([8u8; 32]),
@@ -475,7 +495,7 @@ mod tests {
         // One live ask -> active.
         let live = one_ask_market(500_000);
         let amm =
-            DropsetAmm::from_account(Deployment::Localnet, Pubkey::from([7u8; 32]), &live).unwrap();
+            DropsetAmm::from_account(Deployment::Localnet, MARKET, DROPSET_ID, &live).unwrap();
         assert!(amm.is_active());
         assert_eq!(amm.label(), "Dropset");
         assert_eq!(amm.accounts_len(), SWAP_ACCOUNTS_LEN);
@@ -483,16 +503,40 @@ mod tests {
 
         // No vaults -> inactive.
         let empty = build_market(MarketHeader::zeroed(), &[]);
-        let amm = DropsetAmm::from_account(Deployment::Localnet, Pubkey::from([7u8; 32]), &empty)
-            .unwrap();
+        let amm =
+            DropsetAmm::from_account(Deployment::Localnet, MARKET, DROPSET_ID, &empty).unwrap();
         assert!(!amm.is_active());
+    }
+
+    /// A well-formed book owned by any program but the deployment's is
+    /// refused: on mainnet, a lookalike owned by the localnet-id program
+    /// (whose key is public) must never be quoted from.
+    #[test]
+    fn a_lookalike_owner_is_refused() {
+        let data = one_ask_market(500_000);
+        for owner in [DROPSET_ID, Pubkey::new_unique()] {
+            assert_eq!(
+                DropsetAmm::from_account(Deployment::Mainnet, MARKET, owner, &data).err(),
+                Some(AmmError::WrongOwner {
+                    expected: DROPSET_MAINNET_ID,
+                    found: owner,
+                }),
+            );
+        }
+        assert_eq!(
+            DropsetAmm::from_account(Deployment::Localnet, MARKET, DROPSET_MAINNET_ID, &data).err(),
+            Some(AmmError::WrongOwner {
+                expected: DROPSET_ID,
+                found: DROPSET_MAINNET_ID,
+            }),
+        );
     }
 
     #[test]
     fn quote_rejects_foreign_mints() {
         let data = one_ask_market(500_000);
         let amm =
-            DropsetAmm::from_account(Deployment::Localnet, Pubkey::from([7u8; 32]), &data).unwrap();
+            DropsetAmm::from_account(Deployment::Localnet, MARKET, DROPSET_ID, &data).unwrap();
         let err = amm.quote(&DropsetQuoteParams {
             input_mint: Pubkey::from([3u8; 32]),
             output_mint: Pubkey::from([1u8; 32]),

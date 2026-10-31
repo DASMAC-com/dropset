@@ -71,6 +71,16 @@ impl SetDefaultFeeConfig {
         args: SetDefaultFeeConfigInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
+        assert_eq!(
+            self.program,
+            deployment.program_id(),
+            "program account is not the {deployment:?} program id"
+        );
+        assert_eq!(
+            self.event_authority,
+            crate::cluster::event_authority(&deployment.program_id()),
+            "event_authority is not the {deployment:?} program's event authority"
+        );
         let mut accounts = Vec::with_capacity(9 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(self.admin, true));
         accounts.push(solana_instruction::AccountMeta::new(self.registry, false));
@@ -305,8 +315,10 @@ impl SetDefaultFeeConfigBuilder {
             system_program: self
                 .system_program
                 .unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
-            event_authority: self.event_authority.expect("event_authority is not set"),
-            program: self.program.expect("program is not set"),
+            event_authority: self
+                .event_authority
+                .unwrap_or_else(|| crate::cluster::event_authority(&deployment.program_id())),
+            program: self.program.unwrap_or(deployment.program_id()),
         };
         let args = SetDefaultFeeConfigInstructionArgs {
             atoms: self.atoms.clone().expect("atoms is not set"),

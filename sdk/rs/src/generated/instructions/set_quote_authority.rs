@@ -40,6 +40,16 @@ impl SetQuoteAuthority {
         args: SetQuoteAuthorityInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
+        assert_eq!(
+            self.program,
+            deployment.program_id(),
+            "program account is not the {deployment:?} program id"
+        );
+        assert_eq!(
+            self.event_authority,
+            crate::cluster::event_authority(&deployment.program_id()),
+            "event_authority is not the {deployment:?} program's event authority"
+        );
         let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.signer,
@@ -183,8 +193,10 @@ impl SetQuoteAuthorityBuilder {
         let accounts = SetQuoteAuthority {
             signer: self.signer.expect("signer is not set"),
             market: self.market.expect("market is not set"),
-            event_authority: self.event_authority.expect("event_authority is not set"),
-            program: self.program.expect("program is not set"),
+            event_authority: self
+                .event_authority
+                .unwrap_or_else(|| crate::cluster::event_authority(&deployment.program_id())),
+            program: self.program.unwrap_or(deployment.program_id()),
         };
         let args = SetQuoteAuthorityInstructionArgs {
             vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
