@@ -648,7 +648,7 @@ def create_issue(
 
 #: The keys a ``--body-dir`` file's header block may set. ``title`` is required;
 #: the rest override the command line's flag of the same name for that file —
-#: ``parent`` included, though a seat session's set shares one ``--parent``.
+#: ``parent`` included, though an advisor session's set shares one ``--parent``.
 HEADER_KEYS = (
     "title",
     "state",
