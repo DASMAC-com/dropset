@@ -250,7 +250,7 @@ class Grammar(unittest.TestCase):
                     session_dispatch.validate(argv)
 
     def test_explore_resume_is_retired(self):
-        """`explore <n|name>` resumes an existing session itself, so the twin
+        """`explore <n>` resumes an existing session itself, so the twin
         would type a command the shell now refuses."""
         with self.assertRaises(ValueError) as caught:
             session_dispatch.validate(["explore", "resume", "1196"])
