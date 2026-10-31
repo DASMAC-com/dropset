@@ -1556,9 +1556,9 @@ that is not a permissionless instruction falls under one of them.
 
 The upgrade authority is intentionally narrow — exactly one
 instruction — so that post-init the admin set is the sole
-governance surface, and the only way to grow or shrink that
-surface is `add_admin` / `remove_admin` signed by an existing
-admin.
+governance surface, and absent a program upgrade under the retained
+upgrade authority, the only way to grow or shrink that surface is
+`add_admin` / `remove_admin` signed by an existing admin.
 
 ### Error surface
 
