@@ -668,6 +668,51 @@ class UnitTest(unittest.TestCase):
         no_bill = fc.reconcile_day(summary, {}, 0.15)
         self.assertTrue(no_bill["flagged"])
 
+    # The settled 10-13 day metered as the transcripts would: both cache tiers
+    # at the billed quantities, the fresh tiers short by the classifier's 8.2
+    # percent of the bill ($15.65 of $34.57 billed fresh).
+    SETTLED_TOKENS = {
+        "input": 600_000,
+        "output": 740_000,
+        "cache_creation": 8_058_700,
+        "cache_read": 387_957_500,
+    }
+
+    def split_day(self, tolerance: float = 0.15, **tokens: int):
+        tokens = {**self.SETTLED_TOKENS, **tokens}
+        model = "claude-opus-5-5"
+        dollars = sm.Cost.price(sm.Tokens(**tokens), model).total()
+        summary = {
+            "bedrock_by_service": {self.OPUS_SERVICE: dollars},
+            "bedrock_tokens": {model: tokens},
+            "unpriced": [],
+        }
+        rec = fc.reconcile_day(summary, {self.OPUS_SERVICE: 190.84}, tolerance)
+        usage = fc.parse_usage(self.usage_response(self.OPUS_USAGE))
+        return rec, fc.classifier_split(summary, usage)
+
+    def test_the_split_sums_to_the_drift_and_measures_the_overhead(self) -> None:
+        rec, split = self.split_day()
+        self.assertFalse(rec["flagged"])
+        self.assertAlmostEqual(split["classifier"] + split["rest"], rec["drift"])
+        self.assertAlmostEqual(split["rest"], 0.0, places=3)
+        self.assertAlmostEqual(split["overhead"], fc.CLASSIFIER_OVERHEAD, places=3)
+        self.assertNotIn("moved", fc.render_split(split, rec["flagged"]))
+
+    def test_a_flag_names_the_half_that_moved(self) -> None:
+        # Half the cache reads missed: a metering gap, not the classifier.
+        rec, split = self.split_day(cache_read=193_978_750)
+        self.assertTrue(rec["flagged"])
+        self.assertAlmostEqual(split["classifier"] + split["rest"], rec["drift"])
+        self.assertEqual(split["moved"], "rest")
+        self.assertIn("(rest moved)", fc.render_split(split, rec["flagged"]))
+        # The fresh tiers missed: the classifier share grew to the whole.
+        rec, split = self.split_day(tolerance=0.05, input=0, output=0)
+        self.assertTrue(rec["flagged"])
+        self.assertEqual(split["moved"], "classifier")
+        self.assertAlmostEqual(split["overhead"], 34.57 / 190.84)
+        self.assertIn("(classifier moved)", fc.render_split(split, rec["flagged"]))
+
     def test_reconcile_flags_a_large_background_share(self) -> None:
         # Every session misclassified: the session model's own service lands as
         # background, which must not read as a clean day.
