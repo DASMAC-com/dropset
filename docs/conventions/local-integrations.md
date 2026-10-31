@@ -3061,7 +3061,7 @@ a terminal closed outright, is covered by the next morning's digest.
   resume many sessions, so seeing the list first is worth a word. Both
   pass the dispatcher's machine gate (below) with each session's class
   read back from its record; what it holds, `fleet go --over-budget`
-  seats.
+  admits.
 
   Three things it gets right, and each is a reason it is a tool rather
   than a shell one-liner:
@@ -3124,13 +3124,13 @@ a terminal closed outright, is covered by the next morning's digest.
   issue body names a build or deploy command in code (`make`, `cargo`,
   `anchor`, `docker`, or a localnet), unreadable reading as building,
   `--class` overriding — and reads `machine_load.py` once for the batch.
-  It seats what fits and prints each other verb as `held` with the
+  It admits what fits and prints each other verb as `held` with the
   number that refused it, plus what would free a slot; unlike a typo, a
   held verb is valid, so a partial batch is correct here. A refusal on
   the pool-lock wait is re-probed once first (the probe is one
-  snapshot). Free and building seats spend the same `DS_FLEET_TOTAL`,
+  snapshot). Every slot, free or building, spends the same `DS_FLEET_TOTAL`,
   and the roll-call ends with `clients N of T (builders B, free F)`.
-  `--over-budget` seats past the machine checks; the total has no
+  `--over-budget` admits past the machine checks; the total has no
   override but the config, and a probe with no reading (exit 3) leaves
   the total alone binding, said aloud — unless the total is itself
   unset, which holds the batch and names the variable. The class

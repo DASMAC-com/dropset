@@ -676,7 +676,7 @@ class Cli(unittest.TestCase):
         )
         opened.assert_called_once_with(["task resume 889", "task resume 890"])
         self.assertEqual(parsed["held"], [])
-        self.assertIn("over budget, seated anyway: task resume 890", err)
+        self.assertIn("over budget, admitted anyway: task resume 890", err)
 
     def test_no_reading_resumes_under_the_cap(self):
         code, parsed, err, opened = self._two_in_flight(
