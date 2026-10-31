@@ -33,7 +33,7 @@
 //! The cockpit pairs them differently, because its policy comes from the
 //! operator's declared `--cluster` rather than from the URL. A mainnet session
 //! is held to [`Cluster::verify_genesis`] at launch and before every write;
-//! under `--rehearsal-loopback` that check inverts — a `127.0.0.1` or
+//! under `--rehearsal-loopback` it inverts, admitting only a `127.0.0.1` or
 //! `localhost` endpoint whose genesis is **not** mainnet-beta, so a dress
 //! rehearsal drives the mainnet signer path and nothing real. A localnet
 //! session cannot check at launch — its validator is still booting — so it
@@ -194,7 +194,9 @@ impl Cluster {
     ) -> Result<()> {
         if self != Cluster::Mainnet {
             if rehearsal_loopback {
-                bail!("--rehearsal-loopback is mainnet-only — localnet never checks genesis");
+                bail!(
+                    "--rehearsal-loopback is mainnet-only — localnet has no mainnet check to swap"
+                );
             }
             return Ok(());
         }
@@ -227,27 +229,28 @@ impl Cluster {
     }
 }
 
-/// A rehearsal session's endpoint check: the `rpc_url` host must be exactly
-/// `127.0.0.1` or `localhost`, and the chain behind it must **not** be
-/// mainnet-beta.
+/// A rehearsal session's endpoint check: the `rpc_url` must be on `127.0.0.1`
+/// or `localhost`, and the chain behind it must **not** be mainnet-beta.
 ///
-/// The host check is the whole safety property of the flag, so it is the
-/// narrowest set [`host_of`] can name: not `::1` or `0.0.0.0`, which
-/// [`is_localnet`] admits for a validator's own bind, and decided before any
-/// chain call. The genesis read is the second half: a loopback port can still
-/// be a tunnel to mainnet, and a rehearsal that reached it would be a real
-/// session nobody meant to start. A failed read refuses, as the mainnet check
-/// does — and drops the source error for the same reason.
+/// The host check is the whole safety property of the flag, so it is decided
+/// before any chain call and narrower than [`is_localnet`] (no `::1` or
+/// `0.0.0.0`). See `is_rehearsal_loopback` for why it is not [`host_of`]. The
+/// genesis read is the second half: a loopback port can still be a tunnel to
+/// mainnet, and a rehearsal that reached it would be a real session nobody
+/// meant to start. A failed read refuses, as the mainnet check does — and
+/// drops the source error for the same reason.
 fn check_rehearsal(rpc_url: &str, genesis: impl FnOnce() -> Result<String>) -> Result<()> {
-    if !matches!(host_of(rpc_url).as_deref(), Some("127.0.0.1" | "localhost")) {
+    if !is_rehearsal_loopback(rpc_url) {
         bail!(
-            "--rehearsal-loopback admits only a 127.0.0.1 or localhost endpoint, and \
-             {MAINNET_RPC_ENV} is not one. Refusing to run a rehearsal against a remote \
-             endpoint."
+            "--rehearsal-loopback admits only an http(s)://127.0.0.1 or localhost \
+             endpoint, and {MAINNET_RPC_ENV} is not one — refusing the rehearsal"
         );
     }
     let seen = genesis().map_err(|_| {
-        anyhow!("could not read the genesis hash from the loopback endpoint — is the validator up?")
+        anyhow!(
+            "could not read the genesis hash from the loopback endpoint — is the validator \
+             up? (the underlying error is withheld: it can carry the endpoint URL)"
+        )
     })?;
     if seen == MAINNET_GENESIS_HASH {
         bail!(
@@ -256,6 +259,28 @@ fn check_rehearsal(rpc_url: &str, genesis: impl FnOnce() -> Result<String>) -> R
         );
     }
     Ok(())
+}
+
+/// Whether `rpc_url` is exactly `http(s)://` then `127.0.0.1` or `localhost`,
+/// an optional numeric port, and nothing or a `/…` path.
+///
+/// An allowlist of the whole authority, not [`host_of`]: that parser is
+/// best-effort, and where it and the HTTP client's standard URL parser
+/// disagree the client wins. `http://evil.com\@127.0.0.1` reads as loopback to `host_of`
+/// but the client takes `\` for `/` and connects to `evil.com`. Any userinfo,
+/// backslash, query or other punctuation in the authority refuses here.
+fn is_rehearsal_loopback(rpc_url: &str) -> bool {
+    let Some(rest) = rpc_url
+        .strip_prefix("http://")
+        .or_else(|| rpc_url.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let authority = rest.split_once('/').map_or(rest, |(a, _)| a);
+    let (host, port) = authority.split_once(':').unwrap_or((authority, "1"));
+    (host.eq_ignore_ascii_case("127.0.0.1") || host.eq_ignore_ascii_case("localhost"))
+        && !port.is_empty()
+        && port.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Refuse to proceed if `client` is talking to mainnet.
@@ -562,6 +587,14 @@ mod tests {
             "https://127.0.0.1@evil.com/",
             "http://[::1]:8899",
             "http://0.0.0.0:8899",
+            // Shapes `host_of` reads as loopback while the HTTP client's
+            // standard URL parser connects to the remote host.
+            "http://evil.com\\@127.0.0.1:8899",
+            "http:evil.com/://127.0.0.1",
+            "http://evil@127.0.0.1:8899",
+            "http://127.0.0.1:/",
+            "http://127.0.0.1?x",
+            "127.0.0.1:8899",
         ] {
             let err = Cluster::Mainnet
                 .check_genesis(url, true, unread)
