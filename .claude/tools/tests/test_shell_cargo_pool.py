@@ -123,6 +123,19 @@ class LaunchKeysTest(unittest.TestCase):
         self.assertEqual(out["in"], self.keys_of(self.worktree, "-1"))
         self.assertEqual(out["after"], self.keys_of(self.repo, ""))
 
+    def test_a_worded_tag_is_refused_before_the_pool_is_keyed(self) -> None:
+        # Its worktree would exist only once the CLI made it, after the keying,
+        # so the session would build on the base checkout's slots. Refused, it
+        # never reaches `claude` and the tab keeps its own keys.
+        for command in ("_ds_task_start my-thing ''", "explore feeds"):
+            with self.subTest(command=command):
+                out = self.launch(command)
+                self.assertNotIn("in", out)
+                self.assertEqual(out["after"], self.keys_of(self.repo, ""))
+                self.assertEqual(
+                    [p.name for p in self.worktree.parent.iterdir()], ["2281"]
+                )
+
     def test_the_launch_s_exit_status_survives_the_restore(self) -> None:
         out = self.launch(
             "claude() { return 3; }; _ds_claude_pooled 2281 model; rc=$?; "

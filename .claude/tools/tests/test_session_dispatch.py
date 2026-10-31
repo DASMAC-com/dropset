@@ -186,20 +186,23 @@ class Grammar(unittest.TestCase):
         with self.assertRaises(ValueError):
             session_dispatch.validate(["task", "main"])
 
-    def test_explore_named(self):
-        self.assertEqual(
-            session_dispatch.validate(["explore", "feeds"]), ["explore", "feeds"]
-        )
+    def test_explore_refuses_a_worded_name(self):
+        """The free-form `explore <name>` is retired with `task`'s worded tag:
+        a worktree is named for its issue, so the shell refuses a word and a
+        dispatch typing one would only open a tab onto that refusal."""
+        for name in ("feeds", "plan", "exp-feeds"):
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    session_dispatch.validate(["explore", name])
 
     def test_explore_issue_keyed(self):
-        """A bare number is the audit-dispatch form: it keys the worktree to the
-        Linear issue, so `explore 1196` must validate exactly as a name does."""
+        """A bare number keys the worktree to the Linear issue."""
         self.assertEqual(
             session_dispatch.validate(["explore", "1196"]), ["explore", "1196"]
         )
 
     def test_explore_rejects_zero_like_the_shell_does(self):
-        """`_NAME` admits `0`, but the shell refuses it — so dispatching would
+        """`_TAG` admits `0`, but the shell refuses it — so dispatching would
         open a tab, type the verb and leave an idle session that looks started.
         Every spelling the shell normalizes to zero must be rejected here."""
         for zero in ("0", "00", "eng-0", "eng-000"):
@@ -226,7 +229,7 @@ class Grammar(unittest.TestCase):
         `[Explore/Bedrock]` title types as `explore bedrock <n>`; a word is
         never a name, in either grammar."""
         for word in ("anthropic", "bedrock"):
-            for target in ("1196", "feeds", "eng-1196"):
+            for target in ("1196", "eng-1196"):
                 with self.subTest(word=word, target=target):
                     self.assertEqual(
                         session_dispatch.validate(["explore", word, target]),
@@ -250,7 +253,7 @@ class Grammar(unittest.TestCase):
         """`explore <n|name>` resumes an existing session itself, so the twin
         would type a command the shell now refuses."""
         with self.assertRaises(ValueError) as caught:
-            session_dispatch.validate(["explore", "resume", "feeds"])
+            session_dispatch.validate(["explore", "resume", "1196"])
         self.assertIn("retired", str(caught.exception))
 
     def test_architect_takes_the_governing_issue_number(self):
@@ -708,7 +711,7 @@ class VerbClass(unittest.TestCase):
         for words in (
             ["architect", "1"],
             ["plan"],
-            ["explore", "feeds"],
+            ["explore", "1196"],
             ["fleet", "go"],
         ):
             with self.subTest(words=words):
