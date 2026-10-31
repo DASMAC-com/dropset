@@ -411,10 +411,10 @@ The one path that does pay accrued fee out is
 `token_recipient` immediately before closing it (see **Account lifecycle
 and rent reclamation → Teardown ordering**). That is not the steady-state
 harvest arriving early — it fires only on a market being destroyed, on a
-feature-gated instruction absent from the final immutable build — it is
-what makes teardown *possible*: with no harvest and a `SweepResidual`
-that subtracts the accrued counters by design, a market that ever charged
-a fee would otherwise hold a treasury balance no instruction could clear,
+feature-gated instruction that a later upgrade may remove — it is what
+makes teardown *possible*: with no harvest and a `SweepResidual` that
+subtracts the accrued counters by design, a market that ever charged a
+fee would otherwise hold a treasury balance no instruction could clear,
 and an empty-account close requirement would reject it forever.
 
 #### Residual sweep
@@ -992,12 +992,11 @@ lifecycle and rent reclamation**), an admin may additionally
 `force_withdraw_leader` against any vault's `leader_shares`,
 regardless of the vault's state — active, frozen, or tombstoned.
 Together these widen the "only the owner can move their stake"
-property held by every production build (outside funds and
-leader funds both), in service of being able to drain markets to
-zero between testnet / early-mainnet deploy cycles without
-requiring leader cooperation. The feature is absent from the final
-immutable build, and with it absent the original property is
-restored.
+property held by every build without the feature (outside funds
+and leader funds both), in service of being able to drain markets
+to zero between testnet / early-mainnet deploy cycles without
+requiring leader cooperation. A later upgrade may build without the
+feature, and with it absent the original property is restored.
 
 ## LiquidityProfile
 
@@ -1364,8 +1363,7 @@ The `force_withdraw_depositor` instruction lives behind the
 reclamation**) and lets an admin pay a depositor out and close
 their `VaultDepositor` PDA without the depositor's signature. Its
 sole purpose is to make markets fully drainable for the testnet /
-early-mainnet redeploy cycle; it is absent from the final
-immutable build.
+early-mainnet redeploy cycle; a later upgrade may remove it.
 
 - **Signer.** `signer ∈ registry.admins`.
 - **Vault state.** Active, frozen, or tombstoned. **Reclaimed**
@@ -1556,11 +1554,11 @@ that is not a permissionless instruction falls under one of them.
      `force_withdraw_leader`, `close_market_treasury`,
      `close_market`, `close_registry_fee_vault`, `close_registry`.
 
-The upgrade authority is intentionally narrow — exactly one
-instruction — so that post-init the admin set is the sole
-governance surface, and the only way to grow or shrink that
-surface is `add_admin` / `remove_admin` signed by an existing
-admin.
+The upgrade authority's in-program role is intentionally narrow — it
+gates exactly one instruction — so that post-init the admin set is
+the sole in-program governance surface; short of a program upgrade,
+which the same key retains, the only way to grow or shrink that
+surface is `add_admin` / `remove_admin` signed by an existing admin.
 
 ### Error surface
 
@@ -3025,7 +3023,7 @@ reconstruct from end-of-slot coalesced account diffs. That is every
 token-moving or share-changing flow (`CreateVault`, the deposit and
 withdraw family — leader and force-withdraw variants included, each
 paired with a `Realize` when it crystallizes fees; the force-withdraw
-pair only on `admin-teardown` builds, inert on the immutable deploy),
+pair only on `admin-teardown` builds, inert on a build without it),
 the per-leg `FillEvent` plus the take's one take-level event,
 `PlatformFeeEvent` (only when a platform fee was skimmed), the
 vault-lifecycle changes (`CloseVault`, `FreezeVault`), the two
@@ -3330,11 +3328,15 @@ every account it ever created can be closed and its rent reclaimed,
 so the program can be upgrade-redeployed against the same program
 id between cycles. The teardown instructions described here are
 **feature-gated** behind a Cargo feature `admin-teardown`, compiled
-into testnet / early-mainnet builds and omitted from the final
-immutable deploy. Authorization while the feature is enabled is the
-existing Registry admin set (see **Caller mechanics → Admin
-authority**); a reader of the final-build IDL will find these
-instructions absent.
+into testnet and early-mainnet builds, the first mainnet publish
+included. The upgrade authority is retained after that publish,
+probably in perpetuity, and no fully immutable deploy is assumed or
+scheduled: removing the feature, if it happens, is a later upgrade
+under that authority, never a republish (operator ruling,
+2026-10-30). Authorization while the feature is
+enabled is the existing Registry admin set (see **Caller mechanics →
+Admin authority**); a reader of the IDL of a build without the feature
+will find these instructions absent.
 
 ### Rent-holding accounts
 
