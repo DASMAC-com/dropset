@@ -127,6 +127,13 @@ CALIBRATION_MIN_SHARE = 0.8
 # that motivated the line sat near 19%; a tenth is where it stops being noise.
 RESIDENT_LEVER_SHARE = 0.10
 
+# A record Claude Code writes ahead of the stamped user record carrying the
+# same `tool_result`: a request-body copy with no `timestamp` and no usage.
+# Read as a turn, it pops the pending tool call early (a rebase lands with no
+# stamp, its real result as tool `unknown`) and counts the result bytes twice,
+# so every reader skips it.
+API_REQUEST_BLOB = "api-request-blob"
+
 
 @dataclass(frozen=True)
 class Rates:
@@ -179,12 +186,17 @@ RATES_BY_MODEL: dict[str, Rates] = {
     # The advisor tier. Seeded at the Opus 5.5 row's 1.10x Bedrock premium over
     # the first-party list price, cache read $0.25 list (0.025x input), 1h
     # write 2x input. The first Bedrock Fable day, 2026-10-22, billed exactly
-    # these four rates by usage type (no long-context tier billed), but that
-    # day had not settled when read, so the row stays unverified until it has.
-    "claude-fable-5-1": Rates(11.00, 55.00, 0.275, 22.00, verified=None),
+    # these four rates by usage type (no long-context tier billed), and the
+    # settled day's quantities priced here reproduced its $58.33 to the cent.
+    "claude-fable-5-1": Rates(11.00, 55.00, 0.275, 22.00, verified="2026-10-22"),
     # An audit lane. Cache read is 0.05x input: AWS halved it on 2026-10-07,
     # and 2026-10-21 billed every tier at these rates.
     "claude-sonnet-5-5": Rates(2.20, 11.00, 0.11, 4.40, verified="2026-10-21"),
+    # No lane runs it, yet 2026-10-22 and 10-26 billed it, so it is priced
+    # rather than refused. The 1.10x premium over the first-party list price
+    # ($2 / $10, cache read $0.20 at 0.1x, unlike Sonnet 5.5's halved 0.05x,
+    # 1h write $4); both days reproduced their bill to the cent at these rates.
+    "claude-sonnet-5": Rates(2.20, 11.00, 0.22, 4.40, verified="2026-10-26"),
 }
 
 # The key a message with no recorded model is accumulated under. It is never
@@ -602,6 +614,8 @@ class Friction:
         self._enqueued = False
 
     def observe(self, rec: dict) -> None:
+        if rec.get("type") == API_REQUEST_BLOB:
+            return
         stamp = utc_stamp(rec.get("timestamp"))
         msg = rec.get("message")
         if not isinstance(msg, dict):
@@ -1072,7 +1086,7 @@ class SessionAggregator:
         return True
 
     def _ingest_main_record(self, rec) -> None:
-        if not isinstance(rec, dict):
+        if not isinstance(rec, dict) or rec.get("type") == API_REQUEST_BLOB:
             return
         if self.cwd is None:
             cwd = rec.get("cwd")

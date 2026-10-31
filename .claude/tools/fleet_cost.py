@@ -25,7 +25,9 @@ bucketed by the machine's own day:
 
 ``reconcile``
     ``meter`` beside Cost Explorer's billed gross for the same days, per
-    Marketplace service, with the drift and a flag past ``--tolerance``. Both
+    Marketplace service, with the drift and a flag past ``--tolerance``, and
+    that drift split by usage type into its classifier half (the fresh tiers)
+    and the rest (the cache tiers), so a flag names which half moved. Both
     print a **friction** line on a day where some session spanned a UTC day,
     rebased or re-enqueued, or stalled: those session counts, and the
     main-session dollars spent after the friction began, so a day's process
@@ -970,8 +972,87 @@ def reconcile_day(summary: dict, billed: dict[str, float], tolerance: float) -> 
         "billed_background": background,
         "raw_drift": drift(metered, matched),
         "drift": d,
+        "tolerance": tolerance,
         "flagged": flagged,
     }
+
+
+# The tiers the classifier bills on: a stateless call per tool use, so fresh
+# input and output, while both cache tiers carry only what the transcripts did.
+CLASSIFIER_TIERS = ("input", "output")
+
+
+def classifier_split(
+    summary: dict, usage: dict[str, dict[str, tuple[float, float]]]
+) -> dict:
+    """Split one day's drift after the classifier allowance into its two halves.
+
+    The **classifier** half is the fresh tiers' gap once the whole
+    `CLASSIFIER_OVERHEAD` allowance is charged to them; the **rest** half is the
+    cache tiers' gap, plus any unrecognized usage type, which no transcript
+    prices, and the whole expected figure of a metered service with no usage
+    billed yet. Each is a fraction of the matched bill, signed as `drift` is,
+    and the two sum to `reconcile_day`'s drift, so ``moved`` names the half
+    that carries more of it. ``overhead`` is the day's measured classifier
+    share (the fresh tiers' billed excess over metered, over the matched bill),
+    the figure to set beside the constant when re-measuring it.
+    """
+    metered = {"fresh": 0.0, "cache": 0.0}
+    no_usage = 0.0
+    for model, tokens in summary["bedrock_tokens"].items():
+        service = service_for_model(model)
+        # Only a priced model reaches `bedrock_by_service`; an unpriced one is
+        # `reconcile_day`'s unpriced line, outside the drift.
+        if service not in summary["bedrock_by_service"]:
+            continue
+        cost = sm.Cost.price(sm.Tokens(**tokens), model)
+        if service not in usage:
+            no_usage += cost.total()
+            continue
+        metered["fresh"] += cost.input + cost.output
+        metered["cache"] += cost.cache_read + cost.cache_write
+    billed = {"fresh": 0.0, "cache": 0.0}
+    for service in summary["bedrock_by_service"]:
+        for usage_type, (_, dollars) in usage.get(service, {}).items():
+            half = "fresh" if tier_of(usage_type) in CLASSIFIER_TIERS else "cache"
+            billed[half] += dollars
+    matched = billed["fresh"] + billed["cache"]
+    if matched <= 0:
+        return {"classifier": None, "rest": None, "overhead": None, "moved": None}
+    allowance = (metered["fresh"] + metered["cache"]) * (
+        CLASSIFIER_OVERHEAD / (1 - CLASSIFIER_OVERHEAD)
+    )
+    classifier = (metered["fresh"] + allowance - billed["fresh"]) / matched
+    rest = (
+        metered["cache"] + no_usage / (1 - CLASSIFIER_OVERHEAD) - billed["cache"]
+    ) / matched
+    return {
+        "classifier": classifier,
+        "rest": rest,
+        "overhead": (billed["fresh"] - metered["fresh"]) / matched,
+        "moved": "classifier" if abs(classifier) >= abs(rest) else "rest",
+    }
+
+
+def drift_tripped(rec: dict) -> bool:
+    """Whether `reconcile_day` flagged the day for its drift, which it records
+    beside the tolerance it judged against."""
+    d = rec["drift"]
+    return rec["flagged"] and d is not None and abs(d) > rec["tolerance"]
+
+
+def render_split(split: dict, tripped: bool) -> str:
+    """The drift's two halves, naming the one that moved when the drift itself
+    tripped the flag — not a background-share or no-bill flag, which the split
+    does not explain."""
+    overhead = split["overhead"]
+    measured = "n/a" if overhead is None else f"{overhead * 100:.1f}%"
+    moved = f"  ({split['moved']} moved)" if tripped and split["moved"] else ""
+    return (
+        f"  split         classifier {pct(split['classifier'])}, "
+        f"rest {pct(split['rest'])}; overhead {measured} measured, "
+        f"{CLASSIFIER_OVERHEAD * 100:.1f}% allowed{moved}"
+    )
 
 
 def spend_cap_day(estimate: float, gross: float, tolerance: float) -> dict:
@@ -1385,6 +1466,9 @@ def main(argv: list[str] | None = None) -> int:
                             flag_mark(rec["flagged"], day == provisional),
                         )
                     )
+                    split = classifier_split(summary, fetch_usage(day))
+                    rec["split"] = split
+                    lines.append(render_split(split, drift_tripped(rec)))
                 if "friction" in summary:
                     lines.append(
                         f"  friction      {render_friction(summary['friction'])}"

@@ -668,6 +668,99 @@ class UnitTest(unittest.TestCase):
         no_bill = fc.reconcile_day(summary, {}, 0.15)
         self.assertTrue(no_bill["flagged"])
 
+    # The settled 10-13 day metered as the transcripts would: both cache tiers
+    # at the billed quantities, the fresh tiers short by the classifier's 8.2
+    # percent of the bill ($15.65 of $34.57 billed fresh).
+    SETTLED_TOKENS = {
+        "input": 600_000,
+        "output": 740_000,
+        "cache_creation": 8_058_700,
+        "cache_read": 387_957_500,
+    }
+
+    def split_day(self, tolerance: float = 0.15, **tokens: int):
+        tokens = {**self.SETTLED_TOKENS, **tokens}
+        model = "claude-opus-5-5"
+        dollars = sm.Cost.price(sm.Tokens(**tokens), model).total()
+        summary = {
+            "bedrock_by_service": {self.OPUS_SERVICE: dollars},
+            "bedrock_tokens": {model: tokens},
+            "unpriced": [],
+        }
+        rec = fc.reconcile_day(summary, {self.OPUS_SERVICE: 190.84}, tolerance)
+        usage = fc.parse_usage(self.usage_response(self.OPUS_USAGE))
+        return rec, fc.classifier_split(summary, usage)
+
+    def test_the_split_sums_to_the_drift_and_measures_the_overhead(self) -> None:
+        rec, split = self.split_day()
+        self.assertFalse(rec["flagged"])
+        self.assertAlmostEqual(split["classifier"] + split["rest"], rec["drift"])
+        self.assertAlmostEqual(split["rest"], 0.0, places=3)
+        self.assertAlmostEqual(split["overhead"], fc.CLASSIFIER_OVERHEAD, places=3)
+        self.assertNotIn("moved", fc.render_split(split, fc.drift_tripped(rec)))
+
+    def test_a_flag_names_the_half_that_moved(self) -> None:
+        # Half the cache reads missed: a metering gap, not the classifier.
+        rec, split = self.split_day(cache_read=193_978_750)
+        self.assertTrue(fc.drift_tripped(rec))
+        self.assertAlmostEqual(split["classifier"] + split["rest"], rec["drift"])
+        self.assertEqual(split["moved"], "rest")
+        self.assertIn("(rest moved)", fc.render_split(split, fc.drift_tripped(rec)))
+        # The fresh tiers missed: the classifier share grew to the whole.
+        rec, split = self.split_day(tolerance=0.05, input=0, output=0)
+        self.assertTrue(fc.drift_tripped(rec))
+        self.assertEqual(split["moved"], "classifier")
+        self.assertAlmostEqual(split["overhead"], 34.57 / 190.84)
+        line = fc.render_split(split, fc.drift_tripped(rec))
+        self.assertIn("(classifier moved)", line)
+
+    def test_a_flag_the_drift_did_not_trip_names_no_half(self) -> None:
+        # A clean drift beside a large background line: flagged, but not for
+        # anything the split explains.
+        rec, split = self.split_day()
+        rec = {**rec, "flagged": True}
+        self.assertFalse(fc.drift_tripped(rec))
+        self.assertNotIn("moved", fc.render_split(split, fc.drift_tripped(rec)))
+
+    def test_a_metered_service_with_no_usage_lands_in_the_rest(self) -> None:
+        # Haiku metered but not yet billed by usage type: still summed, as
+        # `reconcile_day` sums it, and only into the rest half.
+        rec, split = self.split_day()
+        haiku = {"input": 1_000_000, "output": 0, "cache_creation": 0, "cache_read": 0}
+        summary = {
+            "bedrock_by_service": {
+                self.OPUS_SERVICE: sm.Cost.price(
+                    sm.Tokens(**self.SETTLED_TOKENS), "claude-opus-5-5"
+                ).total(),
+                "Claude Haiku 5.5 (Amazon Bedrock Edition)": 0.11,
+            },
+            "bedrock_tokens": {
+                "claude-opus-5-5": self.SETTLED_TOKENS,
+                "claude-haiku-5-5": haiku,
+                # Unpriced: never reaches the services, so never priced here.
+                "claude-opus-9": haiku,
+            },
+            "unpriced": ["claude-opus-9"],
+        }
+        rec = fc.reconcile_day(summary, {self.OPUS_SERVICE: 190.84}, 0.15)
+        usage = fc.parse_usage(self.usage_response(self.OPUS_USAGE))
+        late = fc.classifier_split(summary, usage)
+        self.assertAlmostEqual(late["classifier"] + late["rest"], rec["drift"])
+        self.assertAlmostEqual(late["classifier"], split["classifier"])
+        self.assertGreater(late["rest"], split["rest"])
+
+    def test_a_day_with_no_usage_billed_splits_to_nothing(self) -> None:
+        summary = {
+            "bedrock_by_service": {self.OPUS_SERVICE: 10.0},
+            "bedrock_tokens": {"claude-opus-5-5": self.SETTLED_TOKENS},
+            "unpriced": [],
+        }
+        split = fc.classifier_split(summary, {})
+        self.assertEqual(set(split.values()), {None})
+        line = fc.render_split(split, True)
+        self.assertIn("classifier n/a, rest n/a; overhead n/a measured", line)
+        self.assertNotIn("moved", line)
+
     def test_reconcile_flags_a_large_background_share(self) -> None:
         # Every session misclassified: the session model's own service lands as
         # background, which must not read as a clean day.
