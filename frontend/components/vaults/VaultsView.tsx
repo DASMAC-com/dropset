@@ -19,6 +19,7 @@ import { shortenMint } from "@/lib/data/currencies";
 import { allTimePnl, positionPnl } from "@/lib/data/pnl";
 import type { VaultPosition } from "@/lib/data/positions";
 import {
+  cmpPairCode,
   contributeClosedReason,
   type FxPairGroup,
   findVaultBySeq,
@@ -27,7 +28,6 @@ import {
   groupVaultMarkets,
   isVaultPinned,
   type MetricKey,
-  resolveLegacyLeaderPin,
   type Vault,
   type VaultMarket,
   type VaultPin,
@@ -301,8 +301,9 @@ function VaultRow({
               {vault.name}
             </span>
           )}
-          {/* Pin the view to this exact vault — writes base/quote/vault into
-              the URL (a shareable deep link); click again to clear. */}
+          {/* Pin the view to this exact vault — writes base/quote and the
+              leader's address into the URL (a shareable deep link); click
+              again to clear. */}
           <button
             type="button"
             onClick={() => onPin(entry)}
@@ -441,41 +442,21 @@ function VaultsInner() {
   // Seed the pin from the URL once, then own it in state. Updates write back to
   // the URL via replaceState (no router transition) so the address bar always
   // reflects — and can reproduce — the current filter, mirroring /currencies.
-  // The pin (VaultPin) is driven by the `?base=&quote=&vault=` URL params, so
-  // a filtered view is a shareable deep link to a vault that survives a
-  // leader rotation.
+  // The pin (VaultPin) is driven by the `?base=&quote=&leader=` URL params
+  // (`vault=` for a number-keyed link), so a filtered view is a shareable
+  // deep link to a vault.
   const [pin, setPin] = useState<VaultPin>(() =>
     vaultPinFromParams(searchParams),
   );
   // Merge against the current pin and apply the URL write as a plain side
   // effect — NOT inside the setPin updater, which React may re-run during
   // render (replaceState there pokes the Router mid-render). updatePin runs
-  // from event handlers and the one-shot legacy resolve below, so the `pin`
-  // closure is current.
+  // from event handlers, so the `pin` closure is current.
   const updatePin = (next: Partial<VaultPin>) => {
     const merged = { ...pin, ...next };
     setPin(merged);
     replaceUrlParams(vaultPinParams(merged));
   };
-
-  // An old leader-keyed link resolves, on the first live read, to the vault
-  // number it named, which then replaces the leader in the pin and the URL.
-  // One that names no single vault keeps filtering by leader prefix, as it
-  // did. Tried once. One-release fallback; drop it with LEGACY_LEADER_PARAM.
-  const [legacyPending, setLegacyPending] = useState(
-    () => pin.leader !== "" && pin.vault === "",
-  );
-  useEffect(() => {
-    if (!legacyPending || chain.status !== "ready") return;
-    setLegacyPending(false);
-    const seq = resolveLegacyLeaderPin(
-      chain.markets,
-      pin.base,
-      pin.quote,
-      pin.leader,
-    );
-    if (seq !== null) updatePin({ vault: seq.toString(), leader: "" });
-  });
 
   // A public vault link (vaultLinkHref) names one live vault by its pair and
   // `seq`. Captured once from the URL; when the first live read lands, that
@@ -578,14 +559,6 @@ function VaultsInner() {
     [positionValue],
   );
 
-  // There's always an effective sort; default TVL desc. Memoized so the
-  // groups/flatVaults memos below don't recompute every render in the default
-  // (unsorted) state from a fresh object identity.
-  const effective: { key: MetricKey; direction: SortDir } = useMemo(
-    () => sort ?? { key: "tvl", direction: "desc" },
-    [sort],
-  );
-
   const toggleSort = (key: MetricKey) =>
     setSort((prev) => {
       if (!prev || prev.key !== key) return { key, direction: "desc" };
@@ -599,21 +572,35 @@ function VaultsInner() {
 
   const q = query.trim().toLowerCase();
 
+  // With no column sort chosen, the pairs read alphabetically by base
+  // currency code (cmpPairCode) and each pair's vaults by TVL, largest first.
   const live = useMemo(() => {
-    const { key, direction } = effective;
     const keep = (group: FxPairGroup, entry: GroupedVault) =>
       matchesQuery(q, group, entry) && matchesPin(entry);
+    const byVault =
+      (key: MetricKey, direction: SortDir) =>
+      (a: GroupedVault, b: GroupedVault) =>
+        cmpMetric(vaultSortValue(a, key), vaultSortValue(b, key), direction);
+    if (sort === null) {
+      const byTvl = byVault("tvl", "desc");
+      return arrangeSection(
+        liveGroups,
+        keep,
+        cmpPairCode,
+        (a, b) => cmpPairCode(a.market, b.market) || byTvl(a, b),
+      );
+    }
+    const { key, direction } = sort;
     const cmpGroup = (a: FxPairGroup, b: FxPairGroup) =>
       cmpMetric(groupSortValue(a, key), groupSortValue(b, key), direction);
-    const cmpVault = (a: GroupedVault, b: GroupedVault) =>
-      cmpMetric(vaultSortValue(a, key), vaultSortValue(b, key), direction);
-    return arrangeSection(liveGroups, keep, cmpGroup, cmpVault);
-  }, [liveGroups, effective, q, matchesPin, groupSortValue, vaultSortValue]);
+    return arrangeSection(liveGroups, keep, cmpGroup, byVault(key, direction));
+  }, [liveGroups, sort, q, matchesPin, groupSortValue, vaultSortValue]);
 
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });
 
-  // The pin "crosshair" on each row toggles the URL filter to that exact vault.
+  // The pin "crosshair" on each row toggles the URL filter to that exact vault,
+  // keyed by its leader's address (never its number).
   const isPinnedVault = (e: GroupedVault) =>
     isVaultPinned(pin, e.market, e.vault);
   const togglePinVault = (e: GroupedVault) =>
@@ -623,8 +610,8 @@ function VaultsInner() {
         : {
             base: e.market.base,
             quote: e.market.quote,
-            vault: e.vault.chain.seq.toString(),
-            leader: "",
+            vault: "",
+            leader: e.vault.leader,
           },
     );
 
@@ -680,14 +667,14 @@ function VaultsInner() {
         ));
 
   // What the table says when it has no rows: still loading, the chain
-  // unreachable, nothing on-chain at all, or vaults the filters hide.
+  // unreachable, nothing onchain at all, or vaults the filters hide.
   const liveEmptyText =
     chain.status === "loading"
       ? "Loading vaults…"
       : chain.status === "error"
         ? "Couldn't read vaults from the chain, retrying…"
         : liveGroups.length === 0
-          ? "No vaults on-chain yet"
+          ? "No vaults onchain yet"
           : "No vaults match";
 
   return (
@@ -731,10 +718,10 @@ function VaultsInner() {
             Read live from the chain. TVL is valued at each vault's reference
             price.
             {liveIndicative &&
-              " Where a vault has no on-chain USD price (its book is dark), its TVL uses indicative token prices."}
+              " Where a vault has no onchain USD price (its book is dark), its TVL uses indicative token prices."}
           </p>
         </div>
-        {/* Active URL pin (?base=&quote=&vault=) shown as removable chips on
+        {/* Active URL pin (?base=&quote=&leader=, or &vault=) shown as removable chips on
             their own row, so a varying number of chips never changes the
             search/preview toolbar width (which the table aligns to). */}
         {(pin.base || pin.quote || pin.vault || pin.leader) && (

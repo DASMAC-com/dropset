@@ -13,16 +13,15 @@ export const swapHref = (from: string, to: string): string => {
   return `/swap?${params.toString()}`;
 };
 
-// The query key the Vaults tab's pin carries a vault's number (`seq`) under.
-// Keyed on the number, never the leader, so a pinned link survives a leader
-// rotation.
+// The query key the Vaults tab's pin carries a vault's number (`seq`) under,
+// for a link built elsewhere (vaultsHref). The row's own pin keys on the
+// leader instead (VAULT_LEADER_PARAM).
 export const VAULT_PIN_PARAM = "vault";
 
-// The pre-number pin key, a leader pubkey or prefix. Read for one release so
-// an old shared link still resolves to the vault it named (see
-// resolveLegacyLeaderPin); never newly set, only carried forward while
-// unresolved.
-export const LEGACY_LEADER_PARAM = "leader";
+// The query key the Vaults tab's pin carries a leader pubkey (or a prefix of
+// one) under. The row's pin writes the vault's full leader address: a
+// sequence number is a data-structure detail, not a key worth sharing.
+export const VAULT_LEADER_PARAM = "leader";
 
 // The pin a Vaults URL carries. A `vault` that isn't a decimal integer names
 // no vault, so it is dropped rather than shown in the pin's chip.
@@ -34,7 +33,7 @@ export const vaultPinFromParams = (
     base: params.get("base") ?? "",
     quote: params.get("quote") ?? "",
     vault: /^\d+$/.test(vault) ? vault : "",
-    leader: params.get(LEGACY_LEADER_PARAM) ?? "",
+    leader: params.get(VAULT_LEADER_PARAM) ?? "",
   };
 };
 
@@ -44,7 +43,7 @@ export const vaultPinParams = (pin: VaultPin): Record<string, string> => ({
   base: pin.base,
   quote: pin.quote,
   [VAULT_PIN_PARAM]: pin.vault,
-  [LEGACY_LEADER_PARAM]: pin.leader,
+  [VAULT_LEADER_PARAM]: pin.leader,
 });
 
 // Canonical URL for the Vaults tab filtered to a pair (and optionally a single
