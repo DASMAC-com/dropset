@@ -842,11 +842,12 @@ _ds_fleet_knobs() {
 # enters the worktree inside the CLI, where no `chpwd` fires, so a launch that
 # skipped it handed its session the BASE checkout's lane and per-checkout keys
 # — one artifact slot shared by every such session, the leak in which one
-# sibling's in-flight rename failed builds in four others. The directory must
-# exist before this runs, which `_ds_worktree_ensure` sees to; a worded tag,
-# whose worktree only the CLI would have created, is refused at launch for
-# exactly that reason. The `always` hands the tab back its own values however
-# the launch ends.
+# sibling's in-flight rename failed builds in four others. The pool is keyed
+# only for an existing directory: `_ds_worktree_ensure` creates it on every
+# create path, and a resume whose worktree is gone keeps the base keys. A
+# worded tag, whose worktree only the CLI would have created, is refused at
+# launch for exactly that reason. The `always` hands the tab back its own
+# values however the launch ends.
 _ds_claude_pooled() {
   local wt_dir="$_DS_REPO/.claude/worktrees/$1"
   shift
@@ -1162,7 +1163,8 @@ _DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"
 # `exp-882` all print `882` — so every issue-keyed session, tab and worktree
 # directory is named by the number alone (operator ruling: the prefix is dead
 # screen estate, and the number is what the operator looks up). Anything else
-# passes through lowercased, for the launch verbs to refuse as a word. Git
+# passes through lowercased: the launch verbs refuse it, and `cdds` and
+# `task resume` use it to reach an existing worktree. Git
 # BRANCHES are the one place the `eng-` prefix survives, for every verb that
 # takes a worktree (`_ds_worktree_ensure`), because Linear's GitHub integration
 # links on that form.
