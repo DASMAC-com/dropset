@@ -38,7 +38,8 @@ cycle — one session a day, `launch-<day>`.
 **The curator first.** Run `ListAgents`. No `curate-<day>` listed
 means its tab did not open (a pre-launch fallback, or a `launch`
 typed by hand): dispatch it before anything else, so the bootstrap
-is not waiting on the fold:
+is not waiting on the fold — on Bedrock unless the operator named
+`anthropic` in this tab (then append it):
 
 ```sh
 python3 .claude/tools/session_dispatch.py curate
@@ -46,7 +47,10 @@ python3 .claude/tools/session_dispatch.py curate
 
 A `held` line is the machine gate's refusal: say it loudly and name
 `curate` for the operator to type; never pass `--over-budget` on
-your own.
+your own. A `curate-<day>` already listed may have sent its
+`state of play written` before this session existed: message it
+`launcher up`, once, and it re-sends the line if its write has
+landed.
 
 **Then the scheduler verb**, with its own bare call:
 
@@ -54,8 +58,8 @@ your own.
 printenv DS_LAUNCH_SCHEDULER
 ```
 
-The `launch` helper sets it from the day's pre-launch marker —
-`plan` or `plan anthropic` — and step 2 dispatches exactly it.
+The `launch` helper sets it — the caller's value, else the day's
+pre-launch marker, else `plan` — and step 2 dispatches exactly it.
 
 ## 1. The lever fold
 
@@ -166,7 +170,8 @@ python3 .claude/tools/session_dispatch.py plan
 (with `anthropic` appended when the variable carries it). If a
 `schedule-<day>` is already listed (the operator typed `plan`),
 dispatch nothing and say so. A `held` line is the gate's refusal:
-say it loudly and name the verb for the operator to type. A further
+say it loudly and name the verb for the operator to type. Once the
+scheduler is dispatched and the hand-off sent, a further
 `state of play written`, `curator up` or a pasted line is only
 acknowledged — never a second dispatch or hand-off.
 

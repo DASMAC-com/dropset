@@ -2464,19 +2464,19 @@ _ds_plan_fresh_day() {
 # day's bootstrap and writes the state of play while the launcher folds the
 # levers. The SCHEDULER opens last — the launcher dispatches it on the
 # curator's `state of play written` — so the day's marker carries the
-# scheduler verb (`plan` or `plan anthropic`), which the `launch` helper
-# exports as `DS_LAUNCH_SCHEDULER`. What opened is read back from the
+# scheduler verb (`plan` plus any substrate word typed), which the `launch`
+# helper exports as `DS_LAUNCH_SCHEDULER`. What opened is read back from the
 # dispatch's own per-tab lines, failure listing included, and so is what the
 # machine gate HELD: a hold is the gate's refusal, so it is said out loud and
-# never overridden by a fallback here. The last line names the tab the morning
-# waits on. FALLBACKS, for a tab that neither opened nor was held: a launcher
-# that did not open runs in this tab instead; a curator that did not open is
-# dispatched by the launcher as its first act, which finds no `curate-<day>`
-# live.
+# never overridden by a fallback here. Once a launcher is up, the last line
+# names the tab the morning waits on; a held launcher is itself the wait.
+# FALLBACKS, for a tab that neither opened nor was held: a launcher that did
+# not open runs in this tab instead; a curator that did not open is dispatched
+# by the launcher as its first act, which finds no `curate-<day>` live.
 _ds_plan_prelaunch() {
   setopt localoptions extendedglob
   local day="$1" word="$2" out rc line curate_tab='' launch_tab=''
-  local curator="curate-$(date +%-d)"
+  local curator="curate-${${day[7,8]}#0}"
   print -u2 'plan: pre-launch'
   _ds_substrate_unset
   _ds_aws_login 'plan' || return 1
@@ -2499,7 +2499,12 @@ _ds_plan_prelaunch() {
     'curator — type `curate` once a slot frees.'
   [[ "$launch_tab" == held ]] && print -u2 'plan: the machine gate held the' \
     "launcher — type \`launch\` once a slot frees; the scheduler waits on it."
-  if [[ -n "$launch_tab" ]]; then
+  if [[ "$launch_tab" == held ]]; then
+    [[ -z "$curate_tab" ]] && print -u2 "plan: the curator's tab did not" \
+      "open (dispatch exit $rc) — type \`curate\` in a new tab."
+    return 0
+  fi
+  if [[ "$launch_tab" == opened ]]; then
     [[ -z "$curate_tab" ]] && print -u2 "plan: the curator's tab did not" \
       "open (dispatch exit $rc) — the launcher dispatches it first."
     print -u2 "plan: waiting on $curator's state of play — the launcher" \
@@ -2657,8 +2662,8 @@ fi
 # left of it (`session_dispatch.py`). NO AWS GATE and NO UPKEEP PASS — both
 # ran in the pre-launch before this tab opened. `DS_LAUNCH_SCHEDULER` names
 # the scheduler verb the session dispatches on the curator's `state of play
-# written`: the caller's value when set, else the one the day's pre-launch
-# marker records, else `plan`.
+# written`: the caller's value when non-empty, else the one the day's
+# pre-launch marker records, else `plan`.
 launch() {
   if [[ -n "$2" || ( -n "$1" && "$1" != (anthropic|bedrock) ) ]]; then
     print -u2 'Usage: launch [anthropic|bedrock]   (the name is derived from the date)'
