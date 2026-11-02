@@ -14,8 +14,9 @@ started none. This tool writes that file's shape; the commit paths then run::
     git commit -S --cleanup=verbatim -F <file>
 
 The rewrite strips trailing whitespace and the blank lines around the
-message, collapses blank-line runs in the body to one (``--cleanup=verbatim``
-keeps what default cleanup would have removed), drops any ``skip-checks``
+message, collapses blank-line runs in the body to one (the part of default
+cleanup that ``--cleanup=verbatim`` skips; ``#`` lines are kept, so a message
+file carries none), drops any ``skip-checks``
 line already present, and appends two empty lines and ``skip-checks: true``
 as the last line, after any other trailer. It is idempotent, so a retried
 commit can re-run it on the same file.

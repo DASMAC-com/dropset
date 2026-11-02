@@ -380,7 +380,7 @@ def authored_text(cmd, cwd=None):
 
 
 def findings(text, patterns=PATTERNS):
-    """The names of every attribution shape present in ``text``."""
+    """The names of every shape in ``patterns`` (default: attribution) in ``text``."""
     hits = []
     for pattern, name in patterns:
         for line in text.split("\n"):

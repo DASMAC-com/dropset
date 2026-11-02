@@ -106,16 +106,18 @@ the merge gate, so that is where the ask lands.
   suite and **before** the CI trigger: one pass that replays the branch
   onto its own merge base signing each commit, then force-pushes with a
   pinned lease and cancels the runs still going on the old SHAs
-  (`ci_runs.py cancel-stale`). Every replayed commit keeps its skip
-  trailer, so the re-signed head starts no run; `ci_runs.py trigger`
-  then makes the one signed trigger commit, and CI verifies the commits
-  that merge. Still locked, the re-sign moves nothing, the trigger is
-  held, and the handoff question becomes the single "unlock and I sign,
-  trigger CI, wait for it and enqueue" — one operator turn, not one per
-  commit. When the signer answers earlier, `review-pr` signs at its
-  step-12 push instead, and the gate's re-sign has nothing to do. The
-  tool rides the `python3 .claude/tools/` grant, so the pass runs
-  unattended without a `git rebase` allow-rule.
+  (`ci_runs.py cancel-stale`). Every replayed commit keeps its message,
+  so a re-signed trailer head starts no run (an earlier trigger commit
+  at the head runs again, and cancel-stale drops what it supersedes);
+  `ci_runs.py trigger` then makes the one signed trigger commit, and CI
+  verifies the commits that merge. Still locked, the re-sign moves
+  nothing, the trigger is held, and the handoff question becomes the
+  single "unlock and I sign, trigger CI, wait for it and enqueue" —
+  one operator turn, not one per commit. When the signer answers
+  earlier, `review-pr` signs at its step-12 push instead, and the
+  gate's re-sign has nothing to do. The tool rides the
+  `python3 .claude/tools/` grant, so the pass runs unattended without
+  a `git rebase` allow-rule.
 - **The loss rule's compensating controls ride with it.**
   Unsigned-and-*unpushed* is the state that lost work before, so the
   deferral is only safe because the unsigned commit is still **pushed**:

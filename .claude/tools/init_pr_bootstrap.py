@@ -348,8 +348,8 @@ class Bootstrap:
         if self.subject in out.splitlines():
             return "skipped", "bootstrap commit already on the branch"
         # The skip trailer keeps this push from starting a remote run; only
-        # a message file under `--cleanup=verbatim` keeps the two empty
-        # lines GitHub needs before it (`commit_message.py`).
+        # `--cleanup=verbatim` keeps the two empty lines GitHub needs before
+        # it, and a message file writes them reliably (`commit_message.py`).
         self.log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         message = self.log_dir / f"bootstrap-message-{self.tag}.txt"
         message.write_text(with_skip_trailer(self.subject), encoding="utf-8")

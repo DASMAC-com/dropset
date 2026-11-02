@@ -127,8 +127,8 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    `semantic-pr` and stays.
 
 1. **Scan the body for AI attribution before submitting
-   it.** Write the description to a scratchpad file and
-   run the guard over it:
+   it.** Write the title and description to a scratchpad
+   file and run the guard over it:
 
    ```sh
    python3 .claude/hooks/no_ai_attribution.py --scan <scratchpad>/body.md
@@ -142,7 +142,7 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
 
    **The same scan rejects GitHub's five bracketed skip
    strings and the `skip-checks: true` trailer form.** The
-   squash message is the PR body, so a skip string
+   squash message is the PR title and body, so a skip string
    written literally there, even inside backticks,
    would skip main's `push` runs. Describe skipping in
    prose; never quote the strings themselves.

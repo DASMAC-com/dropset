@@ -1374,7 +1374,7 @@ migrations or generation inputs, and whether it spans crates.
    `Co-Authored-By:` trailer and no "Generated with Claude Code"
    footer, in the title, the description, or any comment this skill
    posts. Ask the guard, so the patterns have one owner — write the
-   stored body to a scratchpad file and scan it:
+   stored title and body to a scratchpad file and scan it:
 
    ```sh
    python3 .claude/hooks/no_ai_attribution.py --scan <scratchpad>/body.md
@@ -1455,12 +1455,12 @@ migrations or generation inputs, and whether it spans crates.
    The re-sign replays the branch onto its merge base signing each
    commit (tree unchanged) and force-pushes with a pinned lease;
    `nothing to sign` is the common case, and exit 2 (a dirty tree, a
-   merge commit, a remote commit this branch never held) is reported
-   and held. The trigger makes the one commit without the skip
-   trailer, pushes it and cancels stale runs; with the tree clean and
-   the re-sign pushed, none of its refusals is reachable. **On
-   `LOCKED` from either, hold the trigger**: skip step 18, print the
-   summary, and step 20's ask carries the tail.
+   merge commit, a remote commit this branch never held) is a blocker:
+   report it and stop before step 18. The trigger makes the one commit
+   without the skip trailer, pushes it and cancels stale runs; with the
+   tree clean and the re-sign pushed, none of its refusals is
+   reachable. **On `LOCKED` from either, hold the trigger**: skip step
+   18, print the summary, and step 20's ask carries the tail.
 
    Ready lets the human enable "Merge when ready" while CI finishes,
    but it does **not** end the run: success is reported only once real

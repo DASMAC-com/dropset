@@ -179,9 +179,9 @@ def _commit_family(family: Family, sign: bool) -> tuple[str | None, str | None]:
         == 0
     ):
         return None, None
-    # The skip trailer keeps this push from starting a remote run; only a
-    # message file under `--cleanup=verbatim` keeps the two empty lines
-    # GitHub needs before it (`commit_message.py`).
+    # The skip trailer keeps this push from starting a remote run; only
+    # `--cleanup=verbatim` keeps the two empty lines GitHub needs before it,
+    # and a message file writes them reliably (`commit_message.py`).
     with tempfile.TemporaryDirectory() as tmp:
         message = Path(tmp) / "message.txt"
         message.write_text(with_skip_trailer(family.message), encoding="utf-8")
