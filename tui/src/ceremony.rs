@@ -30,6 +30,7 @@ pub struct CeremonyLog {
     path: PathBuf,
     file: Mutex<File>,
     cluster: Cluster,
+    rehearsal: bool,
     commit: String,
 }
 
@@ -40,6 +41,22 @@ impl CeremonyLog {
     /// signatures that belong to the operator, and a file in the working tree
     /// is one `git add -A` from being committed.
     pub fn open(path: &Path, repo_root: &Path, cluster: Cluster) -> Result<Self> {
+        Self::open_marked(path, repo_root, cluster, false)
+    }
+
+    /// [`CeremonyLog::open`] for a `--rehearsal-loopback` session: a mainnet
+    /// log whose every line carries `rehearsal=1`, so a rehearsal record can
+    /// never pass for a real one, whichever file it lands in.
+    pub fn open_rehearsal(path: &Path, repo_root: &Path) -> Result<Self> {
+        Self::open_marked(path, repo_root, Cluster::Mainnet, true)
+    }
+
+    fn open_marked(
+        path: &Path,
+        repo_root: &Path,
+        cluster: Cluster,
+        rehearsal: bool,
+    ) -> Result<Self> {
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -84,6 +101,7 @@ impl CeremonyLog {
             path: path.to_path_buf(),
             file: Mutex::new(file),
             cluster,
+            rehearsal,
             commit,
         };
         log.append("session", &[])?;
@@ -98,7 +116,14 @@ impl CeremonyLog {
     /// Append one `step` line carrying `fields`, flushed to disk before
     /// returning.
     pub fn append(&self, step: &str, fields: &[(&str, &str)]) -> Result<()> {
-        let line = format_line(unix_now(), self.cluster, &self.commit, step, fields);
+        let line = format_line(
+            unix_now(),
+            self.cluster,
+            self.rehearsal,
+            &self.commit,
+            step,
+            fields,
+        );
         let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
         file.write_all(line.as_bytes())
             .and_then(|()| file.sync_data())
@@ -183,17 +208,20 @@ fn unix_now() -> u64 {
 }
 
 /// One log line. Tabs and newlines in a value are flattened to spaces so a
-/// value can never forge a field or a line.
+/// value can never forge a field or a line. A `rehearsal` line carries
+/// `rehearsal=1` straight after its cluster.
 fn format_line(
     ts: u64,
     cluster: Cluster,
+    rehearsal: bool,
     commit: &str,
     step: &str,
     fields: &[(&str, &str)],
 ) -> String {
     let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
+    let mark = if rehearsal { "\trehearsal=1" } else { "" };
     let mut line = format!(
-        "ts={ts}\tcluster={}\tcommit={}\tstep={}",
+        "ts={ts}\tcluster={}{mark}\tcommit={}\tstep={}",
         cluster.label(),
         clean(commit),
         clean(step)
@@ -221,6 +249,7 @@ mod tests {
         let line = format_line(
             7,
             Cluster::Mainnet,
+            false,
             "abc",
             "init",
             &[("signature", "sig\tstep=forged\nts=0")],
@@ -228,6 +257,16 @@ mod tests {
         assert_eq!(line.matches('\n').count(), 1);
         assert_eq!(line.matches('\t').count(), 4);
         assert!(line.starts_with("ts=7\tcluster="), "{line}");
+        assert!(!line.contains("rehearsal"), "{line}");
+    }
+
+    #[test]
+    fn a_rehearsal_line_is_marked_as_one() {
+        let line = format_line(7, Cluster::Mainnet, true, "abc", "init", &[]);
+        assert!(
+            line.starts_with("ts=7\tcluster=mainnet-beta\trehearsal=1\tcommit=abc"),
+            "{line}"
+        );
     }
 
     #[cfg(unix)]
