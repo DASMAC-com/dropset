@@ -378,16 +378,12 @@ whole process group, SIGTERM and then SIGKILL, so no orphaned `rustc`
 holds the cargo pool lock. That lock is a file lock, released when its
 process dies.
 
-Two modes ride on the same race. A HEAD carrying the
-`skip-checks: true` trailer started no remote run, so CI is not polled
-and the verdict reads `ci=not-consulted(skipped-by-trailer)`: the race
-settles locally instead of waiting out the timeout. GitHub honors the
-trailer only after **two** empty lines and as the last trailer, and git
-collapses blank lines unless the commit uses `--cleanup=verbatim`; with
-one blank line the push ran every workflow (measured on PR 771, 11-02).
-The race reads the trailer with git's own parser, which accepts the
-one-blank-line form too, so such a commit settles locally while CI
-still runs: local-only, never a false green. `--full` is the merge
+Two modes ride on the same race. On a trailer-headed HEAD the verdict
+reads `ci=not-consulted(skipped-by-trailer)` and the race settles
+locally instead of waiting out the timeout. It reads the trailer with
+git's own parser, which also accepts the one-blank-line form GitHub
+ignores (section 8), so such a commit settles locally while CI still
+runs: local-only, never a false green. `--full` is the merge
 gate's run. Its stages are the distinct local targets of the CI-mirror
 manifest, `cfg/ci-mirror.json`, which maps each required context to
 the `make` targets its job runs and the local targets that mirror it,
@@ -399,7 +395,8 @@ context that target mirrors is green, and the verdict carries
 gates it. A new CI job gets a local mirror by gaining a manifest row,
 never by an edit to the tool.
 
-The remote run itself is `.claude/tools/ci_runs.py`. `trigger --pr N`
+The trigger tool and the stale-run cancel of section 8 are
+`.claude/tools/ci_runs.py`. `trigger --pr N`
 makes the one empty commit without the trailer
 (`ci: Run the remote checks`) and signs it. With the signer locked it
 refuses with the `LOCKED` line and makes no commit, as it does when the
