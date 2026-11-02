@@ -562,8 +562,7 @@ ref key would let consecutive `push: main` runs (one shared ref) evict
 a queued main run. `.claude/tools/tests/test_ci_concurrency.py` renders
 every block for a `pull_request`, a `merge_group` and a `push` event
 and holds this. `explorer-image.yml` is the deliberate exception: its
-ref-keyed group lets a newer idempotent image publish replace a pending
-one.
+ref-keyed group lets a newer image publish supersede a pending one.
 
 **`Token icon upstream audit` is deliberately absent** from the list
 above. It fetches issuer URLs to check the committed token icons for

@@ -4,9 +4,10 @@
 Each ``pull_request`` workflow carries a ``concurrency:`` block
 that cancels a superseded PR-head run. The load-bearing assertion is the other
 half: a ``merge_group`` or ``push`` run must never be cancelled, neither by
-``cancel-in-progress`` nor by sharing a group (a shared group evicts its
-pending run even with cancellation off), since two queue entries cancelling
-each other would dequeue both. This is a static read of the committed YAML
+``cancel-in-progress`` (two queue entries cancelling each other would dequeue
+both) nor by sharing a group (a shared group evicts its pending run even with
+cancellation off, so a ref key would let consecutive ``push: main`` runs evict
+a queued one). This is a static read of the committed YAML
 with a small evaluator for the expression subset the blocks use; no Actions
 runtime is involved. Run via the repo's ``make tools-tests``.
 """
@@ -19,16 +20,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = ROOT / ".github" / "workflows"
-PR_WORKFLOWS = (
-    "test",
-    "lint",
-    "sdk",
-    "frontend",
-    "semantic-pr",
-    "token-icon-audit",
-)
 # The five required-check workflows, which also run as merge-queue checks.
-GATE_WORKFLOWS = PR_WORKFLOWS[:5]
+GATE_WORKFLOWS = ("test", "lint", "sdk", "frontend", "semantic-pr")
+PR_WORKFLOWS = (*GATE_WORKFLOWS, "token-icon-audit")
 
 TOKEN = re.compile(
     r"\s*(?:(?P<str>'(?:[^']|'')*')|(?P<num>\d+)"

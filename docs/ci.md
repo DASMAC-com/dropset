@@ -425,8 +425,8 @@ remote run, nothing more.
   cancel, never replaces it. `test_ci_concurrency.py` renders each
   block for the three events and holds the key and the flag. The one
   exception is `explorer-image.yml`, whose ref-keyed group is
-  deliberate: its main run publishes an idempotent image tag, so a
-  newer publish replacing a pending one loses nothing.
+  deliberate: its main run publishes the image tag and `latest`, so a
+  newer publish supersedes a pending one.
 
 Why the skip sits at the trigger and never in a job: a job skipped by an
 `if:` reports success and satisfies a required check, so a job-level

@@ -3,7 +3,7 @@
 - **Run `init-pr` first.** At the start of a worktree session,
   if the `init-pr` skill hasn't been run yet, suggest running it
   before other work — it opens the draft PR that every later tool
-  keys on. It no longer warms CI: remote CI runs once per PR, after
+  keys on. It does not warm CI: remote CI runs once per PR, after
   the full local suite (`docs/ci.md` → "8. Local-first remote
   runs").
 - **Commit as you go.** While working a PR, run `commit-changes`
