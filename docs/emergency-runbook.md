@@ -138,3 +138,15 @@ Do the same for close; **never type `yes` in a rehearsal** — close is
 permanent. With every vault still live, drain opens no prompt: its red log
 line refusing an active vault is the expected answer. Rehearse before every
 live demo.
+
+To rehearse the signed path end to end, point `DROPSET_MAINNET_RPC_URL` at a
+local validator and launch with the rehearsal flag and a log of its own:
+
+```sh
+make tui-mainnet \
+  TUI_MAINNET_ARGS='--rehearsal-loopback --ceremony-log <path>'
+```
+
+The TUI then accepts only an `http(s)://127.0.0.1` or `localhost` endpoint
+whose genesis is not mainnet-beta, so typing `yes` signs nothing real, and
+every line it logs carries `rehearsal=1`.
