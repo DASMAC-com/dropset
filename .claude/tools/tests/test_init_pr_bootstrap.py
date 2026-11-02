@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from pathlib import Path
 
 import init_pr_bootstrap as boot
 
@@ -113,7 +114,11 @@ class HappyPathTests(unittest.TestCase):
         commit = next(c for c in runner.calls if c[:2] == ["git", "commit"])
         create = next(c for c in runner.calls if c[:3] == ["gh", "pr", "create"])
         self.assertIn("-S", commit)
-        self.assertEqual(commit[-1], subject)
+        self.assertIn("--cleanup=verbatim", commit)
+        message = Path(commit[commit.index("-F") + 1]).read_text(encoding="utf-8")
+        # The subject, two empty lines, then the skip trailer last: the shape
+        # GitHub skips on (one blank line ran every workflow on PR 771).
+        self.assertEqual(message, subject + "\n\n\nskip-checks: true\n")
         self.assertEqual(create[create.index("--title") + 1], subject)
         self.assertIn("--draft", create)
 

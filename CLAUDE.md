@@ -23,6 +23,10 @@ sync; the upkeep pass checks only that citations resolve).
   over a body they submit through the GitHub MCP.
 - Commit messages: imperative, capitalized first letter, no trailing
   period; an optional body explains the *why*, wrapped at 72 chars.
+  Every session commit but the gate's one trigger commit ends with the
+  **`skip-checks: true` trailer after two empty lines**
+  (`commit_message.py`, then `--cleanup=verbatim -F`), so remote CI
+  runs once, at `review-pr`'s trigger.
 - Run `init-pr` first in a fresh worktree (it opens the draft PR), and
   `commit-changes` at each checkpoint rather than one big final commit.
 

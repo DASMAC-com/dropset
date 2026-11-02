@@ -105,6 +105,23 @@ PATTERNS = (
     ),
 )
 
+#: GitHub's skip strings. A PR body is the squash message, so one written
+#: literally there (backticks included) would skip main's `push` runs. Matched
+#: by `--scan` only, never against a commit command: every session commit
+#: carries the trailer by design (`commit_message.py`).
+SKIP_PATTERNS = (
+    (
+        re.compile(
+            r"\[(?:skip ci|ci skip|no ci|skip actions|actions skip)\]", re.IGNORECASE
+        ),
+        "a GitHub skip string (`[skip ci]` or one of its four variants)",
+    ),
+    (
+        re.compile(r"^\s*skip-checks\s*:\s*true", re.IGNORECASE),
+        "a `skip-checks: true` trailer",
+    ),
+)
+
 # Shell control operators that begin a new command word. Mirrors
 # `no_git_grep.py`: a `git` token right after one is a command, not an argument.
 CONTROL = {"|", "||", "&&", ";", "&", "|&"}
@@ -362,10 +379,10 @@ def authored_text(cmd, cwd=None):
     return found
 
 
-def findings(text):
-    """The names of every attribution shape present in ``text``."""
+def findings(text, patterns=PATTERNS):
+    """The names of every shape in ``patterns`` (default: attribution) in ``text``."""
     hits = []
-    for pattern, name in PATTERNS:
+    for pattern, name in patterns:
         for line in text.split("\n"):
             if pattern.search(line):
                 hits.append(name)
@@ -446,10 +463,19 @@ def _scan(path):
             sys.stderr.write(f"cannot read {path}: {exc}\n")
             return 2
     hits = findings(text)
+    skips = findings(text, SKIP_PATTERNS)
     if hits:
         sys.stderr.write(_deny_message(hits) + "\n")
+    if skips:
+        listed = "\n".join(f"  - {s}" for s in skips)
+        sys.stderr.write(
+            "Blocked: a PR body is the squash message, so a skip string in it "
+            f"would skip main's push runs.\n\nFound:\n{listed}\n\nDescribe it "
+            "in prose instead.\n"
+        )
+    if hits or skips:
         return 1
-    sys.stdout.write("no AI attribution found\n")
+    sys.stdout.write("no AI attribution or skip string found\n")
     return 0
 
 
@@ -572,6 +598,15 @@ def _self_test():
         failures.append("  --scan missed the footer")
     if findings("fix(ENG-1299): An ordinary subject line"):
         failures.append("  --scan flagged an ordinary message")
+    if not findings("Body\n\n[ci skip]", SKIP_PATTERNS):
+        failures.append("  --scan missed a skip string")
+    if evaluate(
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": 'git commit -m "S\n\n\nskip-checks: true"'},
+        }
+    )[0]:
+        failures.append("  the hook blocked a commit carrying the skip trailer")
 
     if failures:
         sys.stderr.write("self-test FAILED:\n" + "\n".join(failures) + "\n")

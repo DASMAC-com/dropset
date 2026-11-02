@@ -67,8 +67,11 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 import review_diff
+from commit_message import with_skip_trailer
 import run_quiet
 
 #: One committed generated artifact: the target that rebuilds it, the paths it
@@ -176,13 +179,20 @@ def _commit_family(family: Family, sign: bool) -> tuple[str | None, str | None]:
         == 0
     ):
         return None, None
-    commit = ["commit", "-q", "-m", family.message, "--", *family.paths]
-    if sign:
-        commit.insert(1, "-S")
-    result = _git(commit, check=False)
-    if result.returncode != 0:
-        _git(["add", "-A", "--", *family.paths])
+    # The skip trailer keeps this push from starting a remote run; only
+    # `--cleanup=verbatim` keeps the two empty lines GitHub needs before it,
+    # and a message file writes them reliably (`commit_message.py`).
+    with tempfile.TemporaryDirectory() as tmp:
+        message = Path(tmp) / "message.txt"
+        message.write_text(with_skip_trailer(family.message), encoding="utf-8")
+        commit = ["commit", "-q", "--cleanup=verbatim", "-F", str(message)]
+        commit += ["--", *family.paths]
+        if sign:
+            commit.insert(1, "-S")
         result = _git(commit, check=False)
+        if result.returncode != 0:
+            _git(["add", "-A", "--", *family.paths])
+            result = _git(commit, check=False)
     if result.returncode != 0:
         tail = (result.stderr or result.stdout).strip().splitlines()[-5:]
         return None, "commit failed: " + " / ".join(tail)
