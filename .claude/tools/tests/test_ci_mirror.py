@@ -1,37 +1,20 @@
 """Stdlib ``unittest`` tests for ``ci_mirror.py`` and the committed manifest.
 
 The parser's refusals, the stage order ``verify_head.py --full`` reads, and
-three pins on ``cfg/ci-mirror.json`` itself: one row per required context,
-every named target a real Makefile target, and every workflow a real file.
-Run via ``make tools-tests``.
+that ``lint`` leads the committed manifest. Its agreement with the workflows,
+the ruleset mirror and the Makefile is ``ci_mirror_check.py``'s, tested in
+``test_ci_mirror_check.py``. Run via ``make tools-tests``.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import unittest
 from pathlib import Path
 
 import ci_mirror
 
 ROOT = Path(__file__).resolve().parents[3]
-
-#: The ruleset's required contexts (``docs/conventions/github-mcp.md``
-#: mirrors the list; the ruleset is the gate).
-REQUIRED = {
-    "Lint",
-    "Lint (clippy)",
-    "Lint (rustdoc)",
-    "Tests",
-    "Tests (no teardown)",
-    "Tests (asm parity)",
-    "Tests (Postgres)",
-    "Detect changes",
-    "SDK",
-    "Frontend",
-    "Semantic PR",
-}
 
 
 def row(context, local=(), ci=(), workflow="w.yml"):
@@ -92,21 +75,11 @@ class CommittedManifestTest(unittest.TestCase):
     def setUpClass(cls):
         cls.rows = ci_mirror.load()
 
-    def test_one_row_per_required_context(self):
-        self.assertEqual({r.context for r in self.rows}, REQUIRED)
-
     def test_lint_runs_first(self):
         self.assertEqual(ci_mirror.local_targets(self.rows)[0], "lint")
 
-    def test_every_target_is_a_makefile_target(self):
-        makefile = (ROOT / "Makefile").read_text()
-        defined = set(re.findall(r"^([A-Za-z0-9_.-]+):", makefile, re.MULTILINE))
-        named = {t for r in self.rows for t in (*r.ci, *r.local)}
-        self.assertEqual(named - defined, set())
-
-    def test_every_workflow_exists(self):
-        for r in self.rows:
-            self.assertTrue((ROOT / ".github" / "workflows" / r.workflow).is_file(), r)
+    # One row per required context, every target a Makefile target and every
+    # workflow a queue workflow are `ci_mirror_check.py`'s, pinned by its tests.
 
 
 if __name__ == "__main__":

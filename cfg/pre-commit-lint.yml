@@ -212,6 +212,25 @@ repos:
     name: 'Docker-gated crates are selected by the Postgres job'
     pass_filenames: false
   repo: 'local'
+# The CI-mirror manifest is the record of what the local full suite runs per
+# required context, so it must track the queue workflows' `make` targets, the
+# ruleset mirror in docs/conventions/github-mcp.md and the Makefile. Scoped to
+# those inputs; the Lint workflow's --all-files run always selects it.
+- hooks:
+  - entry: 'python3 .claude/tools/ci_mirror_check.py'
+    files: >-
+      (?x)^(
+      \.github/workflows/.*\.ya?ml
+      | cfg/ci-mirror\.json
+      | Makefile
+      | docs/conventions/github-mcp\.md
+      | \.claude/tools/ci_mirror(_check)?\.py
+      )$
+    id: 'ci-mirror-check'
+    language: 'system'
+    name: 'The CI-mirror manifest matches the workflows and the Makefile'
+    pass_filenames: false
+  repo: 'local'
 # Resident-size gate: skill entry files, skill descriptions and CLAUDE.md are
 # loaded into every session that reaches them, so each carries a hard byte cap,
 # with today's over-cap files frozen at their size in

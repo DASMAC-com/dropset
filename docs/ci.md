@@ -273,13 +273,24 @@ takes minutes of `gh api` reads, so pass `--cache FILE` and re-run from it.
 
 ## 5. Local lint versus CI
 
-There are two local forms of one hook set (`cfg/pre-commit-lint.yml`), and
-CI runs only the first:
+What the local full suite runs is not listed here. It is the CI-mirror
+manifest, `cfg/ci-mirror.json`: one row per required context, naming the
+`make` targets its CI job runs (`ci`) and the targets that mirror it on a
+workstation (`local`). `verify_head.py --full` runs the rows' local targets
+in manifest order, so a CI job gains a local mirror by gaining a row, never
+by an edit to this page or to the tool. The `ci-mirror-check` lint hook
+(`.claude/tools/ci_mirror_check.py`) keeps the manifest honest. It fails
+when a queue workflow (one with a `merge_group` trigger) runs a target no
+row lists, when a row lists a target its workflow no longer runs, when a
+required context in the ruleset mirror (`docs/conventions/github-mcp.md`)
+has no row, or when a row names a target the Makefile lacks.
 
-- **`make lint`** is the full sweep: every tracked and untracked file, with
-  `clippy` and `rustdoc` over the whole workspace. Its commands are the
-  ones `lint.yml` runs under `pre-commit run --all-files`, which covers the
-  merge queue. Together the two are the source of truth.
+Lint has two local forms of one hook set (`cfg/pre-commit-lint.yml`):
+
+- **The full sweep** is the manifest's local target for the lint contexts:
+  every tracked and untracked file, with `clippy` and `rustdoc` over the
+  whole workspace, the commands `lint.yml` runs under
+  `pre-commit run --all-files`. Together with CI it is the source of truth.
 - **`make lint-abridged`** is the iteration form: only this branch's files
   (the merge-base diff with `origin/main`, plus untracked), with `clippy`
   and `rustdoc` scoped to the crates those files belong to. A session
@@ -311,9 +322,9 @@ trade the `--changed` mode was built to make.
 
 Tests have the same two forms, and CI again runs only the first:
 
-- **`make test`** is the full suite: `make program`, then a workspace
-  `cargo test`, the command `test.yml` runs. It is the source of truth
-  together with CI.
+- **The full suite** is the manifest's local targets for the test contexts
+  (section 5), each mirroring the job its row names. It is the source of
+  truth together with CI.
 - **`make test-abridged`** is the iteration form: `cargo test` over the
   **affected set** of this branch's files (the same `--changed` resolution
   as `make lint-abridged`, with deleted files kept).
