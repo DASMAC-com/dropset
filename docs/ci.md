@@ -388,8 +388,10 @@ the local suite is the session's own gate on whether to start the
 remote run, nothing more.
 
 - **The skip trailer on every commit.** Each commit a session makes
-  carries the git trailer `skip-checks: true`, GitHub's documented
-  alternative to `[skip ci]`. GitHub reads the skip from a PR's head
+  ends its message with two empty lines and then `skip-checks: true`,
+  GitHub's documented alternative to `[skip ci]`. The two empty lines
+  are load-bearing: a standard git trailer, one blank line before it,
+  was measured live not to skip. GitHub reads the skip from a PR's head
   commit, so a push whose tip carries it starts no `pull_request`
   workflow, and the head's required checks stay **pending**, which the
   ruleset reads as blocked, never as passed. Skip strings apply only to
