@@ -1458,7 +1458,7 @@ migrations or generation inputs, and whether it spans crates.
    merge commit, a remote commit this branch never held) is a blocker:
    report it and stop before step 18. The trigger makes the one commit
    without the skip trailer, pushes it and cancels stale runs; with the
-   tree clean and the re-sign pushed, none of its refusals is
+   tree clean and the re-sign pushed, none of its other refusals is
    reachable. **On `LOCKED` from either, hold the trigger**: skip step
    18, print the summary, and step 20's ask carries the tail.
 

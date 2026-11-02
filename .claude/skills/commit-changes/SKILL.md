@@ -181,7 +181,7 @@ changes here belong to this session.
      remote run (`docs/ci.md` → "8. Local-first
      remote runs"); only `review-pr`'s gate
      triggers CI. GitHub reads it only after
-     **two** empty lines, which `-m` cannot keep
+     **two** empty lines, which a second `-m` cannot keep
      (one blank line ran all five workflows on
      PR 771). So write the message to a
      scratchpad file and let the tool shape it:
