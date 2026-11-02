@@ -307,7 +307,8 @@ the document's state sections.
    cancellation ("no change to GitHub Actions concurrency") and
    strikes that line from the standing cuts; the Planning
    document's Cuts line is the scheduler's to amend. Mechanism:
-   `docs/ci.md` → "8. Local-first remote runs" (2026-10-31).
+   `docs/ci.md` → "8. Local-first remote runs" (operator's
+   direction, 2026-10-31).
 
 ## Rulings index (beyond the numbered set)
 

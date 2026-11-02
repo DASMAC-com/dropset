@@ -278,12 +278,16 @@ class ConcurrencyBackstopTests(unittest.TestCase):
         self.assertEqual(len(groups), len(PR_WORKFLOWS))
 
     def test_every_pull_request_workflow_carries_a_block(self):
-        missing = [
-            path.name
-            for path in sorted(WORKFLOWS.glob("*.yml"))
-            if "pull_request" in triggers(path.read_text())
-            and concurrency_block(path.read_text()) is None
-        ]
+        paths = sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")])
+        self.assertTrue(paths)
+        missing = []
+        for path in paths:
+            source = path.read_text()
+            events = triggers(source)
+            # An unparsed trigger block would silently exempt the file.
+            self.assertTrue(events, f"{path.name}: no 'on': block parsed")
+            if "pull_request" in events and concurrency_block(source) is None:
+                missing.append(path.name)
         self.assertEqual(missing, [])
 
 

@@ -554,12 +554,16 @@ purpose.
 **A concurrency key never spans a merge-group or main run.** A
 `concurrency:` group that cancels on `pull_request` keys on the workflow
 name plus the PR number, and sets `cancel-in-progress` true only for a
-`pull_request` event. Every other event gets a group of its own (the run
+`pull_request` event, since two queue entries cancelling each other
+would dequeue both. Every other event gets a group of its own (the run
 id), not the ref: a group holds one running and one pending run, and a
-third arrival evicts the pending one even with cancellation off. Two
-queue entries cancelling each other would dequeue both.
-`.claude/tools/tests/test_ci_concurrency.py` renders every block for a
-`pull_request`, a `merge_group` and a `push` event and holds this.
+third arrival evicts the pending one even with cancellation off, so a
+ref key would let consecutive `push: main` runs (one shared ref) evict
+a queued main run. `.claude/tools/tests/test_ci_concurrency.py` renders
+every block for a `pull_request`, a `merge_group` and a `push` event
+and holds this. `explorer-image.yml` is the deliberate exception: its
+ref-keyed group lets a newer idempotent image publish replace a pending
+one.
 
 **`Token icon upstream audit` is deliberately absent** from the list
 above. It fetches issuer URLs to check the committed token icons for

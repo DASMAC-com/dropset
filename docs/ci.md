@@ -393,10 +393,10 @@ remote run, nothing more.
   commit, so a push whose tip carries it starts no `pull_request`
   workflow, and the head's required checks stay **pending**, which the
   ruleset reads as blocked, never as passed. Skip strings apply only to
-  `push` and `pull_request` events, so merge-group runs and the
-  `push: main` runs are untouched, and the squash merge composes its
-  message from the PR title and body, so the trailer never reaches
-  main.
+  `push` and `pull_request` events, so merge-group runs are untouched;
+  the squash merge composes its message from the PR title and body, so
+  the trailer never reaches main and the `push: main` runs are
+  untouched too.
 - **One trailer-free trigger commit.** Once `make lint` and `make test`
   are green on the head and the session judges the PR ready, the
   trigger tool makes one empty commit without the trailer, signed when
@@ -416,12 +416,17 @@ remote run, nothing more.
   a `pull_request` event the group is the workflow name plus the PR
   number, and a newer run cancels the older. Every other event takes a
   group of its own, keyed on the run id rather than the ref, with
-  `cancel-in-progress` off: a shared group evicts its **pending** run
-  even with cancellation off, and two merge-queue entries cancelling
-  each other would dequeue both. The group fires only
+  `cancel-in-progress` off. A merge-queue run must never be cancelled,
+  since two entries cancelling each other would dequeue both; and a
+  shared group evicts its **pending** run even with cancellation off,
+  so a ref key would let consecutive `push: main` runs, which all share
+  `refs/heads/main`, evict a queued main run. The group fires only
   when a new run starts, so on its own it is too late; it backs up the
   cancel, never replaces it. `test_ci_concurrency.py` renders each
-  block for the three events and holds the key and the flag.
+  block for the three events and holds the key and the flag. The one
+  exception is `explorer-image.yml`, whose ref-keyed group is
+  deliberate: its main run publishes an idempotent image tag, so a
+  newer publish replacing a pending one loses nothing.
 
 Why the skip sits at the trigger and never in a job: a job skipped by an
 `if:` reports success and satisfies a required check, so a job-level
