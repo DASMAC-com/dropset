@@ -239,6 +239,17 @@ impl QuitGuard {
         }
     }
 
+    /// Discount `busy` — time the loop spent drawing or polling the chain
+    /// rather than reading keys — from a held quit's repeat gap. A repeat
+    /// buffered behind a slow refresh is read late, and would otherwise
+    /// look like a fresh press after a pause; the gap counts listening time
+    /// only.
+    fn pause(&mut self, busy: Duration) {
+        if let Some(h) = &mut self.held {
+            h.last += busy;
+        }
+    }
+
     /// Re-arm the warning: an event other than quit came between.
     fn stand_down(&mut self) {
         self.held = None;
@@ -583,8 +594,12 @@ impl App {
         let terminal = Terminal::new(backend)?;
         let mut guard = TerminalGuard::new(terminal);
 
+        let mut busy_since = Instant::now();
         loop {
             guard.term.draw(|f| ui::draw(f, self))?;
+            // The draw and the last tick's work — a synchronous chain poll
+            // among it — read no keys, so a held quit's repeat gap skips them.
+            self.quit.pause(busy_since.elapsed());
 
             if event::poll(Duration::from_millis(100))? {
                 // Block for the first event, then drain the burst crossterm
@@ -611,6 +626,7 @@ impl App {
                 }
             }
 
+            busy_since = Instant::now();
             self.drain_jobs();
             self.maybe_refresh();
             self.maybe_auto_bootstrap();
@@ -2695,6 +2711,40 @@ mod tests {
         assert!(ms(660) > QUIT_REPEAT_GAP && ms(660) < QUIT_HOLD_OFF);
         assert_eq!(q_at(&mut guard, t0 + ms(660)), "ignored");
         assert_eq!(q_at(&mut guard, t0 + QUIT_HOLD_OFF + ms(400)), "exit");
+    }
+
+    /// Balance reads slower than the hold-off: without the settle after the
+    /// drain, the first repeat read once they return would be past both
+    /// windows, counted from the press, and quit.
+    #[test]
+    fn the_windows_count_from_the_settle_not_the_press() {
+        let ms = Duration::from_millis;
+        let t0 = Instant::now();
+        let mut guard = QuitGuard::default();
+        assert_eq!(q_at(&mut guard, t0), "held");
+        guard.settle(t0 + ms(1500));
+        assert_eq!(q_at(&mut guard, t0 + ms(1540)), "ignored");
+    }
+
+    /// A chain poll stalling the loop mid-hold: the repeats buffered behind
+    /// it are read late, the first one long after the last, but the stall
+    /// is not listening time, so it still reads as repeat.
+    #[test]
+    fn a_stalled_loop_does_not_stretch_the_repeat_gap() {
+        let ms = Duration::from_millis;
+        let t0 = Instant::now();
+        let mut guard = QuitGuard::default();
+        assert_eq!(q_at(&mut guard, t0), "held");
+        guard.settle(t0);
+        for i in 1..=40 {
+            assert_eq!(q_at(&mut guard, t0 + ms(40 * i)), "ignored", "repeat {i}");
+        }
+        // Past the hold-off; the loop then spends 400 ms in a refresh.
+        guard.pause(ms(400));
+        assert_eq!(q_at(&mut guard, t0 + ms(1600 + 400)), "ignored");
+        assert_eq!(q_at(&mut guard, t0 + ms(2040)), "ignored");
+        // A real pause, in listening time, still confirms.
+        assert_eq!(q_at(&mut guard, t0 + ms(2040) + QUIT_REPEAT_GAP), "exit");
     }
 
     /// The shape the parser actually receives at runtime: `bot::stream` prepends
