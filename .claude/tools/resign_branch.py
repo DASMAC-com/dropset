@@ -210,12 +210,23 @@ def resign(base: str, push: bool) -> tuple[int, str]:
 
 
 def _branch_pr(runner: ci_runs.Runner, branch: str) -> int | None:
+    """The branch's open PR; a closed one for a reused name is no PR."""
     code, out, _ = runner(
-        ["gh", "pr", "view", branch, "--repo", ci_runs.DEFAULT_REPO, "--json", "number"]
+        [
+            "gh",
+            "pr",
+            "view",
+            branch,
+            "--repo",
+            ci_runs.DEFAULT_REPO,
+            "--json",
+            "number,state",
+        ]
     )
     try:
-        return int(json.loads(out)["number"]) if code == 0 else None
-    except (ValueError, KeyError, TypeError):
+        data = json.loads(out) if code == 0 else {}
+        return int(data["number"]) if data.get("state") == "OPEN" else None
+    except (ValueError, KeyError, TypeError, AttributeError):
         return None
 
 

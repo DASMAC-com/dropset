@@ -1,9 +1,10 @@
 """Stdlib ``unittest`` tests for ``ci_runs.py``.
 
 The load-bearing properties: ``trigger`` makes one empty signed commit
-without the skip trailer and pushes it under a lease pinned to the remote tip
-read first; a locked signer refuses before any commit; ``cancel-stale``
-reads the head after the runs and never cancels a run on that head. Every
+without the skip trailer and pushes it as a plain fast-forward, refusing
+before any commit on a locked signer, a remote ahead of this checkout or a
+staged index; ``cancel-stale`` reads the head after the runs and never
+cancels a run on that head or on the SHA just pushed. Every
 ``git`` / ``gh`` call goes through a scripted fake runner. Run via
 ``make tools-tests``.
 """
@@ -287,7 +288,8 @@ class HeadLagTest(unittest.TestCase):
                 ("actions/runs", [runs_reply(run(1, OLD), run(2, NEW))]),
             ]
         )
-        ci_runs.cancel_stale(fake, REPO, 7, expect=NEW, sleep=sleeps.append)
+        line = ci_runs.cancel_stale(fake, REPO, 7, expect=NEW, sleep=sleeps.append)
+        self.assertIn(f"and pushed {NEW[:12]}", line)
         self.assertEqual(len(sleeps), ci_runs.HEAD_WAIT_TRIES)
         # A lagging read never cancels the run on the commit just pushed.
         self.assertEqual(fake.cancelled(), [])

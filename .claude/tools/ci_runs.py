@@ -167,6 +167,8 @@ def cancel_stale(
         f"cancelled {len(doomed) - len(failed)} of {len(runs)} active "
         f"run(s), head {head[:12]} kept"
     )
+    if expect and expect != head:
+        line += f" (and pushed {expect[:12]}; the PR head had not caught up)"
     if failed:
         raise Refused(f"{line}; cancel failed for run(s) {', '.join(failed)}")
     return line

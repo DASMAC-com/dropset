@@ -48,10 +48,11 @@ the whole fall-through inside one Bash call::
    its next run.
 
 **``--full`` is the merge gate's run.** The stages become the CI-mirror
-manifest's distinct local targets in order (``cfg/ci-mirror.json``, read by
-``ci_mirror.py``; ``make lint`` first, then ``make test`` and the rest), each
-its own process group as above, the E0463 recovery kept for the ``test``
-stage. CI settles a stage only when every context that target mirrors is
+manifest's distinct local targets (``cfg/ci-mirror.json``, read by
+``ci_mirror.py``) in manifest order: ``lint`` first, then ``tools-tests``,
+``decks-build``, ``test`` and the rest, each its own process group as
+above, the E0463 recovery kept for the ``test`` stage. CI settles a stage
+only when every context that target mirrors is
 green, and the verdict line carries ``mode=full`` after the SHA. A context
 with no local mirror (``Frontend``, ``Detect changes``, ``Semantic PR``) is
 never read here: a GREEN covers the local mirrors only, and the CI wait

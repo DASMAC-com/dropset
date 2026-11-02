@@ -73,7 +73,7 @@ class CancelSuperseded(unittest.TestCase):
     def test_cancels_on_the_branch_pr(self):
         run, calls = self.runner(
             [
-                ("pr view eng-1", (0, '{"number": 7}', "")),
+                ("pr view eng-1", (0, '{"number": 7, "state": "OPEN"}', "")),
                 ("pulls/7", (0, '{"head": {"ref": "eng-1", "sha": "%s"}}' % NEW, "")),
                 ("runs/1/cancel", (0, "", "")),
                 (
@@ -95,9 +95,19 @@ class CancelSuperseded(unittest.TestCase):
         run, _ = self.runner([("pr view", (1, "", "no pull requests found"))])
         self.assertIn("skipped", rb.cancel_superseded("eng-1", runner=run))
 
+    def test_a_closed_pr_for_a_reused_branch_name_skips(self):
+        run, calls = self.runner(
+            [("pr view", (0, '{"number": 7, "state": "MERGED"}', ""))]
+        )
+        self.assertIn("skipped", rb.cancel_superseded("eng-1", runner=run))
+        self.assertEqual(len(calls), 1)
+
     def test_a_failed_read_is_reported_not_raised(self):
         run, _ = self.runner(
-            [("pr view", (0, '{"number": 7}', "")), ("pulls/7", (1, "", "HTTP 502"))]
+            [
+                ("pr view", (0, '{"number": 7, "state": "OPEN"}', "")),
+                ("pulls/7", (1, "", "HTTP 502")),
+            ]
         )
         self.assertIn("cancel-stale failed", rb.cancel_superseded("eng-1", runner=run))
 
