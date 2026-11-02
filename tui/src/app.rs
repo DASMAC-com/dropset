@@ -180,37 +180,97 @@ enum Flow {
     Held,
 }
 
+/// How long after a held quit settles a quit press still counts as the held
+/// key's auto-repeat. Without keyboard-enhancement flags a held `q` repeats
+/// as plain presses, the first one after the terminal's initial repeat delay:
+/// a few hundred ms by default, X11's 660 ms the longest common default. One
+/// second clears that with margin, and a deliberate second press, made after
+/// reading the warning, comes later anyway.
+const QUIT_HOLD_OFF: Duration = Duration::from_secs(1);
+
+/// The longest pause between two quit presses that still reads as repeat.
+/// Default repeat rates send one every 30–50 ms, and 150 ms is three times
+/// the slowest. A repeat press restarts it, so a key held for any length
+/// never confirms; the confirmation is the first press after a pause this
+/// long. A repeat rate set slower than this can still slip through.
+const QUIT_REPEAT_GAP: Duration = Duration::from_millis(150);
+
 /// The two-press quit: a quit with a warning to give is held once, and the
-/// next quit — with no other event between — exits anyway.
+/// next quit — with no other event between, and not the held key's
+/// auto-repeat (see [`QUIT_HOLD_OFF`] and [`QUIT_REPEAT_GAP`]) — exits anyway.
 #[derive(Default)]
 struct QuitGuard {
-    warned: bool,
+    held: Option<HeldQuit>,
+}
+
+/// The instants a held quit reads a repeat by.
+struct HeldQuit {
+    /// When the hold settled: its warning read and the burst behind it
+    /// dropped.
+    since: Instant,
+    /// The latest quit press the hold has seen, or `since` when none.
+    last: Instant,
 }
 
 impl QuitGuard {
     /// The warning this quit is held back with, or `None` to exit. `warning`
     /// runs only on a first quit, never on the second press.
-    fn quit(&mut self, warning: impl FnOnce() -> Option<String>) -> Option<String> {
-        if std::mem::take(&mut self.warned) {
+    fn quit(&mut self, now: Instant, warning: impl FnOnce() -> Option<String>) -> Option<String> {
+        if self.held.take().is_some() {
             return None;
         }
         let held = warning();
-        self.warned = held.is_some();
+        if held.is_some() {
+            self.held = Some(HeldQuit {
+                since: now,
+                last: now,
+            });
+        }
         held
+    }
+
+    /// Restart a held quit's clocks at `now`, once its warning's balance
+    /// reads have finished and the burst buffered behind them is dropped:
+    /// the gaps count from the end of what the loop discarded.
+    fn settle(&mut self, now: Instant) {
+        if let Some(h) = &mut self.held {
+            h.since = now;
+            h.last = now;
+        }
+    }
+
+    /// Discount `busy` — time the loop spent drawing or polling the chain
+    /// rather than reading keys — from a held quit's repeat gap. A repeat
+    /// buffered behind a slow refresh is read late, and would otherwise
+    /// look like a fresh press after a pause; the gap counts listening time
+    /// only.
+    fn pause(&mut self, busy: Duration) {
+        if let Some(h) = &mut self.held {
+            h.last += busy;
+        }
     }
 
     /// Re-arm the warning: an event other than quit came between.
     fn stand_down(&mut self) {
-        self.warned = false;
+        self.held = None;
     }
 
-    /// Classify `ev` (see [`classify_quit`]) and stand a held quit down on
-    /// anything but a quit or an ignored event. `in_prompt` is whether a
-    /// prompt owns the keys.
-    fn on_event(&mut self, ev: &Event, in_prompt: bool) -> QuitEvent {
-        let class = classify_quit(ev, in_prompt, self.warned);
+    /// Classify `ev` (see [`classify_quit`]) at `now` and stand a held quit
+    /// down on anything but a quit or an ignored event. A quit press inside
+    /// the hold-off or the repeat gap is the held key repeating: ignored, and
+    /// the gap restarts from it. `in_prompt` is whether a prompt owns the
+    /// keys.
+    fn on_event(&mut self, ev: &Event, in_prompt: bool, now: Instant) -> QuitEvent {
+        let class = classify_quit(ev, in_prompt, self.held.is_some());
         if class == QuitEvent::Other {
             self.stand_down();
+        } else if let (QuitEvent::Quit, Some(h)) = (&class, &mut self.held) {
+            let repeat = now.saturating_duration_since(h.since) < QUIT_HOLD_OFF
+                || now.saturating_duration_since(h.last) < QUIT_REPEAT_GAP;
+            h.last = now;
+            if repeat {
+                return QuitEvent::Ignore;
+            }
         }
         class
     }
@@ -221,9 +281,10 @@ impl QuitGuard {
 enum QuitEvent {
     /// Neither quits nor re-arms. A key release or repeat — only reported
     /// once keyboard-enhancement flags are on, where a release would
-    /// otherwise count as the second press — or a mouse event other than a
-    /// button press: with mouse capture on, a pointer nudge between the two
-    /// presses would otherwise re-arm the hold.
+    /// otherwise count as the second press — a mouse event other than a
+    /// button press (with mouse capture on, a pointer nudge between the two
+    /// presses would otherwise re-arm the hold), or a held quit's own
+    /// auto-repeat, which arrives as a plain press without those flags.
     Ignore,
     /// A quit press on the dashboard.
     Quit,
@@ -533,16 +594,20 @@ impl App {
         let terminal = Terminal::new(backend)?;
         let mut guard = TerminalGuard::new(terminal);
 
+        let mut busy_since = Instant::now();
         loop {
             guard.term.draw(|f| ui::draw(f, self))?;
+            // The draw and the last tick's work — a synchronous chain poll
+            // among it — read no keys, so a held quit's repeat gap skips them.
+            self.quit.pause(busy_since.elapsed());
 
             if event::poll(Duration::from_millis(100))? {
                 // Block for the first event, then drain the burst crossterm
                 // buffered (held j/k) so it collapses into one render.
-                let mut flow = self.handle_event(event::read()?);
+                let mut flow = self.handle_event(event::read()?, Instant::now());
                 let mut drained = 0;
                 while flow == Flow::Continue && drained < 256 && event::poll(Duration::ZERO)? {
-                    flow = self.handle_event(event::read()?);
+                    flow = self.handle_event(event::read()?, Instant::now());
                     drained += 1;
                 }
                 if flow == Flow::Quit {
@@ -550,14 +615,18 @@ impl App {
                 }
                 // Drop the rest of a burst a warning held the quit in — a
                 // second `q` typed during the balance reads must not exit
-                // before the warning is drawn.
+                // before the warning is drawn — and start the hold's repeat
+                // gaps from here, so a held `q` still repeating past the
+                // drain is discarded too.
                 if flow == Flow::Held {
                     while event::poll(Duration::ZERO)? {
                         event::read()?;
                     }
+                    self.quit.settle(Instant::now());
                 }
             }
 
+            busy_since = Instant::now();
             self.drain_jobs();
             self.maybe_refresh();
             self.maybe_auto_bootstrap();
@@ -634,13 +703,14 @@ impl App {
         });
     }
 
-    fn handle_event(&mut self, ev: Event) -> Flow {
+    /// Handle `ev`, read at `now` (the quit guard's repeat clock).
+    fn handle_event(&mut self, ev: Event, now: Instant) -> Flow {
         // Every other event stands a held quit down — prompt keys and
         // non-key events included — so only two quits in a row exit.
         let in_prompt = self.in_prompt();
-        match self.quit.on_event(&ev, in_prompt) {
+        match self.quit.on_event(&ev, in_prompt, now) {
             QuitEvent::Ignore => return Flow::Continue,
-            QuitEvent::Quit => return self.request_quit(),
+            QuitEvent::Quit => return self.request_quit(now),
             QuitEvent::Other => {}
         }
         match ev {
@@ -871,9 +941,9 @@ impl App {
     /// second quit in a row exits anyway. Exiting drops the writer's key, the
     /// only one that can move what it holds. A writer mid-retry counts too.
     /// The balance reads block, at most the client's 2 s timeout each.
-    fn request_quit(&mut self) -> Flow {
+    fn request_quit(&mut self, now: Instant) -> Flow {
         let (stranded, client) = (&self.ctx.stranded, &self.client);
-        let held = self.quit.quit(|| {
+        let held = self.quit.quit(now, || {
             let writers: Vec<_> = stranded
                 .addresses()
                 .into_iter()
@@ -2454,7 +2524,8 @@ fn classify_basis_line(line: &str) -> Option<(String, BasisNote)> {
 mod tests {
     use super::{
         classify_basis_line, classify_quit, hit_target, is_confirmation, parse_positive_amount,
-        swap_side_label, Action, BasisNote, QuitEvent, QuitGuard, SwapSide,
+        swap_side_label, Action, BasisNote, QuitEvent, QuitGuard, SwapSide, QUIT_HOLD_OFF,
+        QUIT_REPEAT_GAP,
     };
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
@@ -2462,26 +2533,28 @@ mod tests {
     };
     use ratatui::layout::Rect;
     use solana_pubkey::Pubkey;
+    use std::time::{Duration, Instant};
 
     /// A warned quit is held once, the next quit exits without reading the
     /// warning again, and any key between re-arms it.
     #[test]
     fn a_warned_quit_exits_only_on_the_next_press() {
+        let t0 = Instant::now();
         let mut guard = QuitGuard::default();
         let warn = || Some("kept writer".to_string());
         // Nothing to warn about: the first press exits.
-        assert_eq!(guard.quit(|| None), None);
+        assert_eq!(guard.quit(t0, || None), None);
         // Held, then the second press exits without calling the warning.
-        assert_eq!(guard.quit(warn).as_deref(), Some("kept writer"));
+        assert_eq!(guard.quit(t0, warn).as_deref(), Some("kept writer"));
         assert_eq!(
-            guard.quit(|| unreachable!("read on the second press")),
+            guard.quit(t0, || unreachable!("read on the second press")),
             None
         );
         // Another key between the presses re-arms the hold.
-        assert!(guard.quit(warn).is_some());
+        assert!(guard.quit(t0, warn).is_some());
         guard.stand_down();
-        assert!(guard.quit(warn).is_some());
-        assert_eq!(guard.quit(warn), None);
+        assert!(guard.quit(t0, warn).is_some());
+        assert_eq!(guard.quit(t0, warn), None);
     }
 
     fn press(code: KeyCode) -> Event {
@@ -2545,6 +2618,7 @@ mod tests {
     /// `q` warns again, while a pointer nudge does not.
     #[test]
     fn the_guard_re_arms_on_every_event_but_a_quit_or_an_ignored_one() {
+        let t0 = Instant::now();
         let warn = || Some("kept writer".to_string());
         let between = [
             (press(KeyCode::Char('5')), true),
@@ -2553,9 +2627,9 @@ mod tests {
         ];
         for (ev, in_prompt) in between {
             let mut guard = QuitGuard::default();
-            assert!(guard.quit(warn).is_some());
-            assert_eq!(guard.on_event(&ev, in_prompt), QuitEvent::Other);
-            assert!(guard.quit(warn).is_some(), "{ev:?} did not re-arm");
+            assert!(guard.quit(t0, warn).is_some());
+            assert_eq!(guard.on_event(&ev, in_prompt, t0), QuitEvent::Other);
+            assert!(guard.quit(t0, warn).is_some(), "{ev:?} did not re-arm");
         }
         for kind in [
             MouseEventKind::Moved,
@@ -2563,9 +2637,9 @@ mod tests {
             MouseEventKind::Up(MouseButton::Left),
         ] {
             let mut guard = QuitGuard::default();
-            assert!(guard.quit(warn).is_some());
-            assert_eq!(guard.on_event(&mouse(kind), false), QuitEvent::Ignore);
-            assert_eq!(guard.quit(warn), None, "{kind:?} re-armed the hold");
+            assert!(guard.quit(t0, warn).is_some());
+            assert_eq!(guard.on_event(&mouse(kind), false, t0), QuitEvent::Ignore);
+            assert_eq!(guard.quit(t0, warn), None, "{kind:?} re-armed the hold");
         }
     }
 
@@ -2581,6 +2655,96 @@ mod tests {
                 QuitEvent::Ignore
             );
         }
+    }
+
+    /// One `q` press through the guard at `at`, as `App::handle_event` routes
+    /// it: whether it exits, holds with the warning, or is ignored.
+    fn q_at(guard: &mut QuitGuard, at: Instant) -> &'static str {
+        match guard.on_event(&press(KeyCode::Char('q')), false, at) {
+            QuitEvent::Quit => match guard.quit(at, || Some("kept writer".to_string())) {
+                Some(_) => "held",
+                None => "exit",
+            },
+            QuitEvent::Ignore => "ignored",
+            QuitEvent::Other => unreachable!("q on the dashboard is a quit"),
+        }
+    }
+
+    /// A long press on `q` with a kept writer — repeats arriving as plain
+    /// presses, 40 ms apart, through and past the drain — holds the warning
+    /// however long the key stays down; the first press after a pause past
+    /// the repeat gap and the hold-off quits.
+    #[test]
+    fn a_held_q_repeating_past_the_drain_does_not_quit() {
+        let ms = Duration::from_millis;
+        let t0 = Instant::now();
+        let mut guard = QuitGuard::default();
+        assert_eq!(q_at(&mut guard, t0), "held");
+        // The balance reads take 300 ms; the repeats buffered behind them
+        // are dropped by the loop's drain, which then settles the hold.
+        guard.settle(t0 + ms(300));
+        // The key stays down for three more seconds, repeating every 40 ms:
+        // inside the hold-off at first, then each inside the last one's gap.
+        let mut last = t0 + ms(300);
+        for i in 1..=75 {
+            last = t0 + ms(300 + 40 * i);
+            assert_eq!(q_at(&mut guard, last), "ignored", "repeat {i}");
+            assert!(guard.held.is_some(), "repeat {i} stood the hold down");
+        }
+        // Released, then pressed deliberately after a pause: the quit.
+        assert_eq!(q_at(&mut guard, last + QUIT_REPEAT_GAP + ms(100)), "exit");
+    }
+
+    /// With fast balance reads the first repeat follows the press only after
+    /// the terminal's initial delay; the hold-off catches it. A slow tapper
+    /// inside the hold-off is not trapped: their next press, past both
+    /// windows, quits.
+    #[test]
+    fn the_hold_off_catches_the_first_repeat_after_the_initial_delay() {
+        let ms = Duration::from_millis;
+        let t0 = Instant::now();
+        let mut guard = QuitGuard::default();
+        assert_eq!(q_at(&mut guard, t0), "held");
+        guard.settle(t0);
+        // X11's default 660 ms initial delay: past the repeat gap, inside the
+        // hold-off.
+        assert!(ms(660) > QUIT_REPEAT_GAP && ms(660) < QUIT_HOLD_OFF);
+        assert_eq!(q_at(&mut guard, t0 + ms(660)), "ignored");
+        assert_eq!(q_at(&mut guard, t0 + QUIT_HOLD_OFF + ms(400)), "exit");
+    }
+
+    /// Balance reads slower than the hold-off: without the settle after the
+    /// drain, the first repeat read once they return would be past both
+    /// windows, counted from the press, and quit.
+    #[test]
+    fn the_windows_count_from_the_settle_not_the_press() {
+        let ms = Duration::from_millis;
+        let t0 = Instant::now();
+        let mut guard = QuitGuard::default();
+        assert_eq!(q_at(&mut guard, t0), "held");
+        guard.settle(t0 + ms(1500));
+        assert_eq!(q_at(&mut guard, t0 + ms(1540)), "ignored");
+    }
+
+    /// A chain poll stalling the loop mid-hold: the repeats buffered behind
+    /// it are read late, the first one long after the last, but the stall
+    /// is not listening time, so it still reads as repeat.
+    #[test]
+    fn a_stalled_loop_does_not_stretch_the_repeat_gap() {
+        let ms = Duration::from_millis;
+        let t0 = Instant::now();
+        let mut guard = QuitGuard::default();
+        assert_eq!(q_at(&mut guard, t0), "held");
+        guard.settle(t0);
+        for i in 1..=40 {
+            assert_eq!(q_at(&mut guard, t0 + ms(40 * i)), "ignored", "repeat {i}");
+        }
+        // Past the hold-off; the loop then spends 400 ms in a refresh.
+        guard.pause(ms(400));
+        assert_eq!(q_at(&mut guard, t0 + ms(1600 + 400)), "ignored");
+        assert_eq!(q_at(&mut guard, t0 + ms(2040)), "ignored");
+        // A real pause, in listening time, still confirms.
+        assert_eq!(q_at(&mut guard, t0 + ms(2040) + QUIT_REPEAT_GAP), "exit");
     }
 
     /// The shape the parser actually receives at runtime: `bot::stream` prepends
