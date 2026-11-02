@@ -125,10 +125,12 @@ Prints JSON::
                         "kind": "test_runner", "next_command": "…"}],
       "snapshot": {"path": "…", "bytes": 4096, "uncommitted": [], …},
       "hint": {"gate": "green", "do": "…", "evidence": "…"},
-      "log_path": "/…/wait-for-checks-285.log",
-      "head_sha": "0123456789ab",   // local HEAD, verify_head.py's width
-      "content_sha": "fedcba987654" // past an empty trigger commit
+      "log_path": "/…/wait-for-checks-285.log"
     }
+
+A settled ``pass`` / ``fail`` also appends one record, keyed by HEAD's tree,
+to ``ci_verdicts.py``'s log, where the digest pairs it with the local race
+verdict on the same tree.
 
 ``hint.gate`` is ``green`` / ``blocking`` / ``unverified`` / ``retry``; act on
 it. ``failed_steps`` is filled only on ``fail``: one record per failing step,
@@ -284,6 +286,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
+import ci_verdicts
 import pr_notifications
 import review_diff
 
@@ -2068,33 +2071,6 @@ def _git(args: list[str], cwd: str | None = None) -> tuple[int, bytes, str]:
     )
 
 
-def head_sha() -> str | None:
-    """The checked-out HEAD's first 12 hex digits, the width ``verify_head.py``
-    prints, so the wait ledger can pair a local verdict with this one; ``None``
-    when git cannot answer."""
-    code, out, _ = _git(["rev-parse", "HEAD"])
-    sha = out.decode(errors="replace").strip() if code == 0 else ""
-    return sha[:12] if re.fullmatch(r"[0-9a-f]{40,64}", sha) else None
-
-
-def content_sha() -> str | None:
-    """The oldest commit in HEAD's first-parent run sharing HEAD's tree,
-    first 12 hex digits: the head the local race verified when HEAD is the
-    gate's empty trigger commit (``ci_runs.py trigger``), which the race
-    never sees. ``None`` when git cannot answer."""
-    code, out, _ = _git(["log", "--first-parent", "-n", "16", "--format=%H %T"])
-    rows = [line.split() for line in out.decode(errors="replace").splitlines()]
-    rows = [r for r in rows if len(r) == 2] if code == 0 else []
-    if not rows:
-        return None
-    oldest = rows[0][0]
-    for sha, tree in rows[1:]:
-        if tree != rows[0][1]:
-            break
-        oldest = sha
-    return oldest[:12]
-
-
 def snapshot(path: Path, base: str) -> dict:
     """Write the working diff — committed, staged, unstaged AND untracked —
     against the merge base with ``origin/<base>``, so recovery from a worktree
@@ -2329,12 +2305,6 @@ def wait(
         ),
         "snapshot": snap,
         "log_path": str(log),
-        # The wait ledger pairs this with the session's `verify_head.py`
-        # verdict on the same head (a local green followed by a remote red):
-        # the local HEAD, run from the PR's worktree after its push, and the
-        # commit whose content it carries past an empty trigger commit.
-        "head_sha": head_sha(),
-        "content_sha": content_sha(),
     }
     verdict["hint"] = action_hint(verdict)
     return verdict
@@ -2939,6 +2909,11 @@ def run(argv: list[str]) -> int:
                 watch=not args.no_watch,
                 snapshot_path=args.snapshot,
                 base=args.base or "main",
+            )
+            # Keyed by the tree the race verified: the gate's re-sign and its
+            # empty trigger commit move the commit, never the tree.
+            ci_verdicts.append(
+                ci_verdicts.checks_record(verdict), ci_verdicts.head_tree()
             )
     # The queue file first: it is the one the merged line names, so a bad
     # `--verdict-out` path cannot leave that name pointing at nothing.

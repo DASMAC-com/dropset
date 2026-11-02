@@ -495,13 +495,16 @@ across the window (`--wait-sample`), because a run's own start stamp is
 its creation and reads zero. The baseline, a fortnight that ends as the
 trailer lands, is a dated comment on the parent design issue.
 
-The second is whether a local green predicts a remote one. The wait
-ledger pairs each race verdict that settled locally with the session's
-next checks verdict on the same head: the verdict's `head_sha`, or its
-`content_sha`, the commit the gate's empty trigger commit carries. The
-digest's Wait section writes the day's count of a local green the remote
-run failed, with the failing jobs, as `ci:local-green-remote-red`, and
-the reverse as `ci:local-red-remote-green`, each every day and beside
-the day's pairs, so pairing that stopped matching reads as zero of
-zero rather than as a clean record. More than one gated PR in ten
-paying that loop over a week re-opens what the local suite runs.
+The second is whether a local green predicts a remote one. A race that
+settled a check locally and a checks wait that settled pass or fail
+each append one record to the base checkout's `ci-verdicts.jsonl`
+(`.claude/tools/ci_verdicts.py`), keyed by the **tree** verified, since
+the gate's re-sign and its empty trigger commit move the commit between
+the two verdicts and never the tree. The digest pairs each checks record
+with the latest local race on its tree and writes, in its Wait section,
+the day's count of a local green the remote run failed, with the
+failing jobs, as `ci:local-green-remote-red`, and the reverse as
+`ci:local-red-remote-green`, each every day and beside the day's pairs,
+so pairing that stopped matching reads as zero of zero rather than as a
+clean record. More than one gated PR in ten paying that loop over a
+week re-opens what the local suite runs.

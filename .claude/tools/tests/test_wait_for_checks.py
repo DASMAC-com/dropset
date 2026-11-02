@@ -22,6 +22,18 @@ from unittest import mock
 
 import wait_for_checks as wfc
 
+# A checks-mode run appends a verdict record to the base checkout's log;
+# no test may write there.
+_NO_RECORDS = mock.patch.object(wfc.ci_verdicts, "append")
+
+
+def setUpModule():
+    _NO_RECORDS.start()
+
+
+def tearDownModule():
+    _NO_RECORDS.stop()
+
 
 def check(name, bucket, workflow="Tests", link="", description=""):
     return {
@@ -3108,25 +3120,6 @@ class SnapshotTests(unittest.TestCase):
         v = wfc.wait(285, repo="o/r", snapshot_path=out, base="main")
         self.assertIsNone(v["snapshot"]["error"])
         self.assertTrue(out.read_bytes())
-        # The head the wait ledger pairs with verify_head.py's `sha=`.
-        self.assertEqual(
-            v["head_sha"], self._git("rev-parse", "HEAD").decode().strip()[:12]
-        )
-
-    def test_content_sha_looks_past_an_empty_trigger_commit(self):
-        self._git("add", "-A")
-        self._git("commit", "-q", "-m", "work")
-        raced = self._git("rev-parse", "HEAD").decode().strip()[:12]
-        self.assertEqual(wfc.content_sha(), raced)
-        self._git("commit", "-q", "--allow-empty", "-m", "Trigger CI")
-        self.assertNotEqual(wfc.head_sha(), raced)
-        self.assertEqual(wfc.content_sha(), raced)
-
-    def test_head_sha_is_none_when_git_cannot_answer(self):
-        real = wfc._git
-        wfc._git = lambda args, cwd=None: (128, b"", "fatal: not a repo")
-        self.addCleanup(setattr, wfc, "_git", real)
-        self.assertIsNone(wfc.head_sha())
 
     def test_the_cli_refuses_a_snapshot_outside_checks_mode(self):
         with self.assertRaises(wfc.WaitForChecksError):
