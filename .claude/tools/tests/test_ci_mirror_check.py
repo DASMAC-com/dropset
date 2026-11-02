@@ -150,6 +150,7 @@ class ParseTest(unittest.TestCase):
             ("make -C dir a", ["a"]),
             ("make -j 4 a", ["a"]),
             ("make a  # make b", ["a"]),
+            ('echo "step #1" && make a', ["a"]),
         ):
             with self.subTest(command=command):
                 self.assertEqual(cmc.make_targets(command), (targets, []))
@@ -171,11 +172,13 @@ class ParseTest(unittest.TestCase):
             "    name: 'A'  # its context\n"
             "    steps:\n"
             "    - run: 'make tools-tests'  # mirrors make lint\n"
+            "    - run: 'test ''a'' = a && make sdk'\n"
+            '    - run: "test \\"a\\" = a && make wasm"  # escaped\n'
             "'on':\n"
             "  merge_group: null\n"
         )
         self.assertEqual(wf.jobs["a"].name, "A")
-        self.assertEqual(wf.jobs["a"].targets, ["tools-tests"])
+        self.assertEqual(wf.jobs["a"].targets, ["tools-tests", "sdk", "wasm"])
 
     def test_makefile_targets(self):
         self.assertEqual(

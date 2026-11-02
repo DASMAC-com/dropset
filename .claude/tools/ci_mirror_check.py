@@ -46,7 +46,10 @@ RULESET_HEADING = "### Required status checks"
 
 _TOP_KEY_RE = re.compile(r"""^(['"]?)([A-Za-z_][\w-]*)\1:\s*(.*)$""")
 _JOB_RE = re.compile(r"^  ([A-Za-z_][\w-]*):\s*(?:#.*)?$")
-_COMMENT_RE = re.compile(r"\s+#.*$")
+#: A YAML quoted scalar at the start of a value: ``''`` escapes a single
+#: quote, a backslash escapes in a double-quoted one.
+_SINGLE_QUOTED_RE = re.compile(r"'((?:[^']|'')*)'")
+_DOUBLE_QUOTED_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
 #: ``make`` flags whose value is the next word (``make -C dir x``).
 #: ``-j`` / ``-l`` take one only when it is a number, handled inline.
 _ARG_FLAGS = frozenset({"-C", "-f", "-I", "-o", "-W", "--directory", "--file"})
@@ -79,10 +82,27 @@ def _unquote(value: str) -> str:
     """A YAML scalar's text: the inside of a leading quoted span (any trailing
     `` # comment`` dropped), else the plain value up to a `` #`` comment."""
     value = value.strip()
-    if value[:1] in ("'", '"'):
-        end = value.find(value[0], 1)
-        return value[1:end] if end > 0 else value[1:]
-    return _COMMENT_RE.sub("", value)
+    single = _SINGLE_QUOTED_RE.match(value)
+    if single:
+        return single.group(1).replace("''", "'")
+    double = _DOUBLE_QUOTED_RE.match(value)
+    if double:
+        return re.sub(r"\\(.)", r"\1", double.group(1))
+    return _strip_comment(value)
+
+
+def _strip_comment(line: str) -> str:
+    """``line`` up to a `` #`` comment that sits outside any shell quotes."""
+    quote = None
+    for i, ch in enumerate(line):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "#" and (i == 0 or line[i - 1].isspace()):
+            return line[:i].rstrip()
+    return line
 
 
 def make_targets(command: str) -> tuple[list[str], list[str]]:
@@ -101,7 +121,7 @@ def make_targets(command: str) -> tuple[list[str], list[str]]:
     for line in command.splitlines():
         if line.lstrip().startswith("#"):
             continue
-        line = _COMMENT_RE.sub("", line)
+        line = _strip_comment(line)
         for segment in _SHELL_SPLIT_RE.split(line):
             words = segment.split()
             for at, word in enumerate(words):
