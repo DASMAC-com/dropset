@@ -32,7 +32,7 @@ make tui-mainnet
 
 The TUI checks the endpoint's genesis hash, then asks for a typed
 confirmation before it draws the panel. The quote key loads at launch; the
-leader key loads only when close or drain first needs it.
+leader key loads only when close, drain or the open first needs it.
 
 ## The stop, in order
 
@@ -76,6 +76,36 @@ funds; it is signed by the admin wallet, never the quote key.
 
 Unlocking takes the same override with the lock cleared. A closed vault
 releases its name and its lock on its own.
+
+## Opening a vault to outside deposits
+
+A vault takes an outside deposit only once two flags are set: the
+leader's `allow_outside_depositors` and a registry admin's
+`outside_deposits_approved`. Both start unset. It is not a stop: the
+reverse of one, and it moves no funds itself. The leader key signs the
+first half; the admin wallet, which must be in the registry's admin set,
+signs the second and pays for both.
+
+1. Select the market (`[` / `]`). The `vault` row in the runtime pane
+   shows `O open`.
+1. Press `O`. The red **REAL FUNDS** prompt shows the plan, read fresh:
+   the vault and market, the leader half and the admin half, each `SEND`
+   with its signer or `already set — skipped`, and the fee payer. An
+   `OUTSTANDING` admin half means this wallet is not a registry admin, so
+   only the leader half can be sent.
+1. Type `yes` and press Enter. Approve each signature prompt: two for the
+   leader half (the admin pays, the leader signs), one for the admin half.
+   Each half is read back before the next is sent.
+1. The job ends `… is open to outside depositors`, and the `vault` row
+   reads `O open (done)`. The frontend's Deposit button then enables for
+   a wallet with no position, up to the leader-floor cap. With the admin
+   half outstanding it ends instead with
+   `leader half set; the admin half is outstanding`, naming the wallet.
+
+No prompt opens when nothing would be sent: the vault is already open,
+or its leader half is set and this wallet is not a registry admin. The
+log line says which. A run that stopped after the leader half finishes
+with the admin half alone.
 
 ## When something goes wrong
 

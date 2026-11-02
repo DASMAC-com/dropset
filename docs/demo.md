@@ -91,7 +91,8 @@ tGBP. The regime is named so you can say why, not to fail the run.
   leader allows it and an admin approves it. The bootstrap sets both on
   every vault it creates. `O` opens the selected market's leader vault by
   hand, for one that was created closed; the vault row reads `O open (done)`
-  once both are set.
+  once both are set. Mainnet mode offers the same key behind its typed-`yes`
+  prompt (`docs/emergency-runbook.md`).
 
 ## 4. Try it in the browser
 
