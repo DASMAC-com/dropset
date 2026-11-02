@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word valueonly
 """Race the abridged local checks against CI for one HEAD, in one call.
 
 A verification point used to be turns: run ``make lint-abridged``, read it,
@@ -8,6 +9,7 @@ the whole fall-through inside one Bash call::
 
     python3 .claude/tools/verify_head.py
     python3 .claude/tools/verify_head.py --pr 656 --timeout 2400
+    python3 .claude/tools/verify_head.py --full
 
 1. **Record HEAD's SHA** and start the local run: ``make lint-abridged``,
    then ``make test-abridged`` — sequential, since both want the cargo pool
@@ -44,6 +46,18 @@ the whole fall-through inside one Bash call::
    alone), so no orphan ``rustc`` keeps the pool lock. That lock is a file
    lock released on process death, and cargo discards a partial artifact on
    its next run.
+
+**``--full`` is the merge gate's run.** The stages become the CI-mirror
+manifest's distinct local targets in order (``cfg/ci-mirror.json``, read by
+``ci_mirror.py``; ``make lint`` first, then ``make test`` and the rest), each
+its own process group as above, the E0463 recovery kept for the ``test``
+stage. CI settles a stage only when every context that target mirrors is
+green, and the verdict line carries ``mode=full`` after the SHA.
+
+**A head carrying ``skip-checks: true``** started no remote run, so CI is
+not polled and ``ci=`` reads ``not-consulted(skipped-by-trailer)``: a race on
+an intermediate head settles locally rather than waiting out the timeout.
+The one trailer-free head is the trigger commit ``ci_runs.py`` makes.
 
 Prints one verdict line, then appends the machine-load probe's ``--sample``
 line to the fleet log (best-effort)::
@@ -82,6 +96,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+import ci_mirror
 import wait_for_checks as wfc
 
 #: The two checks, in local run order, and the make target each runs.
@@ -98,6 +113,11 @@ LINT_JOBS = frozenset({"Lint", "Lint (clippy)", "Lint (rustdoc)"})
 TEST_JOBS = frozenset(
     {"Tests", "Tests (no teardown)", "Tests (asm parity)", "Tests (Postgres)"}
 )
+
+#: Each stage's CI check: the pattern naming its jobs, and the jobs that
+#: must all have registered.
+Buckets = dict[str, tuple[re.Pattern, frozenset[str]]]
+ABRIDGED_BUCKETS: Buckets = {"lint": (CI_LINT, LINT_JOBS), "test": (CI_TEST, TEST_JOBS)}
 
 DEFAULT_TIMEOUT = 3600
 
@@ -133,6 +153,22 @@ _SCOPED_TEST = re.compile(r"^cargo_scope: (cargo test\b.*)$")
 NOT_PUSHED = "not-consulted(unpushed) - push for the full sweep"
 DIRTY = "not-consulted(dirty) - commit and push for the full sweep"
 UNREACHABLE = "not-consulted(unreachable) - run make lint and make test"
+SKIPPED_BY_TRAILER = "not-consulted(skipped-by-trailer)"
+
+
+def full_plan(
+    rows: list[ci_mirror.Row],
+) -> tuple[tuple[tuple[str, list[str]], ...], Buckets]:
+    """``--full``'s stages, one per distinct local target in the manifest,
+    and each stage's CI check: exactly the contexts that target mirrors."""
+    targets = ci_mirror.local_targets(rows)
+    stages = tuple((t, ["make", t]) for t in targets)
+    buckets: Buckets = {}
+    for t in targets:
+        contexts = ci_mirror.contexts_for(rows, t)
+        names = "|".join(re.escape(c) for c in sorted(contexts))
+        buckets[t] = (re.compile(f"^(?:{names})$"), contexts)
+    return stages, buckets
 
 
 @dataclass
@@ -150,6 +186,8 @@ class Race:
     outcome: str = ""
     ci_note: str = ""
     recovered: str = ""
+    order: list[str] = field(default_factory=lambda: [n for n, _ in STAGES])
+    mode: str = ""  # "" for the abridged pair, "full" under --full
 
 
 def log_path_for(sha: str, stage: str) -> Path:
@@ -301,13 +339,24 @@ def read_head() -> str:
     return _git(["rev-parse", "HEAD"])
 
 
+def skipped_by_trailer(sha: str) -> bool:
+    """Whether the commit carries a ``skip-checks: true`` trailer, the one
+    GitHub reads to start no ``pull_request`` run for a pushed head."""
+    values = _git(["log", "-1", "--format=%(trailers:key=skip-checks,valueonly)", sha])
+    return any(v.strip().lower() == "true" for v in values.splitlines())
+
+
 def local_only_reason(sha: str) -> str:
     """Why CI cannot speak for this tree, or ``""`` when it can.
 
     CI checks the pushed commit and the local stages check the working tree,
     so a CI verdict settles a check only when the two are the same bytes:
-    HEAD is its upstream and nothing is uncommitted.
+    HEAD is its upstream and nothing is uncommitted. A head carrying the
+    ``skip-checks: true`` trailer started no remote run at all, so there is
+    nothing to wait for and the race settles locally.
     """
+    if skipped_by_trailer(sha):
+        return SKIPPED_BY_TRAILER
     if _git(["rev-parse", "@{upstream}"]) != sha:
         return NOT_PUSHED
     if _git(["status", "--porcelain"]):
@@ -337,7 +386,9 @@ def bucket_state(
     return "pending", ""
 
 
-def read_ci(sha: str, pr: str, repo: str) -> dict[str, tuple[str, str]] | None:
+def read_ci(
+    sha: str, pr: str, repo: str, buckets: Buckets = ABRIDGED_BUCKETS
+) -> dict[str, tuple[str, str]] | None:
     """Each stage's CI state for ``sha``, or ``None`` while CI is on another head.
 
     Raises :class:`wfc.WaitForChecksError` when either read fails.
@@ -355,8 +406,8 @@ def read_ci(sha: str, pr: str, repo: str) -> dict[str, tuple[str, str]] | None:
         return None
     checks = wfc.read_checks(int(head["number"]), repo)
     return {
-        "lint": bucket_state(checks, CI_LINT, LINT_JOBS),
-        "test": bucket_state(checks, CI_TEST, TEST_JOBS),
+        name: bucket_state(checks, pattern, expected)
+        for name, (pattern, expected) in buckets.items()
     }
 
 
@@ -372,6 +423,8 @@ def race(
     sleep: Callable[[float], None],
     interval: float,
     timeout: float,
+    order: list[str] | None = None,
+    mode: str = "",
 ) -> Race:
     """The race itself, with every side effect injected (see the tests).
 
@@ -379,13 +432,16 @@ def race(
     never read and the reason is the verdict's ``ci=`` field. ``dirty`` is
     re-asked after each local stage: a hook that rewrote files leaves a tree
     CI's commit no longer matches, and CI stops being believed from then on.
+    ``order`` is the stage names in run order (default: :data:`STAGES`'s).
     """
-    r = Race(sha=sha, ci_note=local_only or "consulted")
+    r = Race(sha=sha, ci_note=local_only or "consulted", mode=mode)
+    if order is not None:
+        r.order = list(order)
+    order = r.order
     polling = not local_only
     errors = 0
     began = clock()
     next_ci = began
-    order = [name for name, _ in STAGES]
     current = None  # (name, Stage)
     retried = False  # The doctest-race retry was started (at most once).
 
@@ -460,12 +516,12 @@ def race(
         sleep(TICK)
 
 
-def stage_cmd(name: str, sha: str) -> list[str]:
+def stage_cmd(name: str, sha: str, stages=None) -> list[str]:
     """The argv a stage runs: its make target, or the doctest retry, scoped
     from the failed test stage's own log."""
     if name == DOC_RETRY:
         return doctest_retry_cmd(log_path_for(sha, "test"))
-    return dict(STAGES)[name]
+    return dict(STAGES if stages is None else stages)[name]
 
 
 def render(r: Race, wall: float) -> str:
@@ -479,7 +535,8 @@ def render(r: Race, wall: float) -> str:
         [
             f"verify-head: {r.outcome}",
             f"sha={r.sha[:12]}",
-            *(check(name) for name, _ in STAGES),
+            *([f"mode={r.mode}"] if r.mode else []),
+            *(check(name) for name in r.order),
             f"wall={round(wall)}s",
             f"killed={','.join(r.killed) or '-'}",
             *([f"recovered={r.recovered}"] if r.recovered else []),
@@ -509,9 +566,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=wfc.DEFAULT_REPO)
     parser.add_argument("--interval", type=int, default=wfc.poll_interval())
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="run the CI-mirror manifest's local targets, not the abridged pair",
+    )
     opts = parser.parse_args(argv)
     if opts.interval < 1 or opts.timeout < 1:
         parser.error("--interval and --timeout must be positive")
+
+    stages, buckets, mode = STAGES, ABRIDGED_BUCKETS, ""
+    if opts.full:
+        try:
+            stages, buckets = full_plan(ci_mirror.load())
+        except ci_mirror.ManifestError as exc:
+            print(f"verify-head: bad CI-mirror manifest: {exc}", file=sys.stderr)
+            return 2
+        mode = "full"
 
     sha = read_head()
     if not sha:
@@ -527,7 +598,9 @@ def main(argv: list[str] | None = None) -> int:
         nonlocal spawning
         spawning = True
         try:
-            started.append(Stage(name, stage_cmd(name, sha), log_path_for(sha, name)))
+            started.append(
+                Stage(name, stage_cmd(name, sha, stages), log_path_for(sha, name))
+            )
         finally:
             spawning = False
         if deferred:
@@ -551,13 +624,15 @@ def main(argv: list[str] | None = None) -> int:
             sha,
             local_only_reason(sha),
             start=start,
-            ci=lambda: read_ci(sha, opts.pr, opts.repo),
+            ci=lambda: read_ci(sha, opts.pr, opts.repo, buckets),
             head=read_head,
             dirty=lambda: bool(_git(["status", "--porcelain"])),
             clock=time.monotonic,
             sleep=time.sleep,
             interval=opts.interval,
             timeout=opts.timeout,
+            order=[name for name, _ in stages],
+            mode=mode,
         )
     except BaseException:
         # An interrupt or a crash must not leave a stage holding the pool lock.

@@ -19,6 +19,7 @@ import time
 import unittest
 from pathlib import Path
 
+import ci_mirror
 import verify_head as vh
 import wait_for_checks as wfc
 
@@ -320,8 +321,8 @@ class BucketStateTest(unittest.TestCase):
 
 
 class LocalOnlyReasonTest(unittest.TestCase):
-    def check(self, upstream, status):
-        answers = {"rev-parse": upstream, "status": status}
+    def check(self, upstream, status, trailers=""):
+        answers = {"rev-parse": upstream, "status": status, "log": trailers}
         real = vh._git
         vh._git = lambda args: answers[args[0]]
         try:
@@ -334,6 +335,143 @@ class LocalOnlyReasonTest(unittest.TestCase):
         self.assertEqual(self.check("f" * 40, ""), vh.NOT_PUSHED)
         self.assertEqual(self.check(SHA, " M docs/ci.md"), vh.DIRTY)
         self.assertEqual(self.check(SHA, ""), "")
+
+    def test_a_skip_trailer_wins_over_every_other_reason(self):
+        for upstream, status in ((SHA, ""), ("", " M x")):
+            self.assertEqual(
+                self.check(upstream, status, "true"), vh.SKIPPED_BY_TRAILER
+            )
+        self.assertEqual(vh.SKIPPED_BY_TRAILER, "not-consulted(skipped-by-trailer)")
+        # Any other value is not GitHub's skip.
+        self.assertEqual(self.check(SHA, "", "false"), "")
+
+
+class SkipTrailerTest(unittest.TestCase):
+    """The trailer read against real commits in a throwaway repo."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        cwd = os.getcwd()
+        os.chdir(self.tmp.name)
+        self.addCleanup(os.chdir, cwd)
+        for args in (
+            ["init", "-q"],
+            ["config", "user.email", "t@example.com"],
+            ["config", "user.name", "T"],
+            ["config", "commit.gpgsign", "false"],
+        ):
+            vh.subprocess.run(["git", *args], check=True)
+
+    def commit(self, message: str) -> str:
+        vh.subprocess.run(
+            ["git", "commit", "-q", "--allow-empty", "-m", message], check=True
+        )
+        return vh.read_head()
+
+    def test_trailer_forms(self):
+        cases = {
+            "fix: A\n\nskip-checks: true": True,
+            "fix: A\n\nWhy.\n\nSkip-Checks: TRUE": True,
+            "fix: A\n\nskip-checks:true": True,
+            "fix: A\n\nskip-checks: false": False,
+            "ci: Run the remote checks": False,
+            # In the body, not a trailer: GitHub reads trailers only.
+            "fix: A\n\nskip-checks: true\n\nmore prose": False,
+        }
+        for message, skipped in cases.items():
+            with self.subTest(message=message):
+                self.assertEqual(vh.skipped_by_trailer(self.commit(message)), skipped)
+
+    def test_a_trailer_headed_race_never_reads_ci(self):
+        h = Harness(
+            {"lint": (1, 0, ""), "test": (1, 0, "")},
+            local_only=vh.SKIPPED_BY_TRAILER,
+        )
+        r = h.run()
+        self.assertEqual((r.outcome, h.ci_reads), ("GREEN", 0))
+        self.assertTrue(
+            vh.render(r, 1).endswith("ci=not-consulted(skipped-by-trailer)")
+        )
+
+
+MANIFEST = [
+    ci_mirror.Row("Lint", "lint.yml", ("tools-tests",), ("lint", "tools-tests")),
+    ci_mirror.Row("Lint (clippy)", "lint.yml", (), ("lint",)),
+    ci_mirror.Row("Tests", "test.yml", ("program",), ("test",)),
+    ci_mirror.Row(
+        "Tests (Postgres)", "test.yml", ("test-postgres",), ("test-postgres",)
+    ),
+    ci_mirror.Row("Semantic PR", "semantic-pr.yml", (), ()),
+]
+
+
+class FullModeTest(unittest.TestCase):
+    def test_stages_are_the_manifest_targets_lint_first(self):
+        stages, buckets = vh.full_plan(MANIFEST)
+        self.assertEqual(
+            stages,
+            (
+                ("lint", ["make", "lint"]),
+                ("tools-tests", ["make", "tools-tests"]),
+                ("test", ["make", "test"]),
+                ("test-postgres", ["make", "test-postgres"]),
+            ),
+        )
+        self.assertEqual(list(buckets), [n for n, _ in stages])
+        self.assertEqual(buckets["lint"][1], {"Lint", "Lint (clippy)"})
+        self.assertEqual(vh.stage_cmd("test", SHA, stages), ["make", "test"])
+
+    def test_a_stage_settles_on_ci_only_when_every_mirrored_context_is_green(self):
+        _, buckets = vh.full_plan(MANIFEST)
+        pattern, expected = buckets["lint"]
+        lint_only = [{"name": "Lint", "bucket": "pass"}]
+        self.assertEqual(vh.bucket_state(lint_only, pattern, expected), PEND)
+        both = lint_only + [{"name": "Lint (clippy)", "bucket": "pass"}]
+        self.assertEqual(vh.bucket_state(both, pattern, expected)[0], "green")
+        # Exact names: `Tests` never matches `Tests (Postgres)`.
+        pattern, expected = buckets["test"]
+        other = [
+            {"name": "Tests", "bucket": "pass"},
+            {"name": "Tests (Postgres)", "bucket": "fail"},
+        ]
+        self.assertEqual(vh.bucket_state(other, pattern, expected), ("green", "Tests"))
+
+    def test_the_race_runs_every_stage_and_the_verdict_says_full(self):
+        stages, _ = vh.full_plan(MANIFEST)
+        order = [n for n, _ in stages]
+        h = Harness({n: (1, 0, "") for n in order}, local_only=vh.SKIPPED_BY_TRAILER)
+        r = vh.race(
+            SHA,
+            h.local_only,
+            start=h.start,
+            ci=h.ci,
+            head=lambda: SHA,
+            dirty=h.dirty,
+            clock=h.clock,
+            sleep=h.clock.sleep,
+            interval=30,
+            timeout=600,
+            order=order,
+            mode="full",
+        )
+        self.assertEqual(r.outcome, "GREEN")
+        self.assertEqual(list(h.started), order)
+        line = vh.render(r, 3)
+        self.assertTrue(
+            line.startswith("verify-head: GREEN sha=0123456789ab mode=full lint=")
+        )
+        self.assertIn("test-postgres=local:green[", line)
+
+    def test_the_committed_manifest_loads_into_a_plan(self):
+        stages, buckets = vh.full_plan(ci_mirror.load())
+        self.assertEqual(stages[0], ("lint", ["make", "lint"]))
+        self.assertIn("test", buckets)
+        self.assertTrue(all(expected for _, expected in buckets.values()))
+
+    def test_the_abridged_line_carries_no_mode(self):
+        r = vh.Race(sha=SHA, outcome="GREEN", ci_note="consulted")
+        self.assertNotIn("mode=", vh.render(r, 1))
 
 
 class ReadCiTest(unittest.TestCase):

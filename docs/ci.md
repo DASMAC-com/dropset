@@ -378,6 +378,28 @@ whole process group, SIGTERM and then SIGKILL, so no orphaned `rustc`
 holds the cargo pool lock. That lock is a file lock, released when its
 process dies.
 
+Two modes ride on the same race. A HEAD carrying the
+`skip-checks: true` trailer started no remote run, so CI is not polled
+and the verdict reads `ci=not-consulted(skipped-by-trailer)`: the race
+settles locally instead of waiting out the timeout. `--full` is the
+merge gate's run. Its stages are the distinct local targets of the
+CI-mirror manifest, `cfg/ci-mirror.json`, which maps each required
+context to the `make` targets its job runs and the local targets that
+mirror it. `make lint` runs first, then `make test` and the rest. CI
+settles a stage only when every context that target mirrors is green,
+and the verdict carries `mode=full`. A new CI job gets a local mirror
+by gaining a manifest row, never by an edit to the tool.
+
+The remote run itself is `.claude/tools/ci_runs.py`. `trigger --pr N`
+makes the one empty commit without the trailer
+(`ci: Run the remote checks`) and signs it. With the signer locked it
+refuses with the `LOCKED` line and makes no commit. It then pushes under
+a pinned lease and runs `cancel-stale`. `cancel-stale --pr N` lists the
+branch's `pull_request` runs, then reads the PR's head, and cancels every
+unfinished run on any other SHA. The head is read after the runs, so a
+run on the current head is never cancelled. `resign_branch.py resign`
+calls it after its force-push.
+
 ## 8. Local-first remote runs
 
 A PR's branch runs **no** remote CI while a session iterates. Remote CI

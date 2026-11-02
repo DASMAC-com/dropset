@@ -40,6 +40,9 @@ start. It refuses before anything moves (and fetches nothing, so the
 remote-tracking ref every worktree shares is left alone) when the remote tip
 is a commit this branch never held — neither an ancestor of ``HEAD`` nor a tip
 in the branch's own reflog — since forcing would drop another session's work.
+After a push it runs ``ci_runs.py``'s ``cancel-stale`` for the branch's PR,
+since the re-signed head supersedes every run on the old SHAs; a failure
+there is reported on the line, never an exit.
 
 Exit 2 is anything that is not the signer: a dirty tree, a merge commit, no
 merge base, a failed rebase (aborted), a re-sign that changed the tree or left
@@ -57,9 +60,11 @@ merge-gate pass needs no ``git rebase`` allow-rule. Tests live in
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 
+import ci_runs
 from signing_probe import probe
 
 PREFIX = "resign-branch |"
@@ -198,7 +203,35 @@ def resign(base: str, push: bool) -> tuple[int, str]:
         _git("push", f"--force-with-lease={branch}:{remote}", "origin", branch)
     else:
         _git("push", "-u", "origin", branch)
-    return 0, f"{PREFIX} {signed} | pushed origin/{branch}"
+    return (
+        0,
+        f"{PREFIX} {signed} | pushed origin/{branch} | {cancel_superseded(branch)}",
+    )
+
+
+def _branch_pr(runner: ci_runs.Runner, branch: str) -> int | None:
+    code, out, _ = runner(
+        ["gh", "pr", "view", branch, "--repo", ci_runs.DEFAULT_REPO, "--json", "number"]
+    )
+    try:
+        return int(json.loads(out)["number"]) if code == 0 else None
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def cancel_superseded(branch: str, runner: ci_runs.Runner = ci_runs.run) -> str:
+    """Cancel the runs on the SHAs the re-sign replaced; best-effort.
+
+    The push has landed by now, so a failure here is reported in the line
+    and never fails the re-sign: a stale run only holds a runner.
+    """
+    pr = _branch_pr(runner, branch)
+    if pr is None:
+        return "cancel-stale skipped: no open PR for the branch"
+    try:
+        return ci_runs.cancel_stale(runner, ci_runs.DEFAULT_REPO, pr)
+    except ci_runs.Refused as exc:
+        return f"cancel-stale failed: {exc}"
 
 
 def main(argv: list[str] | None = None) -> int:

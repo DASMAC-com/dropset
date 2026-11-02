@@ -99,10 +99,11 @@ the merge gate, so that is where the ask lands.
   moves nothing, and the handoff question becomes the single "unlock
   and I sign and enqueue" — one operator turn, not one per commit. The
   re-sign changes every SHA, so the required checks re-run before the
-  queue takes it. When the signer answers earlier, `review-pr` signs
-  at its pre-CI push instead, and the gate has nothing to do. The tool
-  rides the `python3 .claude/tools/` grant, so the pass runs
-  unattended without a `git rebase` allow-rule.
+  queue takes it, and the tool cancels the runs still going on the old
+  SHAs (`ci_runs.py cancel-stale`). When the signer answers earlier,
+  `review-pr` signs at its pre-CI push instead, and the gate has
+  nothing to do. The tool rides the `python3 .claude/tools/` grant, so
+  the pass runs unattended without a `git rebase` allow-rule.
 - **The loss rule's compensating controls ride with it.**
   Unsigned-and-*unpushed* is the state that lost work before, so the
   deferral is only safe because the unsigned commit is still **pushed**:

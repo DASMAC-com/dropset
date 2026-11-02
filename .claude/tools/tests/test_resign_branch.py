@@ -55,6 +55,56 @@ class Summary(unittest.TestCase):
         self.assertTrue(line.endswith("(+2)"))
 
 
+class CancelSuperseded(unittest.TestCase):
+    """The post-push cancel: resolves the branch's PR, never fails the re-sign."""
+
+    def runner(self, replies):
+        calls = []
+
+        def run(argv):
+            calls.append(argv)
+            for match, reply in replies:
+                if match in " ".join(argv):
+                    return reply
+            raise AssertionError(f"unexpected call {argv}")
+
+        return run, calls
+
+    def test_cancels_on_the_branch_pr(self):
+        run, calls = self.runner(
+            [
+                ("pr view eng-1", (0, '{"number": 7}', "")),
+                ("pulls/7", (0, '{"head": {"ref": "eng-1", "sha": "%s"}}' % NEW, "")),
+                ("runs/1/cancel", (0, "", "")),
+                (
+                    "actions/runs",
+                    (
+                        0,
+                        '{"workflow_runs": [{"id": 1, "status": "queued",'
+                        ' "head_sha": "%s"}]}' % OLD,
+                        "",
+                    ),
+                ),
+            ]
+        )
+        line = rb.cancel_superseded("eng-1", runner=run)
+        self.assertIn("cancelled 1 of 1", line)
+        self.assertIn(["gh", "api", "-X", "POST"], [c[:4] for c in calls])
+
+    def test_no_pr_skips(self):
+        run, _ = self.runner([("pr view", (1, "", "no pull requests found"))])
+        self.assertIn("skipped", rb.cancel_superseded("eng-1", runner=run))
+
+    def test_a_failed_read_is_reported_not_raised(self):
+        run, _ = self.runner(
+            [("pr view", (0, '{"number": 7}', "")), ("pulls/7", (1, "", "HTTP 502"))]
+        )
+        self.assertIn("cancel-stale failed", rb.cancel_superseded("eng-1", runner=run))
+
+
+OLD, NEW = "a" * 40, "b" * 40
+
+
 @unittest.skipUnless(shutil.which("false"), "needs a `false` binary")
 class RealRepo(unittest.TestCase):
     def setUp(self):
@@ -82,6 +132,11 @@ class RealRepo(unittest.TestCase):
         ):
             self.git("config", key, value)
         self.git("remote", "add", "origin", self.remote)
+        # A push here must never reach `gh`: record the cancel call instead.
+        self.cancelled = []
+        real_cancel = rb.cancel_superseded
+        rb.cancel_superseded = lambda branch: self.cancelled.append(branch) or "c"
+        self.addCleanup(setattr, rb, "cancel_superseded", real_cancel)
         self.signer(self.stub)
         self.commit("base", sign=True)
         self.git("push", "-q", "-u", "origin", "main")
@@ -148,6 +203,16 @@ class RealRepo(unittest.TestCase):
             self.git("ls-remote", "origin", "refs/heads/eng-1").split()[0],
             self.git("rev-parse", "HEAD"),
         )
+        # The re-signed head supersedes every run on the old SHAs.
+        self.assertEqual(self.cancelled, ["eng-1"])
+        self.assertTrue(line.endswith("pushed origin/eng-1 | c"), line)
+
+    def test_no_push_cancels_nothing(self):
+        self.commit("a")
+        self.assertEqual(rb.resign("main", push=False)[0], 0)
+        self.git("push", "-q", "-u", "origin", "eng-1")
+        self.assertIn("already matches", rb.resign("main", push=True)[1])
+        self.assertEqual(self.cancelled, [])
 
     def test_a_branch_rebased_onto_a_newer_base_still_pushes(self):
         self.commit("a")
