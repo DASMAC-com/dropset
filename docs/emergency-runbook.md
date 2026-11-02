@@ -99,8 +99,8 @@ signs the second and pays for both.
 1. The job ends `… is open to outside depositors`, and the `vault` row
    reads `O open (done)`. The frontend's Deposit button then enables for
    a wallet with no position, up to the leader-floor cap. With the admin
-   half outstanding it ends `leader half set; the admin half is
-   outstanding` instead, naming the wallet.
+   half outstanding it ends instead with
+   `leader half set; the admin half is outstanding`, naming the wallet.
 
 No prompt opens when nothing would be sent: the vault is already open,
 or its leader half is set and this wallet is not a registry admin. The
