@@ -128,8 +128,9 @@ Prints JSON::
       "log_path": "/…/wait-for-checks-285.log"
     }
 
-A settled ``pass`` / ``fail`` also appends one record, keyed by HEAD's tree,
-to ``ci_verdicts.py``'s log, where the digest pairs it with the local race
+A settled ``pass`` / ``fail`` also appends one record, keyed by the tree of
+the PR's head commit (none when that commit is not in this clone), to
+``ci_verdicts.py``'s log, where the digest pairs it with the local race
 verdict on the same tree.
 
 ``hint.gate`` is ``green`` / ``blocking`` / ``unverified`` / ``retry``; act on
@@ -2910,11 +2911,15 @@ def run(argv: list[str]) -> int:
                 snapshot_path=args.snapshot,
                 base=args.base or "main",
             )
-            # Keyed by the tree the race verified: the gate's re-sign and its
-            # empty trigger commit move the commit, never the tree.
-            ci_verdicts.append(
-                ci_verdicts.checks_record(verdict), ci_verdicts.head_tree()
-            )
+            # Keyed by the tree of the PR head the checks ran on (never this
+            # checkout's HEAD, which may be another branch): the gate's
+            # re-sign and empty trigger commit move the commit, not the tree.
+            record = ci_verdicts.checks_record(verdict)
+            if record is not None:
+                head = ci_verdicts.pr_head(args.pr, args.repo)
+                ci_verdicts.append(
+                    record, ci_verdicts.head_tree(head) if head else None
+                )
     # The queue file first: it is the one the merged line names, so a bad
     # `--verdict-out` path cannot leave that name pointing at nothing.
     outputs = (

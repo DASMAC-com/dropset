@@ -652,11 +652,13 @@ def main(argv: list[str] | None = None) -> int:
     print(render(result, time.monotonic() - began), flush=True)
     # Keyed by the raced commit's tree, which the gate's re-sign and trigger
     # commit both keep, so the checks verdict that follows can pair with it.
+    # A dirty tree raced content no commit holds, so it records nothing.
     local = {n: s.green for n, s in result.settled.items() if s.side == "local"}
-    ci_verdicts.append(
-        ci_verdicts.race_record(result.outcome, sha, local),
-        ci_verdicts.head_tree(sha),
-    )
+    if not _git(["status", "--porcelain"]):
+        ci_verdicts.append(
+            ci_verdicts.race_record(result.outcome, sha, local),
+            ci_verdicts.head_tree(sha),
+        )
     sample_fleet()
     return 0 if result.outcome == "GREEN" else 1
 

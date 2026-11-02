@@ -11,6 +11,7 @@ import unittest
 from contextlib import redirect_stderr
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 import ci_verdicts as cv
 
@@ -86,6 +87,26 @@ class Records(unittest.TestCase):
             with redirect_stderr(err):
                 cv.append({"tool": cv.RACE}, "t", blocker, at(0))
         self.assertIn("could not append", err.getvalue())
+
+    def test_an_unresolvable_state_dir_is_reported_not_raised(self):
+        err = io.StringIO()
+        with (
+            mock.patch.object(
+                cv.machine_load, "default_state_dir", side_effect=RuntimeError("boom")
+            ),
+            redirect_stderr(err),
+        ):
+            cv.append({"tool": cv.RACE}, "t", None, at(0))
+        self.assertIn("boom", err.getvalue())
+
+    def test_pr_head_reads_gh_and_answers_none_on_failure(self):
+        ok = subprocess.CompletedProcess([], 0, stdout="ab" * 20 + "\n", stderr="")
+        with mock.patch.object(cv.subprocess, "run", return_value=ok) as run:
+            self.assertEqual(cv.pr_head(9, "o/r"), "ab" * 20)
+        self.assertIn("headRefOid", run.call_args.args[0])
+        bad = subprocess.CompletedProcess([], 1, stdout="", stderr="no PR")
+        with mock.patch.object(cv.subprocess, "run", return_value=bad):
+            self.assertIsNone(cv.pr_head(9, "o/r"))
 
     def test_a_missing_log_reads_as_no_records(self):
         self.assertEqual(cv.read(Path("/nonexistent/ci-verdicts.jsonl"), SINCE), [])

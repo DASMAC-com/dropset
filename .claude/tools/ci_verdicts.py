@@ -102,13 +102,41 @@ def append(
     if record is None or not tree:
         return
     at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%S")
-    path = (state_dir or machine_load.default_state_dir()) / LOG
+    path = LOG
     try:
+        path = (state_dir or machine_load.default_state_dir()) / LOG
         machine_load.append_record(
             path, json.dumps({"at": at, "tree": tree, **record}, sort_keys=True)
         )
-    except OSError as exc:
+    except Exception as exc:  # noqa: BLE001 — a record never changes a verdict
         print(f"ci-verdicts: could not append to {path}: {exc}", file=sys.stderr)
+
+
+def pr_head(pr: int, repo: str) -> str | None:
+    """The PR's head commit as GitHub reports it — the commit its checks ran
+    on — or ``None`` when ``gh`` cannot answer."""
+    try:
+        out = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(pr),
+                "--repo",
+                repo,
+                "--json",
+                "headRefOid",
+                "--jq",
+                ".headRefOid",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = out.stdout.strip() if out.returncode == 0 else ""
+    return sha or None
 
 
 def read(path: Path, until: str) -> list[dict]:
