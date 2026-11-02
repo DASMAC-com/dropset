@@ -39,7 +39,10 @@ the launch records (``sessions/<id>.load``, one JSON line per launch from
 ``machine_load.py --record``) and the fleet log's queue profile. Its wait
 section is written for the fold analyst: each ranked cause carries its hours,
 its median per session and a stable ``wait:<dimension>:<cause>``
-fingerprint.
+fingerprint. Beside the CI wait it writes the day's local-versus-remote
+pairs (``ci_verdicts.py``): a local green the remote run failed, fingerprinted
+``ci:local-green-remote-red``, and the reverse, ``ci:local-red-remote-green``,
+each every day against the day's pair count.
 
 Stdlib only; no import of ``session_metrics`` (which imports this), so the
 caller hands each record in with its ``utc_stamp`` already parsed. Tests live
@@ -55,6 +58,8 @@ import shlex
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from ci_verdicts import AGREED, PAIRINGS
 
 LOCK = "lock"
 CHECKS = "ci-checks"
@@ -538,10 +543,21 @@ def digest_section(
     loads: list[dict],
     profile: dict[str, dict],
     ci: dict | None = None,
+    pairs: list[tuple[str, list[str]]] | None = None,
 ) -> tuple[list[str], dict]:
     """The digest's ``## Wait`` section and its JSON twin: the daily line,
-    then the ranked causes the analyst reads, one fingerprint each."""
+    then the ranked causes the analyst reads, one fingerprint each.
+    ``pairs`` is the day's ``ci_verdicts.pair`` result: local race verdicts
+    paired with the remote checks on the same tree."""
     ci_cause = _ci_cause(ci)
+    # pairing -> its count and, per failing job, the events naming it.
+    paired = {k: {"count": 0, "jobs": {}} for k in (*PAIRINGS, AGREED)}
+    for kind, jobs in pairs or []:
+        tally = paired.setdefault(kind, {"count": 0, "jobs": {}})
+        tally["count"] += 1
+        for job in jobs:
+            tally["jobs"][job] = tally["jobs"].get(job, 0) + 1
+    total_pairs = sum(t["count"] for t in paired.values())
     totals = {d: 0 for d in DIMENSIONS}
     # (dimension, cause) -> per-session seconds.
     per_cause: dict[tuple[str, str], list[int]] = {}
@@ -584,6 +600,7 @@ def digest_section(
         + (", ".join(f"{c} {hours(s)}" for c, s in builds) or "none"),
         f"- CI wait: {hours(totals[CHECKS] + totals[QUEUE])}"
         f" (checks {hours(totals[CHECKS])}, queue {hours(totals[QUEUE])})",
+        *(_pairing_line(kind, paired[kind], total_pairs) for kind in PAIRINGS),
         "- Queue profile by hour (depth / longest wait): "
         + (
             ", ".join(
@@ -643,5 +660,22 @@ def digest_section(
         "memory_refusals": refusals,
         "peak_in_use_gib": round(max(in_use), 1) if in_use else None,
         "queue_profile": profile,
+        "local_vs_remote": paired,
     }
     return out, twin
+
+
+def _pairing_line(kind: str, tally: dict, total: int) -> str:
+    """One pairing's daily line, written even at zero, beside every pair the
+    day made: zero of many is a finding, zero of zero is pairing that saw
+    nothing."""
+    local, _, remote = kind.partition("-remote-")
+    jobs = ", ".join(
+        f"{job} {n}" for job, n in sorted(tally["jobs"].items(), key=lambda kv: -kv[1])
+    )
+    return (
+        f"- {local.replace('-', ' ').capitalize()}, remote {remote}:"
+        f" {tally['count']} of {total} paired"
+        f"{f' (failing: {jobs})' if jobs else ''}"
+        f" — `**Fingerprint**: ci:{kind}`"
+    )

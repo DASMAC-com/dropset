@@ -9,6 +9,7 @@ import pathlib
 import tempfile
 import unittest
 
+import ci_verdicts as cv
 import wait_ledger as wl
 
 
@@ -448,6 +449,30 @@ class Digest(unittest.TestCase):
         self.assertEqual(twin["ranked"], [wl.LOCK, wl.CHECKS, wl.IDLE])
         self.assertEqual(twin["causes"][0]["fingerprint"], "wait:lock:make-lint")
         self.assertEqual(twin["memory_refusals"], 1)
+
+    def test_the_pairing_lines_count_against_the_days_pairs(self):
+        pairs = [
+            (cv.LOCAL_GREEN_REMOTE_RED, ["Tests (sdk)"]),
+            (cv.LOCAL_GREEN_REMOTE_RED, ["Tests (sdk)", "Lint"]),
+            (cv.AGREED, []),
+            (cv.AGREED, []),
+        ]
+        lines, twin = wl.digest_section([], [], {}, None, pairs)
+        text = "\n".join(lines)
+        self.assertIn(
+            "- Local green, remote red: 2 of 4 paired (failing: Tests (sdk) 2, Lint 1)"
+            " — `**Fingerprint**: ci:local-green-remote-red`",
+            text,
+        )
+        self.assertIn(
+            "- Local red, remote green: 0 of 4 paired"
+            " — `**Fingerprint**: ci:local-red-remote-green`",
+            text,
+        )
+        self.assertEqual(twin["local_vs_remote"][cv.AGREED]["count"], 2)
+        # A day with no pairs reads as zero of zero, never a clean record.
+        empty, _ = wl.digest_section([], [], {})
+        self.assertIn("- Local green, remote red: 0 of 0 paired", "\n".join(empty))
 
     def test_ci_without_a_read_is_not_filed(self):
         lines, twin = wl.digest_section(

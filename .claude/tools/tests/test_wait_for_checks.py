@@ -22,6 +22,18 @@ from unittest import mock
 
 import wait_for_checks as wfc
 
+# A checks-mode run appends a verdict record to the base checkout's log;
+# no test may write there.
+_NO_RECORDS = mock.patch.object(wfc.ci_verdicts, "append")
+
+
+def setUpModule():
+    _NO_RECORDS.start()
+
+
+def tearDownModule():
+    _NO_RECORDS.stop()
+
 
 def check(name, bucket, workflow="Tests", link="", description=""):
     return {

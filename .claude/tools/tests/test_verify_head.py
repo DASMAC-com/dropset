@@ -22,8 +22,23 @@ from contextlib import redirect_stderr
 from pathlib import Path
 
 import ci_mirror
+from unittest import mock
+
 import verify_head as vh
 import wait_for_checks as wfc
+
+# A finished race appends a verdict record to the base checkout's log; no
+# test may write there.
+_NO_RECORDS = mock.patch.object(vh.ci_verdicts, "append")
+
+
+def setUpModule():
+    _NO_RECORDS.start()
+
+
+def tearDownModule():
+    _NO_RECORDS.stop()
+
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 PEND = ("pending", "")

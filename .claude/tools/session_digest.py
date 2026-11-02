@@ -70,6 +70,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import ci_metrics
+import ci_verdicts
 import fleet_cost
 import machine_load
 import session_metrics as sm
@@ -799,17 +800,20 @@ def wait_section(
 ) -> tuple[list[str], dict]:
     """The wait section over the window: every session's ledger (already
     windowed by the aggregation), the launch records beside the estimates,
-    and the fleet log's queue profile. A missing log is no samples."""
+    the fleet log's queue profile, and the local-versus-remote verdict pairs.
+    A missing log is no samples, and a missing verdict log no pairs."""
     log = base / sm.SUBSTRATE_DIR / machine_load.SAMPLE_LOG
     try:
         log_text = log.read_text("utf-8")
     except OSError:
         log_text = ""
+    verdicts = ci_verdicts.read(base / sm.SUBSTRATE_DIR / ci_verdicts.LOG, until)
     return wait_ledger.digest_section(
         [s.report.get("wait", []) for s in sessions],
         wait_ledger.read_load_records(base / ESTIMATE_DIR, since, until),
         wait_ledger.queue_profile(log_text, since, until),
         ci,
+        ci_verdicts.pair(verdicts, since),
     )
 
 

@@ -31,6 +31,19 @@ dequeues, re-entries and, once merged, the open-to-merge span with the share
 spent in the queue. ``--cache-dir DIR`` keeps each finished run's jobs, so a
 day's re-fetch of the baseline reads only the new runs.
 
+``--pr-runs`` measures runner load instead: every ``pull_request``-event run
+of every workflow in the last ``--days`` days, grouped by PR (the run's PR
+number, else its head branch once the PR has closed and the API stops
+listing it), with runs per PR, the **superseded** share (a run whose head is
+not the PR's latest run's head in the window — CI spent on a head nobody
+merges), the cancelled share, and the runner wait, median and p90. The wait
+is each job's ``started_at`` minus its ``created_at``: a run's own
+``run_started_at`` is its creation, never its pickup, so it reads zero. A
+jobs read per run is too many for a fortnight, so ``--wait-sample N`` reads
+N runs spread over the window (``--cache-dir`` keeps them). A ranked
+summary; ``--json`` prints the per-PR series, and ``--cache FILE`` stores
+the slimmed payload.
+
 Two single-job modes read one job's log instead:
 
 * ``--failed-log JOB_ID`` prints the failure-shaped lines (test names, panics,
@@ -748,6 +761,207 @@ def render(payload: dict, full: bool, steps_for: str | None = None) -> list[str]
     return out
 
 
+# --------------------------------------------------------------------------- #
+# The PR-runs mode: runner load from pull_request-event runs, per PR.
+# --------------------------------------------------------------------------- #
+
+# The runs endpoint returns at most this many results per filtered query, so a
+# window that reaches it is split in halves until each slice fits.
+RUNS_SEARCH_CAP = 1000
+MIN_SLICE = timedelta(minutes=30)
+RUN_FIELDS = (
+    "id",
+    "name",
+    "head_sha",
+    "head_branch",
+    "status",
+    "conclusion",
+    "created_at",
+)
+# A run's `run_started_at` is its creation (measured equal on every run of a
+# fortnight), so the runner wait is read per job instead — one jobs read per
+# run, too many for a fortnight of runs, so a spread sample of this many.
+WAIT_SAMPLE = 300
+
+
+def _slim_run(run: dict) -> dict:
+    """The fields the mode reads, the PR numbers flattened, so a cached
+    fortnight stays small."""
+    slim = {k: run.get(k) for k in RUN_FIELDS}
+    slim["prs"] = [p["number"] for p in run.get("pull_requests") or [] if p]
+    return slim
+
+
+def _runs_between(start: datetime, end: datetime) -> list[dict]:
+    runs = gh_api(
+        f"repos/{REPO}/actions/runs?event=pull_request&per_page=100"
+        f"&created={stamp(start)}..{stamp(end)}",
+        paginate_key="workflow_runs",
+    )
+    if len(runs) >= RUNS_SEARCH_CAP and end - start > MIN_SLICE:
+        mid = start + (end - start) / 2
+        # `created=a..b` is inclusive at both ends: the halves meet a second
+        # apart, and the id dedup below drops a run read twice.
+        return _runs_between(start, mid) + _runs_between(
+            mid + timedelta(seconds=1), end
+        )
+    if len(runs) >= RUNS_SEARCH_CAP:
+        print(
+            f"ci-metrics: {stamp(start)}..{stamp(end)} still returned the"
+            f" {RUNS_SEARCH_CAP}-run cap at the {minutes(MIN_SLICE):g}m floor;"
+            " its counts are truncated",
+            file=sys.stderr,
+        )
+    return runs
+
+
+def wait_sample(runs: list[dict], n: int) -> list[dict]:
+    """``n`` completed runs spread evenly over the window by creation."""
+    done = sorted(
+        (r for r in runs if r.get("status") == "completed"),
+        key=lambda r: r["created_at"],
+    )
+    if n <= 0 or not done:
+        return []
+    step = max(1.0, len(done) / n)
+    return [done[int(i * step)] for i in range(min(n, len(done)))]
+
+
+def fetch_pr_runs(
+    days: int,
+    now: datetime | None = None,
+    sample: int = WAIT_SAMPLE,
+    cache_dir: Path | None = None,
+) -> dict:
+    """Every ``pull_request``-event run created in the last ``days`` days,
+    read a day at a time under :data:`RUNS_SEARCH_CAP`, and the job stamps
+    of a :func:`wait_sample` of them (``cache_dir`` keeps each run's jobs)."""
+    end = now or datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    seen: dict[int, dict] = {}
+    cursor = start
+    while cursor < end:
+        nxt = min(cursor + timedelta(days=1), end)
+        for run in _runs_between(cursor, nxt):
+            seen[int(run["id"])] = _slim_run(run)
+        cursor = nxt + timedelta(seconds=1)
+    runs = list(seen.values())
+    if cache_dir is not None:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    jobs = {
+        str(run["id"]): [
+            {k: j.get(k) for k in ("created_at", "started_at", "conclusion")}
+            for j in run_jobs(run, cache_dir)
+        ]
+        for run in wait_sample(runs, sample)
+    }
+    return {"since": stamp(start), "until": stamp(end), "runs": runs, "jobs": jobs}
+
+
+def job_waits(jobs: list[dict]) -> list[float]:
+    """Each job's runner wait (``started_at`` − ``created_at``); a skipped
+    job never asked for a runner."""
+    return [
+        minutes(parse_ts(j["started_at"]) - parse_ts(j["created_at"]))
+        for j in jobs
+        if j.get("started_at")
+        and j.get("created_at")
+        and j.get("conclusion") != "skipped"
+    ]
+
+
+def _mid(xs: list[float]) -> float | None:
+    """A plain median: unlike the day mode's :func:`_median`, one PR's one
+    run is an answer here, not too few points."""
+    return statistics.median(xs) if xs else None
+
+
+def _p90(xs: list[float]) -> float | None:
+    if not xs:
+        return None
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, int(round(0.9 * (len(xs) - 1))))]
+
+
+def pr_runs_report(payload: dict) -> dict:
+    """Per PR: runs, superseded (head not the PR's latest run's head in the
+    window), cancelled, and runner wait over the sampled runs' jobs
+    (:func:`job_waits`). A run whose PR closed lists no PR, so it is keyed by
+    its head branch."""
+    sampled = payload.get("jobs") or {}
+    groups: dict[str, list[dict]] = {}
+    for run in payload.get("runs") or []:
+        prs = run.get("prs")
+        if prs is None:  # a raw API record, not one `_slim_run` wrote
+            prs = [p["number"] for p in run.get("pull_requests") or [] if p]
+        key = f"#{prs[0]}" if prs else f"branch:{run.get('head_branch') or '?'}"
+        groups.setdefault(key, []).append(run)
+    rows, waits = [], []
+    for key, runs in groups.items():
+        runs.sort(key=lambda r: r["created_at"])
+        latest = runs[-1].get("head_sha")
+        pr_waits = [w for r in runs for w in job_waits(sampled.get(str(r["id"])) or [])]
+        waits += pr_waits
+        rows.append(
+            {
+                "pr": key,
+                "runs": len(runs),
+                "heads": len({r.get("head_sha") for r in runs}),
+                "superseded": sum(1 for r in runs if r.get("head_sha") != latest),
+                "cancelled": sum(1 for r in runs if r.get("conclusion") == "cancelled"),
+                "wait_median_min": _mid(pr_waits),
+                "wait_p90_min": _p90(pr_waits),
+            }
+        )
+    rows.sort(key=lambda r: (-r["runs"], r["pr"]))
+    total = sum(r["runs"] for r in rows)
+    return {
+        "since": payload.get("since"),
+        "until": payload.get("until"),
+        "runs": total,
+        "prs": len(rows),
+        "branch_fallback": sum(1 for r in rows if r["pr"].startswith("branch:")),
+        "superseded": sum(r["superseded"] for r in rows),
+        "cancelled": sum(r["cancelled"] for r in rows),
+        "wait_median_min": _mid(waits),
+        "wait_p90_min": _p90(waits),
+        "wait_max_min": max(waits) if waits else None,
+        "wait_sampled_runs": len(sampled),
+        "wait_jobs": len(waits),
+        "waited_over_1m": sum(1 for w in waits if w >= 1.0),
+        "per_pr": rows,
+    }
+
+
+def pr_runs_lines(report: dict, limit: int) -> list[str]:
+    """The ranked summary: the window's totals, then the busiest PRs."""
+    total = report["runs"]
+
+    def share(n: int) -> str:
+        return f"{n}/{total} ({100 * n / total:.0f}%)" if total else "0/0"
+
+    out = [
+        f"pr-runs {report['since']} .. {report['until']}: {total} pull_request"
+        f" runs on {report['prs']} PR(s) ({report['branch_fallback']} keyed by"
+        " branch, their PR closed)",
+        f"superseded {share(report['superseded'])}; cancelled"
+        f" {share(report['cancelled'])}",
+        f"runner wait over {report['wait_jobs']} job(s) of"
+        f" {report['wait_sampled_runs']} sampled run(s): median"
+        f" {_m(report['wait_median_min'])}, p90 {_m(report['wait_p90_min'])},"
+        f" max {_m(report['wait_max_min'])}; {report['waited_over_1m']} waited"
+        " 1m or more",
+        f"busiest {min(limit, report['prs'])}:",
+    ]
+    for r in report["per_pr"][:limit]:
+        out.append(
+            f"  {r['pr']:24s} runs={r['runs']:3d} heads={r['heads']:2d}"
+            f" superseded={r['superseded']:3d} cancelled={r['cancelled']:3d}"
+            f" wait p90={_m(r['wait_p90_min'])}"
+        )
+    return out
+
+
 def job_log(job_id: int) -> list[str]:
     out = subprocess.run(
         ["gh", "run", "view", "--repo", REPO, "--job", str(job_id), "--log"],
@@ -815,12 +1029,42 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--until", metavar="STAMP", help="day mode's close (default: now)")
     ap.add_argument(
-        "--cache-dir", help="day mode: keep each finished run's jobs in this directory"
+        "--cache-dir",
+        help="day / PR-runs mode: keep each finished run's jobs in this directory",
     )
     ap.add_argument(
-        "--json", action="store_true", help="day mode: print the report as JSON"
+        "--json",
+        action="store_true",
+        help="day / PR-runs mode: print the report as JSON",
+    )
+    ap.add_argument(
+        "--pr-runs",
+        action="store_true",
+        help="runner load from pull_request runs over --days, per PR",
+    )
+    ap.add_argument(
+        "--wait-sample",
+        type=int,
+        default=WAIT_SAMPLE,
+        metavar="N",
+        help="PR-runs mode: read the jobs of N spread runs for the runner wait",
     )
     args = ap.parse_args(argv)
+
+    if args.pr_runs:
+        cache_dir = Path(args.cache_dir) if args.cache_dir else None
+        payload = _cached(
+            args.cache,
+            lambda: fetch_pr_runs(
+                args.days, sample=args.wait_sample, cache_dir=cache_dir
+            ),
+        )
+        report = pr_runs_report(payload)
+        if args.json:
+            print(json.dumps(report))
+        else:
+            print("\n".join(pr_runs_lines(report, args.limit)))
+        return 0
 
     if args.since:
         try:
@@ -871,20 +1115,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {d:5.2f}m {name[:60]:60s} {res}")
         return 0
 
-    payload = None
-    if args.cache:
-        try:
-            with open(args.cache) as fh:
-                payload = json.load(fh)
-        except FileNotFoundError:
-            pass
-    if payload is None:
-        payload = fetch(args.days)
-        if args.cache:
-            with open(args.cache, "w") as fh:
-                json.dump(payload, fh)
+    payload = _cached(args.cache, lambda: fetch(args.days))
     print("\n".join(render(payload, args.full, args.steps)))
     return 0
+
+
+def _cached(path: str | None, fetcher) -> dict:
+    """``--cache``: the raw payload read from ``path`` if present, else
+    fetched and written there."""
+    if path:
+        try:
+            with open(path) as fh:
+                return json.load(fh)
+        except FileNotFoundError:
+            pass
+    payload = fetcher()
+    if path:
+        with open(path, "w") as fh:
+            json.dump(payload, fh)
+    return payload
 
 
 if __name__ == "__main__":
