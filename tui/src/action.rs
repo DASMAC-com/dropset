@@ -106,8 +106,8 @@ pub enum Action {
     SetPerfFee,
     /// Open the leader's vault on the selected market to outside depositors:
     /// the leader's half of the gate, then the admin's when the session holds
-    /// an admin key — see [`crate::outside`]. Localnet only for now; mainnet
-    /// opens at public launch, signed through the cockpit then.
+    /// an admin key — see [`crate::outside`]. One key on localnet; on mainnet
+    /// it opens the ceremony prompt over [`crate::outside::preview`] first.
     OpenVault,
     /// The leader hands its own vault on the selected market to a new key,
     /// which co-signs (`set_leader`). Opens the key → typed-`yes` prompt —
@@ -192,12 +192,14 @@ pub const MENU: [Action; NUMBER_KEYS + 3] = [
 
 /// The leader's own vault — the runtime pane's `vault` group, on both
 /// clusters: deposit on `+`, withdraw on `-`, rename on `N`, the fee retune
-/// on `%`, and the custody rotation on `L`.
-pub const VAULT_ACTIONS: [Action; 5] = [
+/// on `%`, the open to outside depositors on `O`, and the custody rotation on
+/// `L`.
+pub const VAULT_ACTIONS: [Action; 6] = [
     Action::LeaderDeposit,
     Action::LeaderWithdraw,
     Action::RenameVault,
     Action::SetPerfFee,
+    Action::OpenVault,
     Action::RotateLeader,
 ];
 
@@ -391,10 +393,11 @@ impl Action {
             // "Bootstrap all" belongs here too: it mints mock pairs and funds
             // the committed taker, and on mainnet each step is worth watching.
             Action::Deploy | Action::BootstrapAll | Action::Wipe => false,
-            // Opening a vault to outside capital is the public-launch step,
-            // signed through the cockpit then; until that is wired it stays
-            // here, where nothing it opens holds real funds.
-            Action::OpenVault => false,
+            // Opening a vault to outside capital: the leader's half signed by
+            // the operator's `--leader`, never a committed key, and the
+            // admin's by the session wallet when it is a registry admin. Both
+            // are sent only after a typed `yes` over the plan, read fresh.
+            Action::OpenVault => true,
             // Publishing signs in memory with the 1Password-held admin and
             // program keys, decides first-publish versus upgrade from the
             // chain, and verifies the deployed bytes; the buffer recovery
@@ -599,9 +602,6 @@ impl Action {
                 "localnet only — no validator or ledger to drive on mainnet"
             }
             Action::ProbeSwap => "spends real funds — no mainnet taker key",
-            Action::OpenVault => {
-                "opens at public launch, signed through the cockpit — not wired yet"
-            }
             Action::Teardown => "use the headless teardown binary on a real cluster",
             // Enumerated rather than a `_` arm, and that is the point:
             // `available_on` above is exhaustive, so adding a variant is a
@@ -630,6 +630,7 @@ impl Action {
             | Action::LeaderWithdraw
             | Action::RenameVault
             | Action::SetPerfFee
+            | Action::OpenVault
             | Action::RotateLeader
             | Action::PassiveLadder
             | Action::PassiveRecenter
@@ -658,6 +659,7 @@ impl Action {
             | Action::CreateMarket
             | Action::CreateVault
             | Action::Deposit
+            | Action::OpenVault
             | Action::KillLadders
             | Action::CloseVaults
             | Action::DrainLeader => true,
@@ -673,7 +675,6 @@ impl Action {
             | Action::LeaderDeposit
             | Action::LeaderWithdraw
             | Action::RenameVault
-            | Action::OpenVault
             | Action::OverrideVaultName
             | Action::SetPerfFee
             | Action::RotateLeader
@@ -1440,11 +1441,14 @@ pub fn dispatch_leader(ctx: &JobContext, ticket: crate::leader::Ticket, tx: Send
 /// again when it runs; this is what the operator reads, not what guards. An
 /// emergency action also returns the vaults its lines list, which bound what
 /// its job may touch on every market the plan read. `vault_name` is the
-/// create-vault step's typed name, ignored by every other step.
+/// create-vault step's typed name, ignored by every other step; `selected`
+/// is the selected market's `(address, base_mint)`, read only by the
+/// market-scoped open, which [`dispatch`] then sends to the same market.
 pub fn ceremony_plan(
     action: Action,
     ctx: &JobContext,
     vault_name: &str,
+    selected: Option<(Pubkey, Pubkey)>,
 ) -> Result<(Vec<String>, Option<emergency::Planned>)> {
     let client = chain::rpc(&ctx.rpc_url);
     let admin = ctx.wallet.pubkey();
@@ -1497,6 +1501,24 @@ pub fn ceremony_plan(
                 ctx.quote.as_ref(),
             )
             .map(|(lines, planned)| (lines, Some(planned)));
+        }
+        Action::OpenVault => {
+            // The leader resolves exactly as the dispatch arm resolves it, so
+            // the plan names the key the job will sign with. Refuses on its own
+            // terms when nothing would be sent.
+            let (address, base_mint) = selected.context("no market selected")?;
+            let config = market::config_for(&ctx.repo_root, ctx.cluster, &base_mint)
+                .context("the selected market is not in this cluster's roster")?;
+            let leader = market::leader(&ctx.repo_root, config, ctx.leader.as_ref())?.pubkey();
+            let lines = crate::outside::preview(
+                &client,
+                &admin,
+                &leader,
+                ctx.cluster,
+                &address,
+                config.base.symbol,
+            )?;
+            return Ok((lines, None));
         }
         Action::InitRegistry => {
             if accounts::registry_fresh(&client, ctx.cluster)?.is_some() {
@@ -2520,9 +2542,9 @@ mod tests {
         // switch among them), the leader's own stake, which sends only after a
         // typed `yes` over the exact amounts, the leader's rename, rotation
         // and passive ladder, each sent only after one over its preview, and the
-        // admin's name override, likewise. A later change that exposes
-        // anything else — a mock-minting bootstrap, a committed-key demo
-        // control — fails here.
+        // admin's name override, likewise. The open to outside depositors is a
+        // ceremony step. A later change that exposes anything else — a
+        // mock-minting bootstrap, a committed-key demo control — fails here.
         let ceremony = [
             Action::Publish,
             Action::CloseBuffers,
@@ -2530,6 +2552,7 @@ mod tests {
             Action::CreateMarket,
             Action::CreateVault,
             Action::Deposit,
+            Action::OpenVault,
             Action::KillLadders,
             Action::CloseVaults,
             Action::DrainLeader,
@@ -2911,21 +2934,28 @@ mod tests {
     }
 
     #[test]
-    fn opening_a_vault_needs_a_vault_and_stays_off_mainnet() {
+    fn opening_a_vault_needs_a_vault_and_confirms_on_mainnet() {
         for phase in PHASES {
-            assert_eq!(
-                Action::OpenVault.enabled(phase, L),
-                matches!(phase, Phase::VaultUnseeded | Phase::Ready),
-                "{phase:?}"
-            );
+            for cluster in [L, M] {
+                assert_eq!(
+                    Action::OpenVault.enabled(phase, cluster),
+                    matches!(phase, Phase::VaultUnseeded | Phase::Ready),
+                    "{phase:?} {cluster:?}"
+                );
+            }
         }
-        // A shortcut, not a menu entry; and no prompt, so it dispatches.
+        // In the runtime pane's vault group, not a menu entry, on either
+        // cluster; no prompt of its own, so localnet dispatches it on the key
+        // and mainnet opens the ceremony prompt over its plan first.
         assert!(!MENU.contains(&Action::OpenVault));
-        assert!(!VAULT_ACTIONS.contains(&Action::OpenVault));
+        assert!(!MAINNET_MENU.contains(&Action::OpenVault));
+        assert!(VAULT_ACTIONS.contains(&Action::OpenVault));
         let a = Action::OpenVault;
         assert!(a.leader_op().is_none() && a.passive_op().is_none() && a.name_op().is_none());
-        assert!(!a.available_on(M));
-        assert!(a.unavailable_reason(M).contains("public launch"));
+        assert!(a.available_on(M) && a.available_on(L));
+        assert!(a.needs_ceremony_confirm(M));
+        assert!(!a.needs_ceremony_confirm(L));
+        assert!(a.needs_verified_chain());
     }
 
     #[test]

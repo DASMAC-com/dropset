@@ -1832,7 +1832,13 @@ impl App {
             // ticket does: the operator is about to read the result, and a
             // frame that waits is better than a prompt over a stale plan.
             let name = vault_name.as_deref().unwrap_or("");
-            match action::ceremony_plan(action, &self.ctx, name) {
+            // The prompt is modal, so the market planned is the one the
+            // confirmed job then resolves and sends to.
+            let selected = self
+                .chain
+                .selected_market(self.selected_market)
+                .map(|m| (m.address, m.base_mint));
+            match action::ceremony_plan(action, &self.ctx, name, selected) {
                 Ok((plan, planned)) => {
                     self.ceremony_prompt = Some(CeremonyPrompt {
                         action,

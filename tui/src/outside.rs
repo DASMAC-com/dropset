@@ -10,6 +10,10 @@
 //! admin half is outstanding, rather than send a write the program
 //! refuses. Each half already set is skipped, so a re-run finishes a
 //! partial open and a full one sends nothing.
+//!
+//! On mainnet the open runs only after the ceremony prompt: [`preview()`]
+//! reads the same seat and admin set and lists what [`open()`] would send,
+//! and the operator types `yes` over it.
 
 use crate::accounts::{self, VaultSeat};
 use crate::chain;
@@ -53,14 +57,7 @@ pub fn open(
     symbol: &str,
     log: &Logger,
 ) -> Result<String> {
-    // The same rule `do_create_vault` holds: the vault's leader is never
-    // this session's own wallet, so a key that is both refuses here too.
-    if leader.pubkey() == wallet.pubkey() {
-        bail!(
-            "the leader must not be this session's wallet ({}) — nothing sent",
-            wallet.pubkey()
-        );
-    }
+    refuse_shared_key(&leader.pubkey(), &wallet.pubkey())?;
     let seat = read(client, cluster, market, &leader.pubkey())?;
     let holds_admin = accounts::registry_admins_fresh(client, cluster)?.contains(&wallet.pubkey());
     let todo = plan(&seat, holds_admin);
@@ -143,6 +140,74 @@ pub fn open(
     );
     let vault = format!("{symbol} vault {}", seat.label());
     Ok(summary(todo, &vault, &wallet.pubkey()))
+}
+
+/// The plan the mainnet ceremony prompt shows before [`open()`]: `leader`'s
+/// vault on `market` and what each half would do, read fresh with nothing
+/// signed. Refuses when nothing would be sent — an open vault, or a leader
+/// half already set with no admin key for the other — so the operator is
+/// never asked to confirm a no-op. `open` re-reads everything when it runs.
+pub fn preview(
+    client: &RpcClient,
+    wallet: &Pubkey,
+    leader: &Pubkey,
+    cluster: Cluster,
+    market: &Pubkey,
+    symbol: &str,
+) -> Result<Vec<String>> {
+    refuse_shared_key(leader, wallet)?;
+    let seat = read(client, cluster, market, leader)?;
+    let holds_admin = accounts::registry_admins_fresh(client, cluster)?.contains(wallet);
+    let vault = format!("{symbol} vault {}", seat.label());
+    plan_lines(plan(&seat, holds_admin), &vault, market, leader, wallet)
+}
+
+/// [`preview()`]'s lines for `todo`, or its refusal when `todo` sends
+/// nothing.
+fn plan_lines(
+    todo: Plan,
+    vault: &str,
+    market: &Pubkey,
+    leader: &Pubkey,
+    wallet: &Pubkey,
+) -> Result<Vec<String>> {
+    if !todo.leader && !todo.admin {
+        if todo.admin_outstanding {
+            bail!(
+                "{vault}: the leader half is set, and the admin half needs a registry \
+                 admin — this session's wallet {wallet} is not one; nothing to send"
+            );
+        }
+        bail!("{vault} is already open to outside depositors — nothing to send");
+    }
+    let leader_line = if todo.leader {
+        format!("SEND set_allow_outside_depositors, signed by the leader {leader}")
+    } else {
+        "already set — skipped".to_string()
+    };
+    let admin_line = if todo.admin {
+        format!("SEND set_outside_deposits_approved, signed by the admin {wallet}")
+    } else if todo.admin_outstanding {
+        format!("OUTSTANDING — this session's wallet {wallet} is not a registry admin")
+    } else {
+        "already set — skipped".to_string()
+    };
+    Ok(vec![
+        format!("{vault} on market {market}"),
+        format!("leader half: {leader_line}"),
+        format!("admin half:  {admin_line}"),
+        format!("fees paid by {wallet}; each half is read back before the next"),
+    ])
+}
+
+/// The same rule `do_create_vault` holds: the vault's leader is never this
+/// session's own wallet, so a key that is both refuses before anything is
+/// read or sent.
+fn refuse_shared_key(leader: &Pubkey, wallet: &Pubkey) -> Result<()> {
+    if leader == wallet {
+        bail!("the leader must not be this session's wallet ({wallet}) — nothing sent");
+    }
+    Ok(())
 }
 
 /// The job's closing line for `vault` after `todo` ran: the admin half
@@ -281,6 +346,71 @@ mod tests {
         );
         // Outstanding wins even when nothing else was left to send.
         assert!(s(true, false, false).contains("outstanding"));
+    }
+
+    #[test]
+    fn the_mainnet_plan_lists_both_halves_and_their_signers() {
+        let (market, leader, wallet) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let lines = |a: bool, b: bool, key: bool| {
+            plan_lines(
+                plan(&seat(a, b), key),
+                "TGBP vault #1",
+                &market,
+                &leader,
+                &wallet,
+            )
+        };
+        let both = lines(false, false, true).unwrap().join("\n");
+        assert!(
+            both.contains(&format!("TGBP vault #1 on market {market}")),
+            "{both}"
+        );
+        assert!(
+            both.contains(&format!(
+                "leader half: SEND set_allow_outside_depositors, signed by the leader {leader}"
+            )),
+            "{both}"
+        );
+        assert!(
+            both.contains(&format!(
+                "admin half:  SEND set_outside_deposits_approved, signed by the admin {wallet}"
+            )),
+            "{both}"
+        );
+        // A partial open plans the missing half and names the other skipped.
+        let partial = lines(true, false, true).unwrap().join("\n");
+        assert!(
+            partial.contains("leader half: already set — skipped"),
+            "{partial}"
+        );
+        // Without an admin key the leader half still plans, the admin half
+        // flagged as outstanding rather than silently dropped.
+        let no_admin = lines(false, false, false).unwrap().join("\n");
+        assert!(no_admin.contains("admin half:  OUTSTANDING"), "{no_admin}");
+    }
+
+    #[test]
+    fn the_mainnet_plan_refuses_a_no_op() {
+        let key = Pubkey::new_unique();
+        let lines = |a: bool, b: bool, admin: bool| {
+            plan_lines(plan(&seat(a, b), admin), "v", &key, &key, &key)
+        };
+        let open = lines(true, true, true).unwrap_err().to_string();
+        assert!(open.contains("already open"), "{open}");
+        // Nothing this session can sign: the leader half set, no admin key.
+        let stuck = lines(true, false, false).unwrap_err().to_string();
+        assert!(stuck.contains("is not one; nothing to send"), "{stuck}");
+    }
+
+    #[test]
+    fn a_leader_that_is_the_session_wallet_is_refused() {
+        let key = Pubkey::new_unique();
+        assert!(refuse_shared_key(&key, &key).is_err());
+        assert!(refuse_shared_key(&key, &Pubkey::new_unique()).is_ok());
     }
 
     #[test]
