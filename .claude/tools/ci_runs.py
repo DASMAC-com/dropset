@@ -4,8 +4,10 @@
 Every session commit carries the ``skip-checks: true`` trailer, so a push
 starts no ``pull_request`` workflow and the required checks stay pending (a
 trigger-level skip blocks the merge; a job-level ``if:`` would report
-success). The remote run starts only when this tool makes the one commit
-without it::
+success). GitHub reads the trailer only after two empty lines, so the
+commit paths write it with ``--cleanup=verbatim`` (with one blank line the
+push runs every workflow; measured on PR 771). The remote run starts only
+when this tool makes the one commit without it::
 
     python3 .claude/tools/ci_runs.py trigger --pr 771
     python3 .claude/tools/ci_runs.py cancel-stale --pr 771
