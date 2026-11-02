@@ -94,7 +94,10 @@ releases its name and its lock on its own.
   handoff failed and only this session holds the writer's key: Enter retries
   the sweep ("Close stranded buffers", now selected); `q` (or Ctrl-C) again,
   with nothing pressed between, exits anyway and abandons the writer's
-  balance. Esc cancels the quit and never exits, and any other key, prompt,
+  balance. Holding `q` down never confirms: a quit press within a second of
+  the warning, or within 150 ms of the last one, counts as the key's
+  auto-repeat and is dropped, so the confirming press is a fresh one after a
+  pause. Esc cancels the quit and never exits, and any other key, prompt,
   click or resize re-arms the warning, so the next quit warns again.
   Mid-retry it warns too: let the retry land before quitting.
 - **No transaction lands at all.** Each level's lifetime runs from the
