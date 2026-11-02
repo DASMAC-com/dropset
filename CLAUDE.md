@@ -23,7 +23,7 @@ sync; the upkeep pass checks only that citations resolve).
   over a body they submit through the GitHub MCP.
 - Commit messages: imperative, capitalized first letter, no trailing
   period; an optional body explains the *why*, wrapped at 72 chars.
-- Run `init-pr` first in a fresh worktree (it warms CI caches), and
+- Run `init-pr` first in a fresh worktree (it opens the draft PR), and
   `commit-changes` at each checkpoint rather than one big final commit.
 
 ### The PR workflow and skill handoffs

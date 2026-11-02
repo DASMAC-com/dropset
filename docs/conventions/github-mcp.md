@@ -537,6 +537,33 @@ say which artifact to change: the **ruleset** is the gate and the list
 above is a mirror of it. Editing the list changes no gating, and leaving
 the list alone does not keep a job non-required.
 
+**A trigger-level skip leaves a required check pending; a job-level skip
+satisfies it.** A workflow that never starts (an event its `on:` block
+does not name, a `paths` filter that excludes the change, a skip string
+or `skip-checks: true` trailer on the head commit) reports nothing, so
+its required contexts stay pending and the ruleset blocks the PR. A job
+skipped by its own `if:` instead reports **success**, and GitHub counts
+that as passing a required check. So a CI gate is **never** a job
+condition: a job-level `if:` on a label, a trailer or a draft flag
+would let a PR go green with no remote run at all. Gate at the trigger,
+as the local-first remote run does (`docs/ci.md` → "8. Local-first
+remote runs"); `semantic-pr.yml`'s merge-group skip is a **step**
+condition inside a job that still runs, which is the same green on
+purpose.
+
+**A concurrency key never spans a merge-group or main run.** A
+`concurrency:` group that cancels on `pull_request` keys on the workflow
+name plus the PR number, and sets `cancel-in-progress` true only for a
+`pull_request` event, since two queue entries cancelling each other
+would dequeue both. Every other event gets a group of its own (the run
+id), not the ref: a group holds one running and one pending run, and a
+third arrival evicts the pending one even with cancellation off, so a
+ref key would let consecutive `push: main` runs (one shared ref) evict
+a queued main run. `.claude/tools/tests/test_ci_concurrency.py` renders
+every block for a `pull_request`, a `merge_group` and a `push` event
+and holds this. `explorer-image.yml` is the deliberate exception: its
+ref-keyed group lets a newer image publish supersede a pending one.
+
 **`Token icon upstream audit` is deliberately absent** from the list
 above. It fetches issuer URLs to check the committed token icons for
 drift, and it is advisory by three independent layers: it is not in the

@@ -299,6 +299,17 @@ the document's state sections.
    dispatcher's refusal is how it learns a limit is reached
    (2026-10-29).
 
+1. **Remote CI runs once per PR, after the local suite.** A PR's
+   remote run starts only after the full local suite passes and the
+   session judges the PR ready; superseded runs are cancelled.
+   GitHub stays the merge gate and every required check stays
+   required; the org plan is untouched. This supersedes the 1928
+   cancellation ("no change to GitHub Actions concurrency") and
+   strikes that line from the standing cuts; the Planning
+   document's Cuts line is the scheduler's to amend. Mechanism:
+   `docs/ci.md` → "8. Local-first remote runs" (operator's
+   direction, 2026-10-31).
+
 ## Rulings index (beyond the numbered set)
 
 - **The lever reservoir**: file only turn-eliminating,

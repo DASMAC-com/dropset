@@ -1,6 +1,6 @@
 ---
 name: init-pr
-description: Bootstrap a worktree — pre-check the gh credential and signing first, then fetch main, set up the branch, push a draft PR, and warm CI caches.
+description: Bootstrap a worktree — pre-check the gh credential and signing first, then fetch main, set up the branch, and push a draft PR.
 disable-model-invocation: true
 user-invocable: true
 ---
@@ -8,8 +8,8 @@ user-invocable: true
 # `init-pr`
 
 Bootstrap the current worktree: fetch main, set up the branch, push a
-draft PR so CI caches start warming while work continues. This is the
-first skill an agent runs after `claude --worktree <tag>` starts.
+draft PR that every later tool keys on. This is the first skill an
+agent runs after `claude --worktree <tag>` starts.
 
 Every deterministic act of the bootstrap is **one tool call**; the
 skill keeps only the turns that hold a judgment — adjudicating a stop.
