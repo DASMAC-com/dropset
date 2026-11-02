@@ -30,12 +30,14 @@ the operator, an attention one; by idle, a session that should have closed.
 
 The race line also **pairs** each verdict that settled locally (GREEN with
 every local check green, or any local red) with the session's next settled
-``wait_for_checks.py`` verdict on the same head (its ``head_sha``), counting
-a local green the remote run failed, with the failing jobs, and the reverse.
-The digest writes both counts every day, fingerprinted
-``ci:local-green-remote-red`` and ``ci:local-red-remote-green``: whether the
-local-first suite predicts CI. A watch run in the background closes on its
-notification, which carries no verdict, so only the read verdict pairs.
+``wait_for_checks.py`` verdict on the same head (its ``head_sha``, or its
+``content_sha`` past the gate's empty trigger commit), counting a local
+green the remote run failed, with the failing jobs, the reverse, and every
+agreeing pair. The digest writes both disagreement counts every day, each
+beside the day's pairs, fingerprinted ``ci:local-green-remote-red`` and
+``ci:local-red-remote-green``: whether the local-first suite predicts CI.
+A watch run in the background closes on its notification, which carries no
+verdict, so only the read verdict pairs.
 
 **Known limits.** A permission ask the operator *granted* leaves no record,
 so only a refused one is measured. A lock wait is the whole call's duration,
@@ -128,6 +130,8 @@ _RACE_SIDE = re.compile(r"\b(ci|local)\b\W{1,3}(green|red)\b")
 LOCAL_GREEN_REMOTE_RED = "local-green-remote-red"
 LOCAL_RED_REMOTE_GREEN = "local-red-remote-green"
 PAIRINGS = (LOCAL_GREEN_REMOTE_RED, LOCAL_RED_REMOTE_GREEN)
+# Both sides agreed: no line of its own, the denominator of the two above.
+AGREED = "agreed"
 _RACE_VERDICT = re.compile(r"verify-head: (\S+) sha=([0-9a-f]+)")
 _LOCAL_STATE = re.compile(r"=local:(green|red)\[")
 _JSON_START = re.compile(r"^\{", re.MULTILINE)
@@ -334,29 +338,37 @@ class WaitLedger:
 
     def _pair(self, text: str, counted: bool) -> None:
         """Pair the held race verdict with this checks verdict when both read
-        the same head (a verdict without ``head_sha`` predates the field and
-        pairs by order). Only a settled pass or fail consumes it."""
+        the same head: its ``head_sha``, or its ``content_sha`` past the
+        gate's empty trigger commit. A verdict with neither predates the
+        fields and pairs by order. Only a settled pass or fail consumes it,
+        and an agreeing pair is recorded too, so pairing that stopped
+        matching reads as nothing paired rather than as a perfect record."""
         verdict = checks_verdict(text) if self._local else None
         if verdict is None or verdict.get("conclusion") not in ("pass", "fail"):
             return
         sha, state = self._local
-        head = verdict.get("head_sha")
-        if (
-            isinstance(head, str)
-            and head
-            and not (head.startswith(sha) or sha.startswith(head))
-        ):
+        heads = [
+            h
+            for h in (verdict.get("head_sha"), verdict.get("content_sha"))
+            if isinstance(h, str) and h
+        ]
+        if heads and not any(h.startswith(sha) or sha.startswith(h) for h in heads):
             return
         self._local = None
-        remote = "green" if verdict["conclusion"] == "pass" else "red"
-        if not counted or remote == state:
+        if not counted:
             return
+        remote = "green" if verdict["conclusion"] == "pass" else "red"
         jobs = sorted(
             str(f.get("name"))
             for f in verdict.get("failing") or []
             if isinstance(f, dict) and f.get("name")
         )
-        kind = LOCAL_GREEN_REMOTE_RED if state == "green" else LOCAL_RED_REMOTE_GREEN
+        if remote == state:
+            kind = AGREED
+        elif state == "green":
+            kind = LOCAL_GREEN_REMOTE_RED
+        else:
+            kind = LOCAL_RED_REMOTE_GREEN
         self.pairs.append((kind, jobs))
 
     def observe(self, rec: dict, stamp: str | None) -> None:
@@ -633,7 +645,7 @@ def digest_section(
     # (dimension, cause) -> per-session seconds.
     per_cause: dict[tuple[str, str], list[int]] = {}
     # pairing -> failing job -> events naming it, beside the event count.
-    paired: dict[str, dict] = {k: {"count": 0, "jobs": {}} for k in PAIRINGS}
+    paired: dict[str, dict] = {k: {"count": 0, "jobs": {}} for k in (*PAIRINGS, AGREED)}
     for ledger in ledgers:
         for line in ledger:
             for kind, events in line.pairs.items():
@@ -678,7 +690,10 @@ def digest_section(
         + (", ".join(f"{c} {hours(s)}" for c, s in builds) or "none"),
         f"- CI wait: {hours(totals[CHECKS] + totals[QUEUE])}"
         f" (checks {hours(totals[CHECKS])}, queue {hours(totals[QUEUE])})",
-        *(_pairing_line(kind, paired[kind]) for kind in PAIRINGS),
+        *(
+            _pairing_line(kind, paired[kind], sum(t["count"] for t in paired.values()))
+            for kind in PAIRINGS
+        ),
         "- Queue profile by hour (depth / longest wait): "
         + (
             ", ".join(
@@ -743,15 +758,17 @@ def digest_section(
     return out, twin
 
 
-def _pairing_line(kind: str, tally: dict) -> str:
-    """One pairing's daily line, written even at zero so its absence is never
-    mistaken for an unread transcript."""
+def _pairing_line(kind: str, tally: dict, total: int) -> str:
+    """One pairing's daily line, written even at zero, beside every pair the
+    day made: zero of many is a finding, zero of zero is pairing that saw
+    nothing."""
     local, _, remote = kind.partition("-remote-")
     jobs = ", ".join(
         f"{job} {n}" for job, n in sorted(tally["jobs"].items(), key=lambda kv: -kv[1])
     )
     return (
         f"- {local.replace('-', ' ').capitalize()}, remote {remote}:"
-        f" {tally['count']}{f' (failing: {jobs})' if jobs else ''}"
+        f" {tally['count']} of {total} paired"
+        f"{f' (failing: {jobs})' if jobs else ''}"
         f" — `**Fingerprint**: ci:{kind}`"
     )

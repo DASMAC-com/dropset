@@ -805,6 +805,13 @@ def _runs_between(start: datetime, end: datetime) -> list[dict]:
         return _runs_between(start, mid) + _runs_between(
             mid + timedelta(seconds=1), end
         )
+    if len(runs) >= RUNS_SEARCH_CAP:
+        print(
+            f"ci-metrics: {stamp(start)}..{stamp(end)} still returned the"
+            f" {RUNS_SEARCH_CAP}-run cap at the {minutes(MIN_SLICE):g}m floor;"
+            " its counts are truncated",
+            file=sys.stderr,
+        )
     return runs
 
 

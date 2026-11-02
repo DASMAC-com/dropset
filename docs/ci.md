@@ -489,15 +489,19 @@ Two readings answer whether the change paid. The first is runner load:
 `make ci-metrics ARGS='--pr-runs --days 14'` groups every
 `pull_request` run in the window by PR and reports runs per PR, the
 **superseded** share (a run on a head that was not the PR's latest),
-the cancelled share and the runner wait, median and p90. The baseline,
-a fortnight that ends as the trailer lands, is a dated comment on the
-parent design issue.
+the cancelled share and the runner wait, median and p90. The wait is
+per job, a job's start minus its creation, over a sample of runs spread
+across the window (`--wait-sample`), because a run's own start stamp is
+its creation and reads zero. The baseline, a fortnight that ends as the
+trailer lands, is a dated comment on the parent design issue.
+
 The second is whether a local green predicts a remote one. The wait
 ledger pairs each race verdict that settled locally with the session's
-next checks verdict on the same head (the verdict's `head_sha`), and the
-digest's Wait section writes the day's count of a local green the
-remote run failed, with the failing jobs, as
-`ci:local-green-remote-red`, and the reverse as
-`ci:local-red-remote-green`, both every day, zero included. More than
-one gated PR in ten paying that loop over a week re-opens what the local
-suite runs.
+next checks verdict on the same head: the verdict's `head_sha`, or its
+`content_sha`, the commit the gate's empty trigger commit carries. The
+digest's Wait section writes the day's count of a local green the remote
+run failed, with the failing jobs, as `ci:local-green-remote-red`, and
+the reverse as `ci:local-red-remote-green`, each every day and beside
+the day's pairs, so pairing that stopped matching reads as zero of
+zero rather than as a clean record. More than one gated PR in ten
+paying that loop over a week re-opens what the local suite runs.

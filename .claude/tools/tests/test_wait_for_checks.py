@@ -3113,6 +3113,15 @@ class SnapshotTests(unittest.TestCase):
             v["head_sha"], self._git("rev-parse", "HEAD").decode().strip()[:12]
         )
 
+    def test_content_sha_looks_past_an_empty_trigger_commit(self):
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "work")
+        raced = self._git("rev-parse", "HEAD").decode().strip()[:12]
+        self.assertEqual(wfc.content_sha(), raced)
+        self._git("commit", "-q", "--allow-empty", "-m", "Trigger CI")
+        self.assertNotEqual(wfc.head_sha(), raced)
+        self.assertEqual(wfc.content_sha(), raced)
+
     def test_head_sha_is_none_when_git_cannot_answer(self):
         real = wfc._git
         wfc._git = lambda args, cwd=None: (128, b"", "fatal: not a repo")

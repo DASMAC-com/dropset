@@ -126,7 +126,8 @@ Prints JSON::
       "snapshot": {"path": "…", "bytes": 4096, "uncommitted": [], …},
       "hint": {"gate": "green", "do": "…", "evidence": "…"},
       "log_path": "/…/wait-for-checks-285.log",
-      "head_sha": "0123456789ab" // local HEAD, verify_head.py's width
+      "head_sha": "0123456789ab",   // local HEAD, verify_head.py's width
+      "content_sha": "fedcba987654" // past an empty trigger commit
     }
 
 ``hint.gate`` is ``green`` / ``blocking`` / ``unverified`` / ``retry``; act on
@@ -2076,6 +2077,24 @@ def head_sha() -> str | None:
     return sha[:12] if re.fullmatch(r"[0-9a-f]{40,64}", sha) else None
 
 
+def content_sha() -> str | None:
+    """The oldest commit in HEAD's first-parent run sharing HEAD's tree,
+    first 12 hex digits: the head the local race verified when HEAD is the
+    gate's empty trigger commit (``ci_runs.py trigger``), which the race
+    never sees. ``None`` when git cannot answer."""
+    code, out, _ = _git(["log", "--first-parent", "-n", "16", "--format=%H %T"])
+    rows = [line.split() for line in out.decode(errors="replace").splitlines()]
+    rows = [r for r in rows if len(r) == 2] if code == 0 else []
+    if not rows:
+        return None
+    oldest = rows[0][0]
+    for sha, tree in rows[1:]:
+        if tree != rows[0][1]:
+            break
+        oldest = sha
+    return oldest[:12]
+
+
 def snapshot(path: Path, base: str) -> dict:
     """Write the working diff — committed, staged, unstaged AND untracked —
     against the merge base with ``origin/<base>``, so recovery from a worktree
@@ -2311,8 +2330,11 @@ def wait(
         "snapshot": snap,
         "log_path": str(log),
         # The wait ledger pairs this with the session's `verify_head.py`
-        # verdict on the same head (a local green followed by a remote red).
+        # verdict on the same head (a local green followed by a remote red):
+        # the local HEAD, run from the PR's worktree after its push, and the
+        # commit whose content it carries past an empty trigger commit.
         "head_sha": head_sha(),
+        "content_sha": content_sha(),
     }
     verdict["hint"] = action_hint(verdict)
     return verdict

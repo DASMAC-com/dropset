@@ -624,17 +624,19 @@ def pr_job(created: int, started: int | None, conclusion: str = "success") -> di
     }
 
 
-# PR 770: three runs over two heads — the first superseded, then cancelled;
+# PR 770: four runs over two heads — the first superseded, the last cancelled;
 # a closed PR's run, keyed by its branch; PR 771: one run, a 40-minute wait.
 PR_RUNS = {
     "since": "2026-10-17T00:00:00Z",
     "until": "2026-10-31T01:00:00Z",
     "runs": [
-        pr_run(1, "aaa", 0, "cancelled"),
+        pr_run(1, "aaa", 0),
         pr_run(2, "bbb", 5),
         pr_run(3, "bbb", 7),
         pr_run(4, "ccc", 2, pr=None, branch="eng-9"),
         pr_run(5, "ddd", 10, pr=771),
+        # Cancelled on the latest head, so cancelled and never superseded.
+        pr_run(6, "bbb", 8, "cancelled"),
     ],
     # A skipped job never asks for a runner, so its zero wait is not counted.
     "jobs": {
@@ -652,15 +654,17 @@ class PrRunsTests(unittest.TestCase):
         report = cm.pr_runs_report(PR_RUNS)
         by_pr = {r["pr"]: r for r in report["per_pr"]}
         self.assertEqual(list(by_pr), ["#770", "#771", "branch:eng-9"])
-        self.assertEqual((by_pr["#770"]["runs"], by_pr["#770"]["heads"]), (3, 2))
+        self.assertEqual((by_pr["#770"]["runs"], by_pr["#770"]["heads"]), (4, 2))
         self.assertEqual(by_pr["#770"]["superseded"], 1)
         self.assertEqual(by_pr["#770"]["cancelled"], 1)
         self.assertEqual(report["branch_fallback"], 1)
-        self.assertEqual((report["runs"], report["superseded"]), (5, 1))
-        # Waits 1, 1, 3, 2, 40 minutes.
+        self.assertEqual((report["runs"], report["superseded"]), (6, 1))
+        # Waits 1, 1, 3, 2, 40 minutes; the cancelled run was not sampled.
         self.assertEqual(report["wait_median_min"], 2.0)
+        self.assertEqual(report["wait_p90_min"], 40.0)
         self.assertEqual(report["wait_max_min"], 40.0)
         self.assertEqual(report["waited_over_1m"], 5)
+        self.assertEqual(by_pr["#770"]["wait_p90_min"], 3.0)
 
     def test_an_unsampled_or_queued_run_has_no_wait(self):
         payload = {"runs": [pr_run(1, "a", 0), pr_run(2, "a", 1)]}
@@ -683,9 +687,18 @@ class PrRunsTests(unittest.TestCase):
 
     def test_summary_lines(self):
         lines = cm.pr_runs_lines(cm.pr_runs_report(PR_RUNS), limit=2)
-        self.assertIn("5 pull_request runs on 3 PR(s) (1 keyed by branch", lines[0])
-        self.assertEqual(lines[1], "superseded 1/5 (20%); cancelled 1/5 (20%)")
+        self.assertIn("6 pull_request runs on 3 PR(s) (1 keyed by branch", lines[0])
+        self.assertEqual(lines[1], "superseded 1/6 (17%); cancelled 1/6 (17%)")
         self.assertEqual(len(lines), 6)
+
+    def test_a_capped_slice_at_the_floor_warns(self):
+        full = [{"id": n} for n in range(cm.RUNS_SEARCH_CAP)]
+        start = cm.parse_ts("2026-10-30T00:00:00Z")
+        err = io.StringIO()
+        with mock.patch.object(cm, "gh_api", return_value=full), redirect_stderr(err):
+            runs = cm._runs_between(start, start + cm.MIN_SLICE)
+        self.assertEqual(len(runs), cm.RUNS_SEARCH_CAP)
+        self.assertIn("truncated", err.getvalue())
 
     def test_a_capped_window_is_split(self):
         full = [{"id": n} for n in range(cm.RUNS_SEARCH_CAP)]
@@ -724,7 +737,10 @@ class PrRunsTests(unittest.TestCase):
                         self.assertEqual(
                             cm.main(["--pr-runs", "--cache", cache, "--json"]), 0
                         )
-                self.assertEqual(json.loads(buf.getvalue())["runs"], 5)
+                out = json.loads(buf.getvalue())
+                self.assertEqual(out["runs"], 6)
+                # The per-PR series rides the JSON, never the summary.
+                self.assertEqual([r["pr"] for r in out["per_pr"]][0], "#770")
             self.assertEqual(fetch.call_count, 0)
 
 
