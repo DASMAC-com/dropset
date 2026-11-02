@@ -1834,7 +1834,7 @@ impl App {
             let name = vault_name.as_deref().unwrap_or("");
             // The prompt is modal, so the selection index cannot move before
             // the confirmed job resolves it again; and the mainnet roster is
-            // one pair, so a rescan cannot swap in another market the open
+            // one pair, so a later scan cannot swap in another market the open
             // would accept (`config_for` refuses any outside the roster).
             let selected = self
                 .chain
