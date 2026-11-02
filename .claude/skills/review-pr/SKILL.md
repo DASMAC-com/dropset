@@ -952,10 +952,8 @@ migrations or generation inputs, and whether it spans crates.
    the base-freshness re-check comes after. Do genuinely independent
    work — an existence probe for the catalogue, the migration-collision
    check, a title draft — or say once that you are waiting and stop
-   calling tools. Still allowed: the single post-push
-   `wait_for_checks --no-watch` (`init-pr`'s draft PR starts CI at
-   push), and `ListAgents` when the question is which **peer sessions**
-   are live.
+   calling tools. Still allowed: `ListAgents` when the question is
+   which **peer sessions** are live.
 
    **A trim proposal against any rule in this step argues against
    `history.md` → "Exemplars"**, naming the figure it expects to move
@@ -1483,8 +1481,8 @@ migrations or generation inputs, and whether it spans crates.
    when the toolchain was absent locally. It is the run step 17's
    trigger started, on a tree it left pushed, so the wait is
    survivable (`history.md` → "Worktree deleted under a wait"); a
-   commit after it moves the head off the run, so a fix re-enters step
-   17\.
+   commit after it moves the head off the run, so a fix goes back
+   through step 17.
 
    **Wait with the tool — never poll.** One call snapshots the working
    diff (uncommitted and untracked work included, so recovery is one
