@@ -75,6 +75,11 @@ class RegenTests(unittest.TestCase):
         self.assertEqual(
             entry["commit"], git(self.repo, "rev-parse", "--short", "HEAD").strip()
         )
+        # The skip trailer after TWO empty lines, so the push runs no CI.
+        self.assertEqual(
+            git(self.repo, "log", "-1", "--format=%B"),
+            "Rebuild IDL\n\n\nskip-checks: true\n\n",
+        )
 
     def test_a_new_file_in_the_family_is_committed_too(self):
         # `git add -A` over the family paths, so an added vector is not missed.
