@@ -348,9 +348,13 @@ by a path built at runtime is one example; a crate that starts loading the
 ## 7. Racing local against CI
 
 A verification point is one call, `.claude/tools/verify_head.py`. It
-records HEAD, runs `make lint-abridged` and then `make test-abridged`,
-each as a process group it owns, and, when HEAD is pushed and the tree is clean,
-polls CI for the same SHA. Each check settles on whichever side finishes
+records HEAD and runs `make lint-abridged` and then `make test-abridged`,
+each as a process group it owns. **Before the trigger commit the race is
+local-only**: every session commit carries the skip trailer (section 8),
+so no remote run exists for the head, and the local side alone decides
+the verdict. A remote side joins only once the trigger commit is the
+head: then, when HEAD is pushed and the tree is clean, the call polls CI
+for the same SHA, and each check settles on whichever side finishes
 first. The three `Lint*` checks all green (`Lint`, `Lint (clippy)`,
 `Lint (rustdoc)`) kill the local lint. The `Tests*` checks all
 green kill or skip the local test; the `code` filter reports an excluded
@@ -361,14 +365,67 @@ settling side of each check and the SHA, and the call also appends a
 `machine_load.py --sample` line to the fleet log.
 
 A local pass is enough to take the next step, never to merge: CI's full
-sweep still runs behind it, and the merge queue runs it again. CI is
-skipped when it cannot speak for the tree: when HEAD is unpushed, when
-the tree is dirty, or after three failed reads in a row. The verdict
-then says `not-consulted`. An unpushed or dirty tree heals by committing
-and pushing; only an unreachable CI makes a local `make lint` and
-`make test` stand in for the full sweep. A new commit mid-race ends it
+sweep runs once at the trigger, and the merge queue runs it again. CI is
+skipped when it cannot speak for the tree: when the head carries the
+skip trailer, when HEAD is unpushed, when the tree is dirty, or after
+three failed reads in a row. The verdict then says `not-consulted`. An
+unpushed or dirty tree heals by committing and pushing; only an
+unreachable CI makes a local `make lint` and `make test` stand in for
+the full sweep. A new commit mid-race ends it
 `HEAD-MOVED` and `--timeout` ends it `TIMEOUT`; either way the caller
 acts on a verdict only when its `sha` is HEAD's. The kill signals the
 whole process group, SIGTERM and then SIGKILL, so no orphaned `rustc`
 holds the cargo pool lock. That lock is a file lock, released when its
 process dies.
+
+## 8. Local-first remote runs
+
+A PR's branch runs **no** remote CI while a session iterates. Remote CI
+runs once per readiness: after the full local suite passes and the
+session judges the PR ready. GitHub stays the gate of record, and every
+required check stays required. Only CI ever marks a required context;
+the local suite is the session's own gate on whether to start the
+remote run, nothing more.
+
+- **The skip trailer on every commit.** Each commit a session makes
+  carries the git trailer `skip-checks: true`, GitHub's documented
+  alternative to `[skip ci]`. GitHub reads the skip from a PR's head
+  commit, so a push whose tip carries it starts no `pull_request`
+  workflow, and the head's required checks stay **pending**, which the
+  ruleset reads as blocked, never as passed. Skip strings apply only to
+  `push` and `pull_request` events, so merge-group runs and the
+  `push: main` runs are untouched, and the squash merge composes its
+  message from the PR title and body, so the trailer never reaches
+  main.
+- **One trailer-free trigger commit.** Once `make lint` and `make test`
+  are green on the head and the session judges the PR ready, the
+  trigger tool makes one empty commit without the trailer, signed when
+  the signer answers, and pushes it. That push is the only one that
+  runs CI. A fix after it is an ordinary trailer commit, so the head
+  goes back to pending until the session triggers again. At the merge
+  gate the order is local full green, sign, trigger, wait, enqueue, so
+  the commit CI verifies is the commit that merges.
+- **The cancel at the push.** A run is tied to the commit it started
+  on, and a stale one holds a runner to the end for a result nobody
+  reads. Every push path calls the tool's stale-run cancel, which
+  cancels each queued or running run of the PR whose commit is not the
+  head it read in the same call, never a run on the current head.
+- **The concurrency backstop.** Each `pull_request` workflow carries a
+  `concurrency:` block for a push that reaches GitHub without the tool
+  (a hand push, a tool that died between the push and the cancel). On
+  a `pull_request` event the group is the workflow name plus the PR
+  number, and a newer run cancels the older. Every other event takes a
+  group of its own, keyed on the run id rather than the ref, with
+  `cancel-in-progress` off: a shared group evicts its **pending** run
+  even with cancellation off, and two merge-queue entries cancelling
+  each other would dequeue both. The group fires only
+  when a new run starts, so on its own it is too late; it backs up the
+  cancel, never replaces it. `test_ci_concurrency.py` renders each
+  block for the three events and holds the key and the flag.
+
+Why the skip sits at the trigger and never in a job: a job skipped by an
+`if:` reports success and satisfies a required check, so a job-level
+gate would let a PR go green with no remote run at all
+(`docs/conventions/github-mcp.md` → "Required status checks"). The
+PR-head run cannot be dropped outright either: the queue
+admits a PR only once its head has passed the required checks.

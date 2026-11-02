@@ -29,6 +29,18 @@
 #
 # No `pnpm install`: the audit script imports only node builtins and two
 # sibling scripts, so the job needs a checkout and a node, nothing else.
+concurrency:
+  # The backstop for a push that reaches GitHub without the trigger tool: a
+  # newer PR-head run cancels the stale one. Any other event takes a group of
+  # its own (the run id, not the ref), since a shared group evicts its pending
+  # run even with cancel-in-progress off, and a merge-group or main run must
+  # never be cancelled (docs/ci.md, "Local-first remote runs").
+  cancel-in-progress: >-
+    ${{ github.event_name == 'pull_request' }}
+  group: >-
+    ${{ github.workflow }}-${{ github.event_name == 'pull_request'
+    && format('pr-{0}', github.event.pull_request.number)
+    || format('run-{0}', github.run_id) }}
 jobs:
   audit:
     name: 'Token icon upstream audit'
