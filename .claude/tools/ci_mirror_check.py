@@ -8,7 +8,8 @@ drifting. It fails, one line per finding, when:
 
 - a workflow that gates the merge queue (a ``merge_group`` trigger, the only
   workflows a required check can live in) runs a ``make`` target no
-  manifest row for that workflow lists in ``ci``;
+  manifest row for that workflow lists in ``ci``, or runs ``make`` with an
+  argument the walk cannot read as a target (an expansion, a quoted word);
 - a row's ``ci`` target is one its workflow no longer runs;
 - a required context in the ruleset mirror (``docs/conventions/github-mcp.md``
   → "Required status checks") has no row, or a row names a context the mirror
@@ -44,7 +45,11 @@ RULESET_DOC = Path("docs") / "conventions" / "github-mcp.md"
 RULESET_HEADING = "### Required status checks"
 
 _TOP_KEY_RE = re.compile(r"""^(['"]?)([A-Za-z_][\w-]*)\1:\s*(.*)$""")
-_JOB_RE = re.compile(r"^  ([A-Za-z_][\w-]*):\s*$")
+_JOB_RE = re.compile(r"^  ([A-Za-z_][\w-]*):\s*(?:#.*)?$")
+_COMMENT_RE = re.compile(r"\s+#.*$")
+#: ``make`` flags whose value is the next word (``make -C dir x``).
+#: ``-j`` / ``-l`` take one only when it is a number, handled inline.
+_ARG_FLAGS = frozenset({"-C", "-f", "-I", "-o", "-W", "--directory", "--file"})
 _JOB_NAME_RE = re.compile(r"^    name:\s*(.+?)\s*$")
 _RUN_RE = re.compile(r"^(\s*(?:-\s+)?)run:\s*(.*)$")
 _SHELL_SPLIT_RE = re.compile(r"[;&|()]+")
@@ -57,6 +62,7 @@ _CONTEXT_LIST_RE = re.compile(r"(?:`[^`]+`[,.]?\s*)+")
 class Job:
     name: str
     targets: list[str] = field(default_factory=list)
+    unreadable: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -70,28 +76,62 @@ def _indent(line: str) -> int:
 
 
 def _unquote(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1]
-    return value
+    """A YAML scalar's text: the inside of a leading quoted span (any trailing
+    `` # comment`` dropped), else the plain value up to a `` #`` comment."""
+    value = value.strip()
+    if value[:1] in ("'", '"'):
+        end = value.find(value[0], 1)
+        return value[1:end] if end > 0 else value[1:]
+    return _COMMENT_RE.sub("", value)
 
 
-def make_targets(command: str) -> list[str]:
-    """The targets every ``make`` invocation in a shell command names."""
-    out: list[str] = []
+def make_targets(command: str) -> tuple[list[str], list[str]]:
+    """The targets every ``make`` invocation in a shell command names, and the
+    arguments of any invocation this walk cannot read as a target.
+
+    A ``make`` word counts wherever it sits in a ``;`` / ``&&`` / ``|``
+    segment, so a keyword or wrapper before it (``then make x``,
+    ``FOO=1 make x``, ``timeout 600 make x``) cannot hide it. An argument that
+    is not a plain target name (``make "$T"``, ``make ${{ matrix.t }}``, a
+    trailing ``\\``) is returned as unreadable rather than skipped, so the
+    check fails loudly instead of passing falsely.
+    """
+    targets: list[str] = []
+    unreadable: list[str] = []
     for line in command.splitlines():
         if line.lstrip().startswith("#"):
             continue
+        line = _COMMENT_RE.sub("", line)
         for segment in _SHELL_SPLIT_RE.split(line):
             words = segment.split()
-            if not words or words[0] != "make":
-                continue
-            for token in words[1:]:
-                if token.startswith("-") or "=" in token:
+            for at, word in enumerate(words):
+                if word != "make":
                     continue
-                if not _TARGET_RE.match(token):
-                    break
-                out.append(token)
-    return out
+                found = False
+                rest = words[at + 1 :]
+                skip = False
+                for k, token in enumerate(rest):
+                    if skip:
+                        skip = False
+                        continue
+                    if token in _ARG_FLAGS or (
+                        token in ("-j", "-l")
+                        and k + 1 < len(rest)
+                        and rest[k + 1].isdigit()
+                    ):
+                        skip = True
+                        continue
+                    if token.startswith("-") or "=" in token:
+                        continue
+                    if not _TARGET_RE.match(token):
+                        unreadable.append(token)
+                        found = True
+                        break
+                    targets.append(token)
+                    found = True
+                if not found:
+                    unreadable.append("(no target)")
+    return targets, unreadable
 
 
 def parse_workflow(text: str) -> Workflow:
@@ -136,8 +176,10 @@ def parse_workflow(text: str) -> Workflow:
             i += 1
         command = "\n".join(body)
         if value[:1] not in ("|", ">"):
-            command = _unquote(" ".join(body).strip())
-        job.targets.extend(make_targets(command))
+            command = _unquote(" ".join(body))
+        targets, unreadable = make_targets(command)
+        job.targets.extend(targets)
+        job.unreadable.extend(unreadable)
     return Workflow(gates, jobs)
 
 
@@ -184,6 +226,12 @@ def check(
     for name, wf in gating.items():
         listed = {t for r in rows if r.workflow == name for t in r.ci}
         for job in wf.jobs.values():
+            for arg in dict.fromkeys(job.unreadable):
+                problems.append(
+                    f"{name} job '{job.name}' runs `make` with an argument this "
+                    f"check cannot read as a target ({arg}); name the target "
+                    f"literally"
+                )
             for target in dict.fromkeys(job.targets):
                 if target not in listed:
                     problems.append(

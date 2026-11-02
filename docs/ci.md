@@ -281,11 +281,14 @@ in manifest order, so a CI job gains a local mirror by gaining a row, never
 by an edit to this page or to the tool. The `ci-mirror-check` lint hook
 (`.claude/tools/ci_mirror_check.py`) keeps the manifest honest. It fails
 when a queue workflow (one with a `merge_group` trigger) runs a target no
-row lists, when a row lists a target its workflow no longer runs, when a
-required context in the ruleset mirror (`docs/conventions/github-mcp.md`)
-has no row, or when a row names a target the Makefile lacks.
+row lists or a `make` argument it cannot read, when a row lists a target
+its workflow no longer runs, when the ruleset mirror
+(`docs/conventions/github-mcp.md`) and the rows disagree on a context, when
+a row names a workflow that does not gate the queue, or when a row names a
+target the Makefile lacks.
 
-Lint has two local forms of one hook set (`cfg/pre-commit-lint.yml`):
+Lint has two local forms of one hook set (`cfg/pre-commit-lint.yml`), and
+CI runs only the first:
 
 - **The full sweep** is the manifest's local target for the lint contexts:
   every tracked and untracked file, with `clippy` and `rustdoc` over the

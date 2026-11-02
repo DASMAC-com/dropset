@@ -140,9 +140,42 @@ class ParseTest(unittest.TestCase):
         )
 
     def test_make_targets(self):
-        self.assertEqual(cmc.make_targets("make -j4 a b && make c"), ["a", "b", "c"])
-        self.assertEqual(cmc.make_targets("make X=1 a; cmake b"), ["a"])
-        self.assertEqual(cmc.make_targets("# make a"), [])
+        for command, targets in (
+            ("make -j4 a b && make c", ["a", "b", "c"]),
+            ("make X=1 a; cmake b", ["a"]),
+            ("# make a", []),
+            ("if [ x ]; then make a; fi", ["a"]),
+            ("FOO=1 make a", ["a"]),
+            ("timeout 600 make a", ["a"]),
+            ("make -C dir a", ["a"]),
+            ("make -j 4 a", ["a"]),
+            ("make a  # make b", ["a"]),
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(cmc.make_targets(command), (targets, []))
+
+    def test_unreadable_make_arguments(self):
+        for command, arg in (
+            ('make "$T"', '"$T"'),
+            ("make ${{ matrix.t }}", "${{"),
+            ("make \\", "\\"),
+            ("make", "(no target)"),
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(cmc.make_targets(command), ([], [arg]))
+
+    def test_trailing_comments_hide_nothing(self):
+        wf = cmc.parse_workflow(
+            "jobs:\n"
+            "  a:  # first job\n"
+            "    name: 'A'  # its context\n"
+            "    steps:\n"
+            "    - run: 'make tools-tests'  # mirrors make lint\n"
+            "'on':\n"
+            "  merge_group: null\n"
+        )
+        self.assertEqual(wf.jobs["a"].name, "A")
+        self.assertEqual(wf.jobs["a"].targets, ["tools-tests"])
 
     def test_makefile_targets(self):
         self.assertEqual(
@@ -172,6 +205,15 @@ class CheckTest(unittest.TestCase):
             row("Tests", "test.yml", ["program-keypair"], ["test"]),
         ]
         self.assertOneFinding(run(rows=rows), "test.yml", "'Tests'", "`make idl`")
+
+    def test_an_unreadable_make_argument(self):
+        workflows = {
+            "lint.yml": LINT_YML.replace(
+                "run: 'make tools-tests'", "run: 'make tools-tests; make \"$T\"'"
+            ),
+            "test.yml": TEST_YML,
+        }
+        self.assertOneFinding(run(workflows=workflows), "'Lint'", '"$T"', "cannot read")
 
     def test_a_row_ci_target_the_workflow_no_longer_runs(self):
         rows = [
