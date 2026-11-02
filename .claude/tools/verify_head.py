@@ -52,7 +52,10 @@ manifest's distinct local targets in order (``cfg/ci-mirror.json``, read by
 ``ci_mirror.py``; ``make lint`` first, then ``make test`` and the rest), each
 its own process group as above, the E0463 recovery kept for the ``test``
 stage. CI settles a stage only when every context that target mirrors is
-green, and the verdict line carries ``mode=full`` after the SHA.
+green, and the verdict line carries ``mode=full`` after the SHA. A context
+with no local mirror (``Frontend``, ``Detect changes``, ``Semantic PR``) is
+never read here: a GREEN covers the local mirrors only, and the CI wait
+gates the rest.
 
 **A head carrying ``skip-checks: true``** started no remote run, so CI is
 not polled and ``ci=`` reads ``not-consulted(skipped-by-trailer)``: a race on

@@ -10,6 +10,7 @@ via ``make tools-tests``.
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import signal
@@ -17,6 +18,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 import ci_mirror
@@ -468,6 +470,20 @@ class FullModeTest(unittest.TestCase):
         self.assertEqual(stages[0], ("lint", ["make", "lint"]))
         self.assertIn("test", buckets)
         self.assertTrue(all(expected for _, expected in buckets.values()))
+
+    def test_a_bad_manifest_is_a_usage_error_before_any_stage(self):
+        def broken(*_):
+            raise ci_mirror.ManifestError("not JSON")
+
+        real_load, real_stage = ci_mirror.load, vh.Stage
+        ci_mirror.load = broken
+        vh.Stage = lambda *a: self.fail("a stage started")
+        self.addCleanup(setattr, ci_mirror, "load", real_load)
+        self.addCleanup(setattr, vh, "Stage", real_stage)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(vh.main(["--full"]), 2)
+        self.assertIn("bad CI-mirror manifest: not JSON", err.getvalue())
 
     def test_the_abridged_line_carries_no_mode(self):
         r = vh.Race(sha=SHA, outcome="GREEN", ci_note="consulted")

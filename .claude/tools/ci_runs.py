@@ -12,19 +12,25 @@ when this tool makes the one commit without it::
     python3 .claude/tools/ci_runs.py trigger --pr 771
     python3 .claude/tools/ci_runs.py cancel-stale --pr 771
 
-``trigger`` checks the PR's head branch is the checked-out one, probes the
-signer (``signing_probe.py``) and refuses with its ``LOCKED`` line when it
-does not answer, so the merge gate can hold the run until the operator
-unlocks rather than verify a head the re-sign will rewrite. Then it makes
-one empty signed commit, :data:`TRIGGER_SUBJECT`, pushes it with a lease
-pinned to the remote tip read before the commit, and runs ``cancel-stale``.
+``trigger`` checks the PR's head branch is the checked-out one, that the
+remote tip is an ancestor of ``HEAD`` (never forcing over another session's
+push) and that nothing is staged, then probes the signer
+(``signing_probe.py``) and refuses with its ``LOCKED`` line when it does not
+answer, so the merge gate can hold the run until the operator unlocks rather
+than verify a head the re-sign will rewrite. Then it makes one empty signed
+commit, :data:`TRIGGER_SUBJECT`, pushes it as a plain fast-forward (a failed
+push drops the commit again), and runs ``cancel-stale``, whose failure is
+reported on the line and never undoes the trigger.
 
 ``cancel-stale`` lists the branch's ``pull_request`` workflow runs, then reads
 the PR's head, and cancels every run not yet completed whose head SHA differs
 from it. The head is read **after** the runs, so a listed run can never sit
 on a head newer than the one it is compared with: a run on the current head
 is never cancelled (a cancelled run reads as a failure, and costs a
-re-trigger). ``resign_branch.py resign`` calls it after its force-push.
+re-trigger). After a push the caller passes the pushed SHA, since the PR's
+head can trail it: the head is re-read until it matches (bounded), and a run
+on that SHA is kept either way. ``resign_branch.py resign`` calls it after
+its force-push.
 
 Each prints one verdict line starting ``ci-runs |`` and exits 0 on success,
 1 on a refusal (a locked signer, another branch, a failed read or push), 2
@@ -40,6 +46,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from typing import Callable
 
 PREFIX = "ci-runs |"
@@ -50,6 +57,10 @@ TRIGGER_SUBJECT = "ci: Run the remote checks"
 
 #: A run in any other status is finished and has nothing to cancel.
 DONE = "completed"
+
+#: How often, and how far apart, a read waits for the PR head to show a push.
+HEAD_WAIT_TRIES = 5
+HEAD_WAIT_S = 2.0
 
 #: One subprocess call: argv in, ``(returncode, stdout, stderr)`` out.
 Runner = Callable[[list[str]], "tuple[int, str, str]"]
@@ -114,17 +125,36 @@ def active_runs(runner: Runner, repo: str, branch: str) -> list[dict]:
     return [r for r in runs if isinstance(r, dict) and r.get("status") != DONE]
 
 
-def stale(runs: list[dict], head: str) -> list[dict]:
-    """The runs to cancel: every one whose commit is not ``head``."""
-    return [r for r in runs if r.get("head_sha") != head]
+def stale(runs: list[dict], kept: set[str]) -> list[dict]:
+    """The runs to cancel: every one whose commit is not a ``kept`` SHA."""
+    return [r for r in runs if r.get("head_sha") not in kept]
 
 
-def cancel_stale(runner: Runner, repo: str, pr: int) -> str:
+def cancel_stale(
+    runner: Runner,
+    repo: str,
+    pr: int,
+    expect: str = "",
+    sleep: Callable[[float], None] = time.sleep,
+) -> str:
+    """Cancel the PR's active runs on any SHA but its head.
+
+    ``expect`` is a SHA just pushed: the PR's head can trail a push for a
+    moment, so the head is re-read until it matches (bounded), and a run on
+    ``expect`` is kept even if it never does — a lagging read must not
+    cancel the newest run.
+    """
     branch, _ = read_pr(runner, repo, pr)
     runs = active_runs(runner, repo, branch)
     # Read after the runs, never before: see the module docstring.
     _, head = read_pr(runner, repo, pr)
-    doomed = stale(runs, head)
+    for _ in range(HEAD_WAIT_TRIES if expect else 0):
+        if head == expect:
+            break
+        sleep(HEAD_WAIT_S)
+        _, head = read_pr(runner, repo, pr)
+    kept = {head, expect} - {""}
+    doomed = stale(runs, kept)
     failed = []
     for r in doomed:
         code, _, err = runner(
@@ -153,6 +183,16 @@ def trigger(
     remote = remote.split()[0] if remote.strip() else ""
     if not remote:
         raise Refused(f"origin/{branch} does not exist; push the branch first")
+    # The push below is a plain fast-forward, so a remote holding commits
+    # this checkout lacks refuses it; checking first keeps the commit unmade.
+    code, _, _ = runner(["git", "merge-base", "--is-ancestor", remote, "HEAD"])
+    if code != 0:
+        raise Refused(
+            f"origin/{branch} ({remote[:9]}) holds commits this checkout lacks; "
+            "pull or rebase first"
+        )
+    if runner(["git", "diff", "--cached", "--quiet"])[0] != 0:
+        raise Refused("the index holds staged changes; the trigger commit is empty")
     code, line = probe()
     if code != 0:
         raise Refused(line)
@@ -161,18 +201,18 @@ def trigger(
         ["git", "commit", "--allow-empty", "-S", "-q", "-m", TRIGGER_SUBJECT],
     )
     sha = _ok(runner, ["git", "rev-parse", "HEAD"]).strip()
-    _ok(
-        runner,
-        [
-            "git",
-            "push",
-            "-q",
-            f"--force-with-lease={branch}:{remote}",
-            "origin",
-            branch,
-        ],
-    )
-    return f"triggered {sha[:12]} on origin/{branch} | {cancel_stale(runner, repo, pr)}"
+    try:
+        _ok(runner, ["git", "push", "-q", "origin", branch])
+    except Refused:
+        # Drop the unpushed trigger commit so a re-run never stacks a second.
+        runner(["git", "reset", "-q", "--soft", "HEAD~1"])
+        raise
+    try:
+        cancelled = cancel_stale(runner, repo, pr, expect=sha)
+    except Refused as exc:
+        # The run started; a stale run left going only holds a runner.
+        cancelled = f"cancel-stale failed: {exc}"
+    return f"triggered {sha[:12]} on origin/{branch} | {cancelled}"
 
 
 def _probe() -> tuple[int, str]:

@@ -205,7 +205,7 @@ def resign(base: str, push: bool) -> tuple[int, str]:
         _git("push", "-u", "origin", branch)
     return (
         0,
-        f"{PREFIX} {signed} | pushed origin/{branch} | {cancel_superseded(branch)}",
+        f"{PREFIX} {signed} | pushed origin/{branch} | {cancel_superseded(branch, head)}",
     )
 
 
@@ -219,7 +219,9 @@ def _branch_pr(runner: ci_runs.Runner, branch: str) -> int | None:
         return None
 
 
-def cancel_superseded(branch: str, runner: ci_runs.Runner = ci_runs.run) -> str:
+def cancel_superseded(
+    branch: str, head: str = "", runner: ci_runs.Runner = ci_runs.run
+) -> str:
     """Cancel the runs on the SHAs the re-sign replaced; best-effort.
 
     The push has landed by now, so a failure here is reported in the line
@@ -229,7 +231,7 @@ def cancel_superseded(branch: str, runner: ci_runs.Runner = ci_runs.run) -> str:
     if pr is None:
         return "cancel-stale skipped: no open PR for the branch"
     try:
-        return ci_runs.cancel_stale(runner, ci_runs.DEFAULT_REPO, pr)
+        return ci_runs.cancel_stale(runner, ci_runs.DEFAULT_REPO, pr, expect=head)
     except ci_runs.Refused as exc:
         return f"cancel-stale failed: {exc}"
 

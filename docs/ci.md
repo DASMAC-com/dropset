@@ -385,24 +385,32 @@ settles locally instead of waiting out the timeout. GitHub honors the
 trailer only after **two** empty lines and as the last trailer, and git
 collapses blank lines unless the commit uses `--cleanup=verbatim`; with
 one blank line the push ran every workflow (measured on PR 771, 11-02).
-`--full` is the merge gate's run. Its stages are the distinct local
-targets of the CI-mirror manifest, `cfg/ci-mirror.json`, which maps
-each required context to the `make` targets its job runs and the local
-targets that mirror it. `make lint` runs first, then `make test` and
-the rest. CI settles a stage only when every context that target
-mirrors is green, and the verdict carries `mode=full`. A new CI job
-gets a local mirror by gaining a manifest row, never by an edit to the
-tool.
+The race reads the trailer with git's own parser, which accepts the
+one-blank-line form too, so such a commit settles locally while CI
+still runs: local-only, never a false green. `--full` is the merge
+gate's run. Its stages are the distinct local targets of the CI-mirror
+manifest, `cfg/ci-mirror.json`, which maps each required context to
+the `make` targets its job runs and the local targets that mirror it,
+in manifest order: `make lint` first, then `tools-tests`,
+`decks-build`, `test` and the rest. CI settles a stage only when every
+context that target mirrors is green, and the verdict carries
+`mode=full`. A context with no local mirror (`Frontend`,
+`Detect changes`, `Semantic PR`) is never read by the race; the CI wait
+gates it. A new CI job gets a local mirror by gaining a manifest row,
+never by an edit to the tool.
 
 The remote run itself is `.claude/tools/ci_runs.py`. `trigger --pr N`
 makes the one empty commit without the trailer
 (`ci: Run the remote checks`) and signs it. With the signer locked it
-refuses with the `LOCKED` line and makes no commit. Otherwise it pushes
-under a pinned lease and runs `cancel-stale`. `cancel-stale --pr N` lists the
-branch's `pull_request` runs, then reads the PR's head, and cancels every
-unfinished run on any other SHA. The head is read after the runs, so a
-run on the current head is never cancelled. `resign_branch.py resign`
-calls it after its force-push.
+refuses with the `LOCKED` line and makes no commit, as it does when the
+remote holds commits this checkout lacks or the index is not empty.
+Otherwise it pushes as a plain fast-forward (a failed push drops the
+commit again) and runs `cancel-stale`. `cancel-stale --pr N` lists the
+branch's `pull_request` runs, then reads the PR's head, and cancels
+every unfinished run on any other SHA. The head is read after the runs,
+so a run on the current head is never cancelled; after a push the
+pushed SHA is kept too, since the PR's head can trail it for a moment.
+`resign_branch.py resign` calls it after its force-push.
 
 ## 8. Local-first remote runs
 

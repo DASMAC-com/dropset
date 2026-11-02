@@ -87,7 +87,7 @@ class CancelSuperseded(unittest.TestCase):
                 ),
             ]
         )
-        line = rb.cancel_superseded("eng-1", runner=run)
+        line = rb.cancel_superseded("eng-1", NEW, runner=run)
         self.assertIn("cancelled 1 of 1", line)
         self.assertIn(["gh", "api", "-X", "POST"], [c[:4] for c in calls])
 
@@ -135,7 +135,9 @@ class RealRepo(unittest.TestCase):
         # A push here must never reach `gh`: record the cancel call instead.
         self.cancelled = []
         real_cancel = rb.cancel_superseded
-        rb.cancel_superseded = lambda branch: self.cancelled.append(branch) or "c"
+        rb.cancel_superseded = lambda branch, head: (
+            self.cancelled.append((branch, head)) or "c"
+        )
         self.addCleanup(setattr, rb, "cancel_superseded", real_cancel)
         self.signer(self.stub)
         self.commit("base", sign=True)
@@ -204,7 +206,7 @@ class RealRepo(unittest.TestCase):
             self.git("rev-parse", "HEAD"),
         )
         # The re-signed head supersedes every run on the old SHAs.
-        self.assertEqual(self.cancelled, ["eng-1"])
+        self.assertEqual(self.cancelled, [("eng-1", self.git("rev-parse", "HEAD"))])
         self.assertTrue(line.endswith("pushed origin/eng-1 | c"), line)
 
     def test_no_push_cancels_nothing(self):
