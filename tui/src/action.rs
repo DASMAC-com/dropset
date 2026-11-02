@@ -207,8 +207,9 @@ pub const VAULT_ACTIONS: [Action; 6] = [
 ///
 /// The ceremony in order — publish (or upgrade), the four account steps, the
 /// stranded-buffer recovery — then the explorer, then the passive ladder. The
-/// leader's stake commands are in the runtime pane's `vault` group
-/// ([`VAULT_ACTIONS`]), as on localnet. Each ceremony step opens a typed-`yes`
+/// leader's vault commands are in the runtime pane's `vault` group
+/// ([`VAULT_ACTIONS`]), as on localnet; of those, the open to outside
+/// depositors is a ceremony step too. Each ceremony step opens a typed-`yes`
 /// prompt over its plan, read fresh from the chain, before anything is signed
 /// (see [`Action::needs_ceremony_confirm`]); is existence-checked again at
 /// execution time; references the real roster mints rather than minting any

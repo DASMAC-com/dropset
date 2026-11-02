@@ -98,10 +98,14 @@ signs the second and pays for both.
    Each half is read back before the next is sent.
 1. The job ends `… is open to outside depositors`, and the `vault` row
    reads `O open (done)`. The frontend's Deposit button then enables for
-   a wallet with no position, up to the leader-floor cap.
+   a wallet with no position, up to the leader-floor cap. With the admin
+   half outstanding it ends `leader half set; the admin half is
+   outstanding` instead, naming the wallet.
 
-A vault already open opens no prompt; the log line says so. A run that
-stopped after the leader half finishes with the admin half alone.
+No prompt opens when nothing would be sent: the vault is already open,
+or its leader half is set and this wallet is not a registry admin. The
+log line says which. A run that stopped after the leader half finishes
+with the admin half alone.
 
 ## When something goes wrong
 
