@@ -1,0 +1,107 @@
+{
+  "contexts": [
+    {
+      "ci": [
+        "tools-tests",
+        "decks-build"
+      ],
+      "context": "Lint",
+      "local": [
+        "lint",
+        "tools-tests",
+        "decks-build"
+      ],
+      "workflow": "lint.yml"
+    },
+    {
+      "ci": [],
+      "context": "Lint (clippy)",
+      "local": [
+        "lint"
+      ],
+      "workflow": "lint.yml"
+    },
+    {
+      "ci": [],
+      "context": "Lint (rustdoc)",
+      "local": [
+        "lint"
+      ],
+      "workflow": "lint.yml"
+    },
+    {
+      "ci": [
+        "program-keypair",
+        "program",
+        "idl"
+      ],
+      "context": "Tests",
+      "local": [
+        "test"
+      ],
+      "workflow": "test.yml"
+    },
+    {
+      "ci": [
+        "program-keypair",
+        "program-no-teardown"
+      ],
+      "context": "Tests (no teardown)",
+      "local": [
+        "test-no-teardown"
+      ],
+      "workflow": "test.yml"
+    },
+    {
+      "ci": [
+        "program-keypair",
+        "program-parity"
+      ],
+      "context": "Tests (asm parity)",
+      "local": [
+        "test-parity"
+      ],
+      "workflow": "test.yml"
+    },
+    {
+      "ci": [
+        "test-postgres"
+      ],
+      "context": "Tests (Postgres)",
+      "local": [
+        "test-postgres"
+      ],
+      "workflow": "test.yml"
+    },
+    {
+      "ci": [
+        "sdk",
+        "check-conformance-vectors",
+        "wasm"
+      ],
+      "context": "SDK",
+      "local": [
+        "sdk-test"
+      ],
+      "workflow": "sdk.yml"
+    },
+    {
+      "ci": [],
+      "context": "Frontend",
+      "local": [],
+      "workflow": "frontend.yml"
+    },
+    {
+      "ci": [],
+      "context": "Detect changes",
+      "local": [],
+      "workflow": "test.yml"
+    },
+    {
+      "ci": [],
+      "context": "Semantic PR",
+      "local": [],
+      "workflow": "semantic-pr.yml"
+    }
+  ]
+}
