@@ -29,6 +29,10 @@ finds an unsigned bootstrap commit already made reads ``false`` — so the
 branch-wide answer is `resign_branch.py count`, and `resign_branch.py` signs
 the branch at the merge gate.
 
+The bootstrap commit carries the ``skip-checks: true`` trailer
+(`commit_message.py`), so its push starts no remote run; the draft PR is
+still opened, since every later tool keys on its number.
+
 After the first mutation a failure still stops the run, and the manifest names
 what completed and what did not. Every step is **idempotent** — the rename and
 rebase are no-ops when done, the commit is skipped when the branch already
@@ -84,6 +88,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+from commit_message import with_skip_trailer
 from init_pr_branch import normalize_tag
 from signing_probe import TIMEOUT_SECONDS as PROBE_TIMEOUT
 
@@ -342,7 +347,15 @@ class Bootstrap:
         out = self._ok(["git", "log", "--format=%s", "origin/main..HEAD"])
         if self.subject in out.splitlines():
             return "skipped", "bootstrap commit already on the branch"
-        commit = ["git", "commit", "--allow-empty", "-m", self.subject]
+        # The skip trailer keeps this push from starting a remote run; only
+        # a message file under `--cleanup=verbatim` keeps the two empty
+        # lines GitHub needs before it (`commit_message.py`).
+        self.log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        message = self.log_dir / f"bootstrap-message-{self.tag}.txt"
+        message.write_text(with_skip_trailer(self.subject), encoding="utf-8")
+        commit = [
+            "git", "commit", "--allow-empty", "--cleanup=verbatim", "-F", str(message),
+        ]  # fmt: skip
         signed_err = None
         if not self.signing_deferred:
             code, _, signed_err = self.run([*commit[:3], "-S", *commit[3:]], 120)

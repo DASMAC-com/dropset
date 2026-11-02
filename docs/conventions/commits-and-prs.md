@@ -12,6 +12,15 @@
   model-invocable, so commit incrementally without being asked;
   small signed commits keep the diff reviewable and push work to
   the draft PR.
+- **Every session commit carries the skip trailer.** The message ends
+  with `skip-checks: true` after **two** empty lines, written by
+  `python3 .claude/tools/commit_message.py <file>` and committed with
+  `--cleanup=verbatim -F <file>` (a second `-m` collapses the blank
+  lines, and that push ran every workflow on PR 771). So no push runs
+  remote CI until `review-pr`'s gate makes the one trailer-free
+  trigger commit (`docs/ci.md` → "8. Local-first remote runs"). The
+  PR body is the squash message, so it never quotes a skip string;
+  the `no_ai_attribution.py --scan` body scan rejects one.
 - **Never add AI attribution to commits or PRs.** Do not include a
   `Co-Authored-By:` trailer (e.g. `Co-Authored-By: Claude …`), a
   "🤖 Generated with Claude Code" footer, or any other attribution.
@@ -93,17 +102,20 @@ the merge gate, so that is where the ask lands.
   `facts.signing_deferred`; `commit-changes` and `review-pr` do it for
   every later commit and rebase.
 - **At the gate**, `review-pr` runs
-  `python3 .claude/tools/resign_branch.py resign` before the enqueue:
-  one pass that replays the branch onto its own merge base signing
-  each commit, then force-pushes with a pinned lease. Still locked, it
-  moves nothing, and the handoff question becomes the single "unlock
-  and I sign and enqueue" — one operator turn, not one per commit. The
-  re-sign changes every SHA, so the required checks re-run before the
-  queue takes it, and the tool cancels the runs still going on the old
-  SHAs (`ci_runs.py cancel-stale`). When the signer answers earlier,
-  `review-pr` signs at its pre-CI push instead, and the gate has
-  nothing to do. The tool rides the `python3 .claude/tools/` grant, so
-  the pass runs unattended without a `git rebase` allow-rule.
+  `python3 .claude/tools/resign_branch.py resign` after the full local
+  suite and **before** the CI trigger: one pass that replays the branch
+  onto its own merge base signing each commit, then force-pushes with a
+  pinned lease and cancels the runs still going on the old SHAs
+  (`ci_runs.py cancel-stale`). Every replayed commit keeps its skip
+  trailer, so the re-signed head starts no run; `ci_runs.py trigger`
+  then makes the one signed trigger commit, and CI verifies the commits
+  that merge. Still locked, the re-sign moves nothing, the trigger is
+  held, and the handoff question becomes the single "unlock and I sign,
+  trigger CI, wait for it and enqueue" — one operator turn, not one per
+  commit. When the signer answers earlier, `review-pr` signs at its
+  step-12 push instead, and the gate's re-sign has nothing to do. The
+  tool rides the `python3 .claude/tools/` grant, so the pass runs
+  unattended without a `git rebase` allow-rule.
 - **The loss rule's compensating controls ride with it.**
   Unsigned-and-*unpushed* is the state that lost work before, so the
   deferral is only safe because the unsigned commit is still **pushed**:

@@ -134,10 +134,18 @@ takes `owner: "DASMAC-com"`, `repo: "dropset"`.
    python3 .claude/hooks/no_ai_attribution.py --scan <scratchpad>/body.md
    ```
 
-   Exit 0 is clean; **exit 1 means attribution is
-   present** — strip it and re-scan. (Exit 2 is a usage
-   error, e.g. a path that does not exist, so a typo
-   cannot read as a clean bill of health.)
+   Exit 0 is clean; **exit 1 means attribution or a
+   skip string is present** — strip it and re-scan.
+   (Exit 2 is a usage error, e.g. a path that does not
+   exist, so a typo cannot read as a clean bill of
+   health.)
+
+   **The same scan rejects GitHub's five bracketed skip
+   strings and the `skip-checks: true` trailer form.** The
+   squash message is the PR body, so a skip string
+   written literally there, even inside backticks,
+   would skip main's `push` runs. Describe skipping in
+   prose; never quote the strings themselves.
 
    This step exists because the `PreToolUse` guard that
    enforces the rule inspects **Bash** commands, and the

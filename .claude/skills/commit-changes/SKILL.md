@@ -160,8 +160,10 @@ changes here belong to this session.
 
    - Summary line in imperative voice, capital
      first letter, no trailing period.
+
    - Optional body explaining the *why* (not the
      *what*), wrapped at 72 chars.
+
    - **Do not** include a `Co-Authored-By:`
      trailer, a "Generated with …" footer, or
      any other attribution. The commit must
@@ -174,10 +176,26 @@ changes here belong to this session.
      — a blocked commit here means the trailer
      got written, not that the guard is wrong.
 
-1. Commit, **signed** when the signer answers:
+   - **Every commit carries `skip-checks: true`**
+     as its last line, so its push starts no
+     remote run (`docs/ci.md` → "8. Local-first
+     remote runs"); only `review-pr`'s gate
+     triggers CI. GitHub reads it only after
+     **two** empty lines, which `-m` cannot keep
+     (one blank line ran all five workflows on
+     PR 771). So write the message to a
+     scratchpad file and let the tool shape it:
+
+     ```sh
+     python3 .claude/tools/commit_message.py <file>
+     ```
+
+1. Commit, **signed** when the signer answers,
+   from the file and with verbatim cleanup, or
+   git collapses the two empty lines again:
 
    ```sh
-   git commit -S -m "<message>"
+   git commit -S --cleanup=verbatim -F <file>
    ```
 
    Try `-S` first. Branch protection requires a
@@ -198,7 +216,7 @@ changes here belong to this session.
    overridden:
 
    ```sh
-   git commit --no-gpg-sign -m "<message>"
+   git commit --no-gpg-sign --cleanup=verbatim -F <file>
    ```
 
    Then push as below. A blocked commit was always
@@ -218,16 +236,16 @@ changes here belong to this session.
    python3 .claude/tools/resign_branch.py count
    ```
 
-   **And a message file for `git commit -F` is
-   session-scoped.** The scratchpad does not
-   survive a restart, so a message staged behind a
-   *blocked* commit is the thing that gets lost —
-   one run restarted twice and had to re-author the
-   same message verbatim both times. Before
-   retrying a failed `-F` commit, check the file
-   still exists and re-write it if not. A commit
-   that *succeeded* has its message in git and
-   needs nothing.
+   **And the message file is session-scoped.** The
+   scratchpad does not survive a restart, so a
+   message staged behind a *blocked* commit is the
+   thing that gets lost — one run restarted twice
+   and had to re-author the same message verbatim
+   both times. Before retrying a failed `-F`
+   commit, check the file still exists and re-write
+   it (and re-run `commit_message.py`, which is
+   idempotent) if not. A commit that *succeeded*
+   has its message in git and needs nothing.
 
 1. Push to the branch's upstream — a separate,
    later call, made only once the commit has
@@ -253,6 +271,16 @@ changes here belong to this session.
 
    ```sh
    git push -u origin <branch>
+   ```
+
+   **Once the push succeeds and the branch has a
+   PR, cancel the runs it superseded** — a run
+   still going on an older head holds a runner for
+   a result nobody reads. The tool never cancels a
+   run on the current head:
+
+   ```sh
+   python3 .claude/tools/ci_runs.py cancel-stale --pr <number>
    ```
 
    If a push of **unsigned** commits is ever

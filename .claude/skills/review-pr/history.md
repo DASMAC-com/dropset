@@ -941,6 +941,44 @@ to move and by how much.
   through the GitHub MCP, so the scan is the only mechanical check on
   that path.
 
+## Step 17: the local-first gate
+
+- **The 10-31 reversal.** Every push to a PR branch used to start
+  five workflows (eleven runner jobs), and on 10-31 78% of the open
+  PRs' Tests runs verified a commit that was no longer the head, with
+  runner waits up to 40 minutes. The operator's direction that day
+  reversed the earlier refusal to touch Actions concurrency: remote CI
+  runs **once per PR**, after the full local suite, and superseded
+  runs are cancelled. So every session commit carries the
+  `skip-checks: true` trailer, and the gate runs the `--full` race,
+  signs, then makes the one trailer-free trigger commit (`docs/ci.md`
+  → "8. Local-first remote runs").
+- **Why the trailer beat a label trigger.** A `labeled` trigger works
+  too (un-triggered checks stay pending), but it edits the `on:` block
+  of five workflows, needs a re-label after a re-sign changes every
+  SHA, and makes a hand push run nothing. The trailer needs **no
+  workflow trigger change**, and it survives `resign_branch.py`, which
+  replays messages, so a re-signed trigger commit still runs. The label
+  stays the fallback if the trailer path leaks.
+- **Why no `if:` gate.** GitHub reports a job skipped by a conditional
+  as **success**, and a success satisfies a required check, so a
+  job-level gate would let a PR go green with no remote run at all. A
+  trigger-level skip leaves the checks pending, which blocks the merge.
+- **Two empty lines, not one (PR 771).** A head committed with a
+  second `-m` carrying the trailer started all five workflows: git's
+  default cleanup collapses the blank lines, and GitHub reads the
+  trailer only after two. The same message committed from a file with
+  verbatim cleanup started none (merge state blocked, all eleven
+  contexts absent), hence `commit_message.py` in every commit path.
+- **Sign before the trigger.** Triggering on an unsigned head and
+  re-running after the re-sign verifies a commit that never merges and
+  spends a second run per locked-signer PR; with the trailer on every
+  commit, a re-signed trailer head starts no run at all. PR 771 also
+  merged with the trigger **after** the enqueue (auto-merge pending
+  until the run went green), which saves a wait turn; the skill keeps
+  the CI wait before the ask so the summary and the enqueue read a
+  settled verdict. Reversible if the wait turn proves the cost.
+
 ## Step 18: the CI wait
 
 - **Worktree deleted under a wait.** It happened **twice**; the second

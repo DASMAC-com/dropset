@@ -199,6 +199,31 @@ class ScanMode(unittest.TestCase):
     def test_a_body_with_the_trailer_exits_one(self):
         self.assertEqual(self._scan(f"Body\n\n{TRAILER}\n").returncode, 1)
 
+    def test_a_body_with_a_skip_string_exits_one_and_names_it(self):
+        # The squash message is the body, so any of these would skip main's
+        # push runs; backticks do not protect them.
+        for skip in (
+            "[skip ci]",
+            "[ci skip]",
+            "[no ci]",
+            "[skip actions]",
+            "`[Actions Skip]`",
+            "skip-checks: true",
+            "  skip-checks:true",
+        ):
+            with self.subTest(skip=skip):
+                result = self._scan(f"# Changes\n\n1. A change.\n\n{skip}\n")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("squash message", result.stderr)
+
+    def test_prose_about_skipping_is_clean(self):
+        body = "# Changes\n\n1. Every commit carries the skip trailer; skip ci runs.\n"
+        self.assertEqual(self._scan(body).returncode, 0)
+
+    def test_the_hook_never_blocks_a_commit_carrying_the_skip_trailer(self):
+        # Every session commit carries it by design (`commit_message.py`).
+        self.assertFalse(_blocked('git commit -m "S\n\n\nskip-checks: true"'))
+
     def test_a_missing_file_is_a_usage_error_not_a_pass(self):
         # Exit 2, distinct from the exit 1 that means "attribution found", so a
         # caller cannot read a typo'd path as a clean bill of health.

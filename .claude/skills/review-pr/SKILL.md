@@ -126,7 +126,9 @@ migrations or generation inputs, and whether it spans crates.
    ```
 
    Every "commit signed" below means the same: `-S` while the signer
-   answers, `--no-gpg-sign` once it does not (`commit-changes`).
+   answers, `--no-gpg-sign` once it does not, and always the skip
+   trailer, `commit_message.py` then `--cleanup=verbatim -F`
+   (`commit-changes`).
    **State the unsigned count at every gate** — this step, the step-12
    push, the CI wait, the handoff — in one line, so the exposure stays
    visible:
@@ -296,20 +298,19 @@ migrations or generation inputs, and whether it spans crates.
      scheduler the remainder, and record the split as a PR-body deferral,
      which makes it addressed (`docs/conventions/commits-and-prs.md`).
 
-1. **Run lint — every lint point is one call** that races the abridged
-   lint and tests against CI for HEAD (`docs/ci.md` → "Racing local
-   against CI"):
+1. **Run lint — every lint point is one call** running the abridged
+   lint and tests for HEAD, local-only until step 17's trigger
+   (`docs/ci.md` → "8. Local-first remote runs"):
 
    ```sh
    python3 .claude/tools/verify_head.py
    ```
 
    Run it with `run_in_background: true` (it can outlast a foreground
-   call). Its one line gives each check's settling side and log or job;
-   act on it only when its `sha` is HEAD's. A local `make lint` / `make test`
-   (through the quiet runner) runs only when `ci=` says
-   `not-consulted(unreachable)` — `dirty` / `unpushed` heal by committing and
-   pushing. To narrow one hook, call
+   call). Its one line gives each check's settling side and log; act
+   on it only when its `sha` is HEAD's.
+   `ci=not-consulted(skipped-by-trailer)` is the expected reading, not
+   a fault. To narrow one hook, call
    `lint_paths.py --changed -- <hook-id>`, or `--files <paths> --`,
    backgrounded too when a cargo-backed hook runs; a
    local full sweep in between is a mistake unless a hook is
@@ -378,7 +379,7 @@ migrations or generation inputs, and whether it spans crates.
 
    **A failure the tool reports is a real violation** → fix everything
    mechanical (formatting, imports, whitespace, spelling), stage by
-   explicit path, commit signed (`git commit -S`), and confirm with the
+   explicit path, commit signed, and confirm with the
    scoped run. Whatever still fails is **blocking** (step 7); don't
    mark the PR ready.
 
@@ -943,7 +944,8 @@ migrations or generation inputs, and whether it spans crates.
    every brief too.
 
    Spawn the lenses as parallel `Agent` calls in a single message, each
-   with its three-line prompt.
+   with its three-line prompt, after a commit and push (unsigned if the
+   signer is locked; `history.md` → "Worktree deleted under a wait").
 
    **While the fan-out is in flight, do not re-read git state, CI
    state, or agent liveness.** The harness notifies on completion and
@@ -1030,12 +1032,7 @@ migrations or generation inputs, and whether it spans crates.
 
 1. **Fix blocking issues** that are mechanical
    (e.g. unused imports, missing error handling,
-   trivial bugs). For each fix, commit signed:
-
-   ```sh
-   git add <files...>
-   git commit -S -m "<description of fix>"
-   ```
+   trivial bugs). Stage each fix by path and commit it signed.
 
    Do **not** fix issues that require design
    decisions — leave those as warnings for the
@@ -1190,12 +1187,7 @@ migrations or generation inputs, and whether it spans crates.
    **Append only** — never drop an existing entry — and
    keep the three blocks lint-clean (MD013, mdformat). If
    the diff introduces none of these, this is a no-op.
-   Commit any change signed:
-
-   ```sh
-   git add docs/conventions/audit-registry.md
-   git commit -S -m "Update audit registry"
-   ```
+   Commit any change signed.
 
    **A named gate with no committed artifact is a finding.** When a
    spec, doc or issue in this diff designates a **re-runnable
@@ -1224,9 +1216,8 @@ migrations or generation inputs, and whether it spans crates.
    (`history.md` → "Suites before the rebase"). Switch to a full
    `--split --out` run only when the slices need regenerating.
    Otherwise `targets` lists every suite in run order as
-   `{target, run, reason}`. A `make test` entry is step 4's
-   `verify_head.py` call after step 12's push (plain `make test` only
-   on `not-consulted(unreachable)`); run each other `run: true` entry
+   `{target, run, reason}`. A `make test` entry is step 17's
+   `verify_head.py --full`; run each other `run: true` entry
    through the quiet runner (`python3 .claude/tools/run_quiet.py -- <target>`),
    and record every skip with its `reason` in the summary — never
    re-derive the list. It resolves CI's `code` filter
@@ -1349,6 +1340,10 @@ migrations or generation inputs, and whether it spans crates.
    git push --force-with-lease
    ```
 
+   ```sh
+   python3 .claude/tools/ci_runs.py cancel-stale --pr <number>
+   ```
+
    **Push only once every fix commit succeeded — never in the same
    parallel batch as a `git commit`.** A batched push still runs when
    its commit fails (a locked signer), landing the tree without the
@@ -1356,9 +1351,9 @@ migrations or generation inputs, and whether it spans crates.
 
    **If the branch carries unsigned commits and the signer answers
    now, sign here instead** — the tool pushes with its own pinned
-   lease, so the CI run that follows is on signed commits and step 20
-   has nothing to do. On `LOCKED` (exit 1) it moved nothing: push as
-   above and leave the signing to step 20. On exit 2, read the refusal:
+   lease and cancels stale runs, so step 17 has nothing to sign. On
+   `LOCKED` (exit 1) it moved nothing: push as above and leave the
+   signing to step 17. On exit 2, read the refusal:
    a merge commit or a dirty tree still pushes as above, unsigned —
    never hold work back before the CI wait; only **"never held"** (the
    remote carries a commit this branch lacks) holds, since a forced
@@ -1423,9 +1418,9 @@ migrations or generation inputs, and whether it spans crates.
 
 1. **Gate.** Mark the PR ready only when **every** local CI-mirroring
    check is green: **zero blocking issues** (every Linear checklist
-   item addressed); the last `verify_head.py` verdict is `GREEN` for
-   HEAD's `sha` (with a local `make lint` / `make test` passing where it
-   said `not-consulted(unreachable)`), any hook `lint_paths.py` printed
+   item addressed); a `verify_head.py --full` verdict (backgrounded,
+   as in step 4: the CI-mirror manifest's local targets) is `GREEN` for
+   HEAD's `sha`, any hook `lint_paths.py` printed
    `UNVERIFIABLE` noted, not gated; the generated artifacts
    are fresh and committed (every `regen_artifacts.py` family fresh,
    committed or skipped, or an `unverifiable` one honestly reported);
@@ -1448,6 +1443,27 @@ migrations or generation inputs, and whether it spans crates.
    `review_diff.py --base <base> --gate-only` (a hash of the change that
    a rebase or re-sign keeps). Step 20's enqueue refuses any other.
 
+   **Then sign, then trigger CI** — so the commit CI verifies is the
+   commit that merges (`docs/ci.md` → "8. Local-first remote runs"):
+
+   ```sh
+   python3 .claude/tools/resign_branch.py resign --base <base>
+   ```
+
+   ```sh
+   python3 .claude/tools/ci_runs.py trigger --pr <number>
+   ```
+
+   The re-sign replays the branch onto its merge base signing each
+   commit (tree unchanged) and force-pushes with a pinned lease;
+   `nothing to sign` is the common case, and exit 2 (a dirty tree, a
+   merge commit, a remote commit this branch never held) is reported
+   and held. The trigger makes the one commit without the skip
+   trailer, pushes it and cancels stale runs; with the tree clean and
+   the re-sign pushed, none of its refusals is reachable. **On
+   `LOCKED` from either, hold the trigger**: skip step 18, print the
+   summary, and step 20's ask carries the tail.
+
    Ready lets the human enable "Merge when ready" while CI finishes,
    but it does **not** end the run: success is reported only once real
    CI is green and the summary is printed. **The Linear state** for
@@ -1464,15 +1480,11 @@ migrations or generation inputs, and whether it spans crates.
 
 1. **Wait for GitHub CI to pass.** Local checks only *mirror* CI; the
    real run on the pushed commits is authoritative, and the only signal
-   when the toolchain was absent locally. `init-pr`'s draft PR started
-   it at push time, so it is already in flight.
-
-   **Make the working state survivable before any long unattended
-   wait** — this one and the step-5 fan-out (`history.md` → "Worktree
-   deleted under a wait"). Make the checkpoint commit and push it
-   immediately before the wait — **unsigned if the signer is locked**,
-   never held back for an unlock: an unpushed commit is the alarm, an
-   unsigned one is not.
+   when the toolchain was absent locally. It is the run step 17's
+   trigger started, on a tree it left pushed, so the wait is
+   survivable (`history.md` → "Worktree deleted under a wait"); a
+   commit after it moves the head off the run, so a fix re-enters step
+   17\.
 
    **Wait with the tool — never poll.** One call snapshots the working
    diff (uncommitted and untracked work included, so recovery is one
@@ -1578,7 +1590,8 @@ migrations or generation inputs, and whether it spans crates.
 
 1. **Move the issue to In Review and offer to add the PR to the merge
    queue.** Only when the CI wait took the **all-checks-green** path
-   and the summary is printed; otherwise skip this entirely.
+   (or step 17 held the trigger on `LOCKED`) and the summary is
+   printed; otherwise skip this entirely.
 
    **For an in-band Todo task the enqueue is unasked**
    (`docs/conventions/commits-and-prs.md` → "The PR workflow and
@@ -1646,8 +1659,9 @@ migrations or generation inputs, and whether it spans crates.
    lands about as often as a full local re-verify takes, so re-running
    locally after every rebase invites the next one (`history.md` →
    "Rebase race"). When the **only** reason for a re-run is a rebase,
-   push, enqueue, and let the queue verify — it re-runs the whole Rust
-   suite against the merged result, fail-closed. Both required:
+   push, sign and trigger (step 17), enqueue, and let the queue
+   verify — it re-runs the whole Rust suite against the merged result,
+   fail-closed. Both required:
    `rebase_overlap.py`'s `rerun.may_enqueue_unverified` is `true` (no
    overlap; the queue's full run covers any delta), and the branch's
    own diff is **unchanged** since the last green local pass. Otherwise
@@ -1679,27 +1693,12 @@ migrations or generation inputs, and whether it spans crates.
    resumes from the brief alone at step 2, re-running no lens unless
    the rebase overlaps.
 
-   **Then the final signing pass — nothing is enqueued unsigned.**
-   Branch protection requires every commit on main signed, so a branch
-   still carrying unsigned commits (step 2's count) is signed here, in
-   one pass, before the enqueue:
-
-   ```sh
-   python3 .claude/tools/resign_branch.py resign --base <base>
-   ```
-
-   It replays the linear branch onto its own merge base, signing each
-   commit (tree unchanged, so no conflict), and force-pushes with a
-   pinned lease — routine, no approval needed. Exit 0 with
-   `nothing to sign` is the common case. **On `LOCKED` (exit 1) it
-   moved nothing**, and the handoff question below becomes the one
-   operator turn the deferral costs: "ready to merge — unlock
-   1Password and I sign and enqueue", re-running this after the yes.
-   Exit 2 is a refusal (a dirty tree, a merge commit on the branch, a
-   remote commit this branch never held) — report it and hold. **A
-   re-sign changes every SHA, so the required checks re-run** on the
-   new head; the enqueue below waits on them, and step 22's watch
-   covers it. A re-sign keeps the reviewed fingerprint.
+   **Nothing is enqueued unsigned**: step 17 signed before its
+   trigger, so CI verified the commits that merge. When it held on
+   `LOCKED`, the question below is the one operator turn the deferral
+   costs, "unlock 1Password and I sign, trigger CI, wait for it and
+   enqueue": one yes runs step 17's sign and trigger, step 18's wait,
+   then the enqueue. A re-sign keeps the reviewed fingerprint.
 
    Then move the issue (the step-3 tag) to **In Review**, with or just
    before the prompt (or the in-band line) — skip only if no tag
@@ -1726,8 +1725,8 @@ migrations or generation inputs, and whether it spans crates.
    identifiers** — the Linear tag (`ENG-536`) and the PR number
    (`#138`) — with "yes, add it to the merge queue" **first** and
    "skip, I'll merge by hand" second. With the signer locked, the
-   first option reads "unlocked — sign and enqueue", and the unsigned
-   count is in the question.
+   first option reads "unlocked — sign, trigger, wait and enqueue",
+   and the unsigned count is in the question.
 
    - **On approve**, enqueue with one call — the skill's one `gh`
      **write**, made inside the tool (the MCP's `merge_pull_request`

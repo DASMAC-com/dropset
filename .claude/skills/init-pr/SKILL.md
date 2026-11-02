@@ -40,9 +40,13 @@ measured facts, signing verdict), `git fetch origin main`, the
 `worktree-` rename, the rebase onto `origin/main`, the frontend install
 when `node_modules` is absent, the empty commit (signed when the
 signer answers)
-`chore(<ENG-###>): Bootstrap the worktree`, the push, the draft PR
-with that subject as its title (byte-identical, which the Semantic PR
-workflow compares while one commit is on the branch), the notification
+`chore(<ENG-###>): Bootstrap the worktree`, carrying the
+`skip-checks: true` trailer after two empty lines
+(`commit_message.py`, `--cleanup=verbatim`) so its push starts no
+remote run, the push, the draft PR with that subject as its title
+(byte-identical, which the Semantic PR workflow compares while one
+commit is on the branch; every later tool keys on the PR's number,
+and only `review-pr`'s gate triggers CI), the notification
 mute, the Linear In Progress move, and the issue body spilled to
 `--spec-out` (a missing parent directory is created). The manifest's
 shape is in the tool's docstring; report the PR URL, any `failed`
