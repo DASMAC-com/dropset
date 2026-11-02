@@ -54,6 +54,31 @@ def ledger(records: list[dict], since=None, until=None) -> dict[str, wl.Dimensio
 
 
 LOCKED = f"    {wl.LOCK_MARKER} on build directory\n   Compiling dropset"
+SHA = "0123456789ab"
+
+
+def local_then_remote(
+    outcome: str, side: str, conclusion: str, head: str | None = SHA, start: int = 0
+) -> list[dict]:
+    """A race verdict (``side`` ``green`` / ``red`` settles locally, ``ci``
+    settles on CI), then a checks verdict on ``head``."""
+    check = "ci:green[Tests]" if side == "ci" else f"local:{side}[/t/test.log]"
+    line = f"verify-head: {outcome} sha={SHA} lint=ci:green[Lint] test={check} wall=9s"
+    verdict = {
+        "pr": 9,
+        "conclusion": conclusion,
+        "failing": [{"name": "Tests (sdk)"}] if conclusion == "fail" else [],
+    }
+    if head is not None:
+        verdict["head_sha"] = head
+    race = "python3 .claude/tools/verify_head.py"
+    wait = "python3 .claude/tools/wait_for_checks.py --pr 9"
+    return [
+        assistant(stamp(start), use(f"r{start}", "Bash", command=race)),
+        result(stamp(start + 4), f"r{start}", line),
+        assistant(stamp(start + 5), use(f"w{start}", "Bash", command=wait)),
+        result(stamp(start + 9), f"w{start}", json.dumps(verdict, indent=2)),
+    ]
 
 
 class Shapes(unittest.TestCase):
@@ -165,6 +190,38 @@ class Ledger(unittest.TestCase):
         )
         race = lines[wl.RACE]
         self.assertEqual((race.seconds, race.sides), (300, {"ci": 1, "local": 1}))
+
+    def test_local_green_then_remote_red_pairs_on_the_same_head(self):
+        race = ledger(local_then_remote("GREEN", "green", "fail"))[wl.RACE]
+        self.assertEqual(race.pairs, {wl.LOCAL_GREEN_REMOTE_RED: [["Tests (sdk)"]]})
+
+    def test_local_red_then_remote_green_is_the_reverse(self):
+        race = ledger(local_then_remote("RED", "red", "pass"))[wl.RACE]
+        self.assertEqual(race.pairs, {wl.LOCAL_RED_REMOTE_GREEN: [[]]})
+
+    def test_agreeing_sides_and_another_head_pair_nothing(self):
+        self.assertEqual(
+            ledger(local_then_remote("GREEN", "green", "pass"))[wl.RACE].pairs, {}
+        )
+        moved = local_then_remote("GREEN", "green", "fail", head="fedcba987654")
+        self.assertEqual(ledger(moved)[wl.RACE].pairs, {})
+
+    def test_a_verdict_without_a_head_pairs_by_order(self):
+        records = local_then_remote("GREEN", "green", "fail", head=None)
+        self.assertEqual(
+            len(ledger(records)[wl.RACE].pairs[wl.LOCAL_GREEN_REMOTE_RED]), 1
+        )
+
+    def test_a_ci_settled_race_and_a_timeout_pair_nothing(self):
+        self.assertEqual(
+            ledger(local_then_remote("GREEN", "ci", "fail"))[wl.RACE].pairs, {}
+        )
+        # A timeout keeps the race verdict for the next settled read.
+        records = local_then_remote("GREEN", "green", "timeout")
+        records += local_then_remote("GREEN", "green", "fail", start=20)[2:]
+        self.assertEqual(
+            len(ledger(records)[wl.RACE].pairs[wl.LOCAL_GREEN_REMOTE_RED]), 1
+        )
 
     def test_operator_by_skill_point_and_a_refused_permission(self):
         lines = ledger(
@@ -448,6 +505,27 @@ class Digest(unittest.TestCase):
         self.assertEqual(twin["ranked"], [wl.LOCK, wl.CHECKS, wl.IDLE])
         self.assertEqual(twin["causes"][0]["fingerprint"], "wait:lock:make-lint")
         self.assertEqual(twin["memory_refusals"], 1)
+
+    def test_the_pairing_lines_count_and_name_the_jobs(self):
+        def race(*pairs: list[str]) -> list[wl.DimensionLine]:
+            line = wl.DimensionLine(wl.RACE, 60, 1)
+            line.pairs = {wl.LOCAL_GREEN_REMOTE_RED: list(pairs)}
+            return [line]
+
+        lines, twin = wl.digest_section(
+            [race(["Tests (sdk)"]), race(["Tests (sdk)", "Lint"])], [], {}
+        )
+        text = "\n".join(lines)
+        self.assertIn(
+            "- Local green, remote red: 2 (failing: Tests (sdk) 2, Lint 1)"
+            " — `**Fingerprint**: ci:local-green-remote-red`",
+            text,
+        )
+        self.assertIn(
+            "- Local red, remote green: 0 — `**Fingerprint**: ci:local-red-remote-green`",
+            text,
+        )
+        self.assertEqual(twin["local_vs_remote"][wl.LOCAL_GREEN_REMOTE_RED]["count"], 2)
 
     def test_ci_without_a_read_is_not_filed(self):
         lines, twin = wl.digest_section(

@@ -596,5 +596,137 @@ class DayFetchTests(unittest.TestCase):
         self.assertEqual(json.loads(buf.getvalue())["baseline"]["entries"], 3)
 
 
+def at(minute: int) -> str:
+    return f"2026-10-31T00:{minute:02d}:00Z"
+
+
+def pr_run(rid, sha, created, conclusion="success", pr=770, branch="eng-1"):
+    """A raw API run record of a ``pull_request`` run; its
+    ``run_started_at`` is its creation, as the API's is."""
+    return {
+        "id": rid,
+        "name": "Tests",
+        "head_sha": sha,
+        "head_branch": branch,
+        "status": "completed",
+        "conclusion": conclusion,
+        "created_at": at(created),
+        "run_started_at": at(created),
+        "pull_requests": [{"number": pr}] if pr else [],
+    }
+
+
+def pr_job(created: int, started: int | None, conclusion: str = "success") -> dict:
+    return {
+        "created_at": at(created),
+        "started_at": at(started) if started is not None else None,
+        "conclusion": conclusion,
+    }
+
+
+# PR 770: three runs over two heads — the first superseded, then cancelled;
+# a closed PR's run, keyed by its branch; PR 771: one run, a 40-minute wait.
+PR_RUNS = {
+    "since": "2026-10-17T00:00:00Z",
+    "until": "2026-10-31T01:00:00Z",
+    "runs": [
+        pr_run(1, "aaa", 0, "cancelled"),
+        pr_run(2, "bbb", 5),
+        pr_run(3, "bbb", 7),
+        pr_run(4, "ccc", 2, pr=None, branch="eng-9"),
+        pr_run(5, "ddd", 10, pr=771),
+    ],
+    # A skipped job never asks for a runner, so its zero wait is not counted.
+    "jobs": {
+        "1": [pr_job(0, 1)],
+        "2": [pr_job(5, 6), pr_job(5, 5, "skipped")],
+        "3": [pr_job(7, 10)],
+        "4": [pr_job(2, 4)],
+        "5": [pr_job(10, 50)],
+    },
+}
+
+
+class PrRunsTests(unittest.TestCase):
+    def test_superseded_cancelled_and_the_closed_pr_fallback(self):
+        report = cm.pr_runs_report(PR_RUNS)
+        by_pr = {r["pr"]: r for r in report["per_pr"]}
+        self.assertEqual(list(by_pr), ["#770", "#771", "branch:eng-9"])
+        self.assertEqual((by_pr["#770"]["runs"], by_pr["#770"]["heads"]), (3, 2))
+        self.assertEqual(by_pr["#770"]["superseded"], 1)
+        self.assertEqual(by_pr["#770"]["cancelled"], 1)
+        self.assertEqual(report["branch_fallback"], 1)
+        self.assertEqual((report["runs"], report["superseded"]), (5, 1))
+        # Waits 1, 1, 3, 2, 40 minutes.
+        self.assertEqual(report["wait_median_min"], 2.0)
+        self.assertEqual(report["wait_max_min"], 40.0)
+        self.assertEqual(report["waited_over_1m"], 5)
+
+    def test_an_unsampled_or_queued_run_has_no_wait(self):
+        payload = {"runs": [pr_run(1, "a", 0), pr_run(2, "a", 1)]}
+        payload["jobs"] = {"2": [pr_job(1, None)]}
+        report = cm.pr_runs_report(payload)
+        self.assertIsNone(report["wait_median_min"])
+        self.assertEqual((report["wait_sampled_runs"], report["wait_jobs"]), (1, 0))
+        self.assertEqual(report["per_pr"][0]["runs"], 2)
+
+    def test_the_wait_sample_spreads_over_completed_runs(self):
+        runs = [pr_run(n, "a", n) for n in range(10)]
+        runs.append({**pr_run(99, "a", 59), "status": "queued"})
+        self.assertEqual([r["id"] for r in cm.wait_sample(runs, 3)], [0, 3, 6])
+        self.assertEqual(len(cm.wait_sample(runs, 50)), 10)
+        self.assertEqual(cm.wait_sample(runs, 0), [])
+
+    def test_slim_records_read_the_same(self):
+        slim = {**PR_RUNS, "runs": [cm._slim_run(r) for r in PR_RUNS["runs"]]}
+        self.assertEqual(cm.pr_runs_report(slim), cm.pr_runs_report(PR_RUNS))
+
+    def test_summary_lines(self):
+        lines = cm.pr_runs_lines(cm.pr_runs_report(PR_RUNS), limit=2)
+        self.assertIn("5 pull_request runs on 3 PR(s) (1 keyed by branch", lines[0])
+        self.assertEqual(lines[1], "superseded 1/5 (20%); cancelled 1/5 (20%)")
+        self.assertEqual(len(lines), 6)
+
+    def test_a_capped_window_is_split(self):
+        full = [{"id": n} for n in range(cm.RUNS_SEARCH_CAP)]
+        start = cm.parse_ts("2026-10-30T00:00:00Z")
+        end = cm.parse_ts("2026-10-30T02:00:00Z")
+        with mock.patch.object(
+            cm, "gh_api", side_effect=[full, [{"id": 1}], [{"id": 2}]]
+        ) as gh:
+            runs = cm._runs_between(start, end)
+        self.assertEqual(runs, [{"id": 1}, {"id": 2}])
+        self.assertIn(
+            "created=2026-10-30T00:00:00Z..2026-10-30T01:00:00Z",
+            gh.call_args_list[1].args[0],
+        )
+
+    def test_fetch_reads_a_day_at_a_time_and_dedups(self):
+        now = cm.parse_ts("2026-10-31T00:00:00Z")
+        with mock.patch.object(cm, "gh_api", return_value=[pr_run(1, "a", 0)]) as gh:
+            with mock.patch.object(cm, "run_jobs", return_value=[pr_job(0, 3)]) as jobs:
+                payload = cm.fetch_pr_runs(2, now=now)
+        self.assertEqual(gh.call_count, 2)
+        self.assertEqual(len(payload["runs"]), 1)
+        self.assertEqual(payload["runs"][0]["prs"], [770])
+        self.assertEqual(jobs.call_count, 1)
+        self.assertEqual(payload["jobs"], {"1": [pr_job(0, 3)]})
+
+    def test_main_pr_runs_writes_and_rereads_the_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = os.path.join(tmp, "runs.json")
+            for _ in range(2):
+                buf = io.StringIO()
+                with mock.patch.object(
+                    cm, "fetch_pr_runs", return_value=PR_RUNS
+                ) as fetch:
+                    with redirect_stdout(buf):
+                        self.assertEqual(
+                            cm.main(["--pr-runs", "--cache", cache, "--json"]), 0
+                        )
+                self.assertEqual(json.loads(buf.getvalue())["runs"], 5)
+            self.assertEqual(fetch.call_count, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

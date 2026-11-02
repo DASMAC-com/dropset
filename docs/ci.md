@@ -270,6 +270,7 @@ jobs still count toward the per-job durations.
 a dequeue from its log's failure-shaped lines, and `--hook-timing JOB_ID`
 ranks the pre-commit hooks inside one Lint job. The first fetch of a week
 takes minutes of `gh api` reads, so pass `--cache FILE` and re-run from it.
+`--pr-runs` measures PR-head runner load instead (section 8).
 
 ## 5. Local lint versus CI
 
@@ -481,3 +482,22 @@ gate would let a PR go green with no remote run at all
 (`docs/conventions/github-mcp.md` → "Required status checks"). The
 PR-head run cannot be dropped outright either: the queue
 admits a PR only once its head has passed the required checks.
+
+### Measuring it
+
+Two readings answer whether the change paid. The first is runner load:
+`make ci-metrics ARGS='--pr-runs --days 14'` groups every
+`pull_request` run in the window by PR and reports runs per PR, the
+**superseded** share (a run on a head that was not the PR's latest),
+the cancelled share and the runner wait, median and p90. The baseline,
+a fortnight that ends as the trailer lands, is a dated comment on the
+parent design issue.
+The second is whether a local green predicts a remote one. The wait
+ledger pairs each race verdict that settled locally with the session's
+next checks verdict on the same head (the verdict's `head_sha`), and the
+digest's Wait section writes the day's count of a local green the
+remote run failed, with the failing jobs, as
+`ci:local-green-remote-red`, and the reverse as
+`ci:local-red-remote-green`, both every day, zero included. More than
+one gated PR in ten paying that loop over a week re-opens what the local
+suite runs.

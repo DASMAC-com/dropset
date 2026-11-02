@@ -3108,6 +3108,16 @@ class SnapshotTests(unittest.TestCase):
         v = wfc.wait(285, repo="o/r", snapshot_path=out, base="main")
         self.assertIsNone(v["snapshot"]["error"])
         self.assertTrue(out.read_bytes())
+        # The head the wait ledger pairs with verify_head.py's `sha=`.
+        self.assertEqual(
+            v["head_sha"], self._git("rev-parse", "HEAD").decode().strip()[:12]
+        )
+
+    def test_head_sha_is_none_when_git_cannot_answer(self):
+        real = wfc._git
+        wfc._git = lambda args, cwd=None: (128, b"", "fatal: not a repo")
+        self.addCleanup(setattr, wfc, "_git", real)
+        self.assertIsNone(wfc.head_sha())
 
     def test_the_cli_refuses_a_snapshot_outside_checks_mode(self):
         with self.assertRaises(wfc.WaitForChecksError):

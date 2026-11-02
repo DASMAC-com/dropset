@@ -28,6 +28,15 @@ sub-agents         the ``Agent`` tool's calls — listed, never counted
 A ledger dominated by the lock is a machine problem; by CI, a GitHub one; by
 the operator, an attention one; by idle, a session that should have closed.
 
+The race line also **pairs** each verdict that settled locally (GREEN with
+every local check green, or any local red) with the session's next settled
+``wait_for_checks.py`` verdict on the same head (its ``head_sha``), counting
+a local green the remote run failed, with the failing jobs, and the reverse.
+The digest writes both counts every day, fingerprinted
+``ci:local-green-remote-red`` and ``ci:local-red-remote-green``: whether the
+local-first suite predicts CI. A watch run in the background closes on its
+notification, which carries no verdict, so only the read verdict pairs.
+
 **Known limits.** A permission ask the operator *granted* leaves no record,
 so only a refused one is measured. A lock wait is the whole call's duration,
 the build after the lock included: the transcript holds no stamp for the
@@ -114,6 +123,14 @@ BACKGROUND_MARKERS = ("running in background", "Async agent launched")
 _BACKGROUND_ID = re.compile(r"\b(?:ID|id|agentId|task_id)[:=]\s*([\w-]{3,})")
 _TASK_ID = re.compile(r"<task-id>([\w-]+)</task-id>")
 _RACE_SIDE = re.compile(r"\b(ci|local)\b\W{1,3}(green|red)\b")
+# A race verdict that settled locally, paired with the session's next checks
+# verdict on the same head: whether a local green predicts a remote green.
+LOCAL_GREEN_REMOTE_RED = "local-green-remote-red"
+LOCAL_RED_REMOTE_GREEN = "local-red-remote-green"
+PAIRINGS = (LOCAL_GREEN_REMOTE_RED, LOCAL_RED_REMOTE_GREEN)
+_RACE_VERDICT = re.compile(r"verify-head: (\S+) sha=([0-9a-f]+)")
+_LOCAL_STATE = re.compile(r"=local:(green|red)\[")
+_JSON_START = re.compile(r"^\{", re.MULTILINE)
 _COMMAND_NAME = re.compile(r"<command-name>/([\w:-]+)</command-name>")
 _SLUG = re.compile(r"[^a-z0-9]+")
 
@@ -218,6 +235,8 @@ class DimensionLine:
     causes: dict[str, int] = field(default_factory=dict)
     # The race only: which side settled each check.
     sides: dict[str, int] = field(default_factory=dict)
+    # The race only: per pairing (`PAIRINGS`), each event's failing jobs.
+    pairs: dict[str, list[list[str]]] = field(default_factory=dict)
 
     @property
     def counted(self) -> bool:
@@ -236,6 +255,20 @@ class _Open:
     command: str = ""
 
 
+def checks_verdict(text: str) -> dict | None:
+    """The ``wait_for_checks.py`` verdict object in a call's result, or
+    ``None`` (a background notification carries only a summary)."""
+    decoder = json.JSONDecoder()
+    for found in list(_JSON_START.finditer(text))[:3]:
+        try:
+            obj, _ = decoder.raw_decode(text, found.start())
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and "conclusion" in obj:
+            return obj
+    return None
+
+
 class WaitLedger:
     """Fed a main transcript's records in order, with each record's
     ``utc_stamp``; :meth:`finish` ranks the dimensions. Only waits that start
@@ -250,6 +283,9 @@ class WaitLedger:
         self._seen: set[str] = set()
         self._skill = "session"
         self._last_output: str | None = None
+        # The latest race verdict that settled a check locally: (sha, state).
+        self._local: tuple[str, str] | None = None
+        self.pairs: list[tuple[str, list[str]]] = []
 
     def _in_window(self, stamp: str | None) -> bool:
         if stamp is None:
@@ -261,6 +297,10 @@ class WaitLedger:
     def _close(self, opened: _Open, end: str | None, text: str = "") -> None:
         if opened.dimension is None or end is None:
             return
+        if opened.dimension == RACE:
+            self._note_race(text)
+        elif opened.dimension == CHECKS:
+            self._pair(text, self._in_window(opened.at))
         if not self._in_window(opened.at):
             return
         sides: dict[str, int] = {}
@@ -276,6 +316,48 @@ class WaitLedger:
                 sides,
             )
         )
+
+    def _note_race(self, text: str) -> None:
+        """Hold a race verdict that settled locally: GREEN with every settled
+        local check green, or any local red. A later verdict replaces it."""
+        found = _RACE_VERDICT.search(text)
+        if not found:
+            return
+        outcome, sha = found.groups()
+        states = set(_LOCAL_STATE.findall(text))
+        if outcome == "GREEN" and states == {"green"}:
+            self._local = (sha, "green")
+        elif "red" in states:
+            self._local = (sha, "red")
+        else:
+            self._local = None
+
+    def _pair(self, text: str, counted: bool) -> None:
+        """Pair the held race verdict with this checks verdict when both read
+        the same head (a verdict without ``head_sha`` predates the field and
+        pairs by order). Only a settled pass or fail consumes it."""
+        verdict = checks_verdict(text) if self._local else None
+        if verdict is None or verdict.get("conclusion") not in ("pass", "fail"):
+            return
+        sha, state = self._local
+        head = verdict.get("head_sha")
+        if (
+            isinstance(head, str)
+            and head
+            and not (head.startswith(sha) or sha.startswith(head))
+        ):
+            return
+        self._local = None
+        remote = "green" if verdict["conclusion"] == "pass" else "red"
+        if not counted or remote == state:
+            return
+        jobs = sorted(
+            str(f.get("name"))
+            for f in verdict.get("failing") or []
+            if isinstance(f, dict) and f.get("name")
+        )
+        kind = LOCAL_GREEN_REMOTE_RED if state == "green" else LOCAL_RED_REMOTE_GREEN
+        self.pairs.append((kind, jobs))
 
     def observe(self, rec: dict, stamp: str | None) -> None:
         if stamp is None:
@@ -405,6 +487,8 @@ class WaitLedger:
             line.causes[e.cause] = line.causes.get(e.cause, 0) + e.seconds
             for side, n in e.sides.items():
                 line.sides[side] = line.sides.get(side, 0) + n
+        for kind, jobs in self.pairs:
+            lines[RACE].pairs.setdefault(kind, []).append(jobs)
         counted = sorted(
             (lines[d] for d in DIMENSIONS if d != SUBAGENTS),
             key=lambda line: (-line.seconds, DIMENSIONS.index(line.dimension)),
@@ -442,6 +526,8 @@ def ledger_lines(lines: list[DimensionLine]) -> list[str]:
             text += " — settled by " + ", ".join(
                 f"{s} {n}" for s, n in sorted(line.sides.items())
             )
+        for kind, events in sorted(line.pairs.items()):
+            text += f" — {kind} {len(events)}"
         if not line.counted:
             text += " (listed, not counted as waiting)"
         out.append(text)
@@ -460,6 +546,7 @@ def to_dict(line: DimensionLine) -> dict:
         "counted": line.counted,
         "causes": line.causes,
         "sides": line.sides,
+        "pairs": line.pairs,
     }
 
 
@@ -545,8 +632,15 @@ def digest_section(
     totals = {d: 0 for d in DIMENSIONS}
     # (dimension, cause) -> per-session seconds.
     per_cause: dict[tuple[str, str], list[int]] = {}
+    # pairing -> failing job -> events naming it, beside the event count.
+    paired: dict[str, dict] = {k: {"count": 0, "jobs": {}} for k in PAIRINGS}
     for ledger in ledgers:
         for line in ledger:
+            for kind, events in line.pairs.items():
+                tally = paired.setdefault(kind, {"count": 0, "jobs": {}})
+                tally["count"] += len(events)
+                for job in (j for jobs in events for j in jobs):
+                    tally["jobs"][job] = tally["jobs"].get(job, 0) + 1
             totals[line.dimension] += line.seconds
             for cause, seconds in line.causes.items():
                 if line.dimension in (CHECKS, QUEUE) and not cause:
@@ -584,6 +678,7 @@ def digest_section(
         + (", ".join(f"{c} {hours(s)}" for c, s in builds) or "none"),
         f"- CI wait: {hours(totals[CHECKS] + totals[QUEUE])}"
         f" (checks {hours(totals[CHECKS])}, queue {hours(totals[QUEUE])})",
+        *(_pairing_line(kind, paired[kind]) for kind in PAIRINGS),
         "- Queue profile by hour (depth / longest wait): "
         + (
             ", ".join(
@@ -643,5 +738,20 @@ def digest_section(
         "memory_refusals": refusals,
         "peak_in_use_gib": round(max(in_use), 1) if in_use else None,
         "queue_profile": profile,
+        "local_vs_remote": paired,
     }
     return out, twin
+
+
+def _pairing_line(kind: str, tally: dict) -> str:
+    """One pairing's daily line, written even at zero so its absence is never
+    mistaken for an unread transcript."""
+    local, _, remote = kind.partition("-remote-")
+    jobs = ", ".join(
+        f"{job} {n}" for job, n in sorted(tally["jobs"].items(), key=lambda kv: -kv[1])
+    )
+    return (
+        f"- {local.replace('-', ' ').capitalize()}, remote {remote}:"
+        f" {tally['count']}{f' (failing: {jobs})' if jobs else ''}"
+        f" — `**Fingerprint**: ci:{kind}`"
+    )

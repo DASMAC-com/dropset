@@ -125,7 +125,8 @@ Prints JSON::
                         "kind": "test_runner", "next_command": "…"}],
       "snapshot": {"path": "…", "bytes": 4096, "uncommitted": [], …},
       "hint": {"gate": "green", "do": "…", "evidence": "…"},
-      "log_path": "/…/wait-for-checks-285.log"
+      "log_path": "/…/wait-for-checks-285.log",
+      "head_sha": "0123456789ab" // local HEAD, verify_head.py's width
     }
 
 ``hint.gate`` is ``green`` / ``blocking`` / ``unverified`` / ``retry``; act on
@@ -2066,6 +2067,15 @@ def _git(args: list[str], cwd: str | None = None) -> tuple[int, bytes, str]:
     )
 
 
+def head_sha() -> str | None:
+    """The checked-out HEAD's first 12 hex digits, the width ``verify_head.py``
+    prints, so the wait ledger can pair a local verdict with this one; ``None``
+    when git cannot answer."""
+    code, out, _ = _git(["rev-parse", "HEAD"])
+    sha = out.decode(errors="replace").strip() if code == 0 else ""
+    return sha[:12] if re.fullmatch(r"[0-9a-f]{40,64}", sha) else None
+
+
 def snapshot(path: Path, base: str) -> dict:
     """Write the working diff — committed, staged, unstaged AND untracked —
     against the merge base with ``origin/<base>``, so recovery from a worktree
@@ -2300,6 +2310,9 @@ def wait(
         ),
         "snapshot": snap,
         "log_path": str(log),
+        # The wait ledger pairs this with the session's `verify_head.py`
+        # verdict on the same head (a local green followed by a remote red).
+        "head_sha": head_sha(),
     }
     verdict["hint"] = action_hint(verdict)
     return verdict
