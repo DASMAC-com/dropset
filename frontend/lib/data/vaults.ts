@@ -329,12 +329,13 @@ export const findVaultBySeq = (
   return null;
 };
 
-// The Vaults tab's structured filter: a market (base/quote symbols) and an
-// optional vault number (`seq`, decimal), each empty when unset. A vault
-// number is per-market, so it means something only beside its pair. `leader`
-// is the pre-number key (LEGACY_LEADER_PARAM), only ever read from an old
-// link: a case-insensitive prefix filter until it resolves to a vault number
-// (resolveLegacyLeaderPin). One-release fallback; drop it with the param.
+// The Vaults tab's structured filter: a market (base/quote symbols), an
+// optional vault number (`seq`, decimal) and an optional leader, each empty
+// when unset. The row's pin writes the leader's full address
+// (VAULT_LEADER_PARAM), matched as a case-insensitive prefix so a shortened
+// one still filters; the vault number is per-market, so it means something
+// only beside its pair, and comes only from a link built elsewhere
+// (vaultsHref).
 export type VaultPin = {
   base: string;
   quote: string;
@@ -343,7 +344,7 @@ export type VaultPin = {
 };
 
 // Whether a vault passes the pin: exact market on base/quote (when set), the
-// exact vault number, and the legacy leader prefix.
+// exact vault number, and the leader prefix.
 export const vaultPinMatches = (
   pin: VaultPin,
   market: Pick<VaultMarket, "base" | "quote">,
@@ -355,7 +356,9 @@ export const vaultPinMatches = (
   (!pin.leader ||
     vault.leader.toLowerCase().startsWith(pin.leader.toLowerCase()));
 
-// Whether the pin names exactly this vault (the row's pin toggle).
+// Whether the pin names this vault (the row's pin toggle): its market, and
+// its full leader address or its number, whichever the pin sets. A leader
+// leading two vaults in one market names both.
 export const isVaultPinned = (
   pin: VaultPin,
   market: Pick<VaultMarket, "base" | "quote">,
@@ -363,27 +366,9 @@ export const isVaultPinned = (
 ): boolean =>
   pin.base === market.base &&
   pin.quote === market.quote &&
-  pin.vault === vault.chain.seq.toString();
-
-// The vault number an old leader-keyed pin (LEGACY_LEADER_PARAM) named: the
-// one vault in the base / quote market whose leader the pin prefixes,
-// case-insensitively, as the old filter matched. Null when none or several
-// match — a rotated leader names nothing, and an ambiguous prefix is left to
-// filter as it did. One-release fallback; drop it with the param.
-export const resolveLegacyLeaderPin = (
-  markets: VaultMarket[],
-  base: string,
-  quote: string,
-  leader: string,
-): bigint | null => {
-  if (!leader) return null;
-  const want = leader.toLowerCase();
-  const hits = markets
-    .filter((m) => m.base === base && m.quote === quote)
-    .flatMap((m) => m.vaults)
-    .filter((v) => v.leader.toLowerCase().startsWith(want));
-  return hits.length === 1 ? (hits[0]?.chain.seq ?? null) : null;
-};
+  (pin.leader !== "" || pin.vault !== "") &&
+  (!pin.leader || pin.leader === vault.leader) &&
+  (!pin.vault || pin.vault === vault.chain.seq.toString());
 
 // Quote tokens per base token in the vault's current reserves. Deposits and
 // withdrawals must preserve this ratio (a pro-rata basket), so the UI fixes
@@ -477,6 +462,16 @@ export const groupVaultMarkets = (markets: VaultMarket[]): FxPairGroup[] => {
     return g;
   });
 };
+
+// The table's order when no column sort is chosen: alphabetical by base
+// currency code (so a CAD pair sorts as C, whatever its stablecoin), then by
+// quote. Takes a group or a market, both carrying the resolved codes.
+export const cmpPairCode = (
+  a: Pick<FxPairGroup, "baseCurrency" | "quoteCurrency">,
+  b: Pick<FxPairGroup, "baseCurrency" | "quoteCurrency">,
+): number =>
+  a.baseCurrency.localeCompare(b.baseCurrency) ||
+  a.quoteCurrency.localeCompare(b.quoteCurrency);
 
 // Sortable metrics. "position" is the connected user's position value — it
 // depends on wallet state, so vaultMetric/groupMetric return null for it and
