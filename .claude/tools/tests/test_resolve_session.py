@@ -379,7 +379,7 @@ class DailySessionIdTests(unittest.TestCase):
         Every string hashes to a well-formed UUID, so the wrong one prints
         something indistinguishable from an answer and names a session that never
         existed — which the caller then reads as a lost transcript. `architect` is
-        included because it is the plausible wrong guess: it *is* a seat verb, but
+        included because it is the plausible wrong guess: it *is* a daily-role verb, but
         it is seeded by topic rather than by day; `housekeeping` because it was a
         daily kind until its verb retired.
         """
@@ -405,7 +405,7 @@ class DailySessionIdTests(unittest.TestCase):
         # Pinned against the `_ds_daily_sid` callers in
         # `.claude/shell/init.zsh`. If a second daily verb is added there, this
         # fails and points at the list that needs it.
-        self.assertEqual(rs.DAILY_KINDS, ("plan", "curate", "launch"))
+        self.assertEqual(rs.DAILY_KINDS, ("plan", "curate", "analyze"))
 
 
 def _shell(fn_call: str) -> str:
@@ -423,23 +423,23 @@ def _shell(fn_call: str) -> str:
 
 @unittest.skipUnless(shutil.which("zsh"), "needs zsh")
 class LaunchAndChoreIdTests(unittest.TestCase):
-    """The launcher and a chore printed no estimate at close (measured
+    """The analyst and a chore printed no estimate at close (measured
     2026-10-29) because neither id had a computed path. Both are pinned to the
     shell's own functions, run live, so the two can never drift."""
 
-    def test_launch_matches_the_shell_and_ignores_any_counter(self):
+    def test_analyze_matches_the_shell_and_ignores_any_counter(self):
         with tempfile.TemporaryDirectory() as d:
             state = Path(d) / rs.STATE_DIR
             state.mkdir(parents=True)
-            # `launch` seeds cycle 0 always, so a stray counter must not move it.
-            (state / "launch-cycle-20261029").write_text("3\n")
+            # `analyze` seeds cycle 0 always, so a stray counter must not move it.
+            (state / "analyze-cycle-20261029").write_text("3\n")
             out = io.StringIO()
             with redirect_stdout(out):
                 rs.run(
                     [
                         "resolve_session.py",
                         "--daily-id",
-                        "launch",
+                        "analyze",
                         "--date",
                         "20261029",
                         "--repo",
@@ -447,7 +447,7 @@ class LaunchAndChoreIdTests(unittest.TestCase):
                     ]
                 )
         self.assertEqual(
-            out.getvalue().strip(), _shell("_ds_daily_sid launch 0 20261029")
+            out.getvalue().strip(), _shell("_ds_daily_sid analyze 0 20261029")
         )
 
     def test_a_chore_matches_the_shell_by_bare_number_or_eng_tag(self):
@@ -469,7 +469,7 @@ class LaunchAndChoreIdTests(unittest.TestCase):
         for argv in (
             ["--daily-id", "chore", "--tag", "2348", "--date", "20261029"],
             ["--daily-id", "chore", "--tag", "2348", "--cycle", "0"],
-            ["--daily-id", "launch", "--cycle", "2"],
+            ["--daily-id", "analyze", "--cycle", "2"],
         ):
             with self.assertRaises(rs.ResolveSessionError, msg=argv):
                 rs.run(["resolve_session.py", *argv])

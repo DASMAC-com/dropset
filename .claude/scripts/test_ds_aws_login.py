@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # cspell:word testverb
-"""`_ds_aws_login` — the AWS login gate the seat verbs launch behind.
+"""`_ds_aws_login` — the AWS login gate the daily-role verbs launch behind.
 
 Every case stubs `aws` as a shell function, so no case can trigger a real
 interactive browser login. That is the whole reason this suite exists in this
@@ -419,7 +419,7 @@ class TheGateActuallyGates(unittest.TestCase):
         self.calls.touch()
 
     def _run_verb(self, verb, *, sts_rc, login_rc=0, post_login_sts_rc=0):
-        # `_ds_seat_guard` and the launcher are both stubbed: this case is about
+        # `_ds_subscription_guard` and the launcher are both stubbed: this case is about
         # the gate's effect on the launch, and nothing else. `plan` reaches
         # `_ds_session` directly (its cycle loop computes the id). The substrate dir is pointed at
         # this case's temp dir, since the cycle loop clears its marker there
@@ -427,7 +427,7 @@ class TheGateActuallyGates(unittest.TestCase):
         script = (
             'source "%s" 2>/dev/null; %s'
             '_DS_SUBSTRATE_DIR="$CALLS.state"; '
-            "_ds_seat_guard() { : }; "
+            "_ds_subscription_guard() { : }; "
             # The scheduler's own gate, on a warm day; the pre-launch's gate is
             # `test_plan_cycle_loop.PreLaunch`'s.
             "_ds_plan_fresh_day() { return 1 }; "
@@ -466,7 +466,7 @@ class TheGateActuallyGates(unittest.TestCase):
     # `plan anthropic`, not the Bedrock default: the Bedrock gate refuses with no
     # bearer token (CI has none), which would make the refusal case pass for
     # the wrong reason and the launch case fail. The AWS gate is the same on
-    # both substrates, and the seat guard is stubbed above.
+    # both substrates, and the subscription guard is stubbed above.
     def test_plan_does_not_launch_when_the_gate_refuses(self):
         result, launched = self._run_verb(
             "plan anthropic", sts_rc=1, post_login_sts_rc=1
@@ -493,12 +493,12 @@ class GatedVerbSurface(unittest.TestCase):
         # launch's exports first.
         self.assertIn("if ! _ds_aws_login 'plan'; then", self.source)
 
-    def test_the_gate_runs_after_the_seat_guard(self):
-        # Ordering matters: the seat guard clears an `AWS_REGION` inherited from a
+    def test_the_gate_runs_after_the_subscription_guard(self):
+        # Ordering matters: the subscription guard clears an `AWS_REGION` inherited from a
         # previous `task` in the same tab, and the AWS CLI reads that variable, so
         # probing first would probe the Bedrock launcher's environment. `plan`
         # reaches the guard through `_ds_substrate_enter` in the shared
-        # `_ds_daily_seat` body, which also carries its `bedrock` override.
+        # `_ds_daily_role` body, which also carries its `bedrock` override.
         guard = self.source.index('_ds_substrate_enter "$substrate" "$kind"')
         gate = self.source.index("if ! _ds_aws_login 'plan'; then")
         self.assertLess(guard, gate, "plan probes before clearing the env")

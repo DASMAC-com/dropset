@@ -286,7 +286,7 @@ class RunTests(_RunBase):
 
 
 class ParentRunTests(_RunBase):
-    """``--parent`` names the set a seat session filed as sub-issues, so a
+    """``--parent`` names the set an advisor session filed as sub-issues, so a
     session that died mid-review resumes from its governing issue alone."""
 
     def _set(self):

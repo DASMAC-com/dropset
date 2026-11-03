@@ -4,7 +4,7 @@ classification, issue attribution, and the two bill comparisons.
 The fixture is a throwaway Claude home and base repo: a Bedrock worktree
 session whose one message is streamed as three lines repeating the same usage
 (the 2.2-2.6x inflation the dedup exists to prevent), a resumed transcript that
-carries that message forward again, a sub-agent, a seat base-repo session, and
+carries that message forward again, a sub-agent, a Claude subscription base-repo session, and
 an unmarked worktree session.
 """
 
@@ -93,12 +93,15 @@ class WalkTest(unittest.TestCase):
                 "not json",
             ],
         )
-        self.write(self.projects / "seat" / "s3.jsonl", [record("msg_c", str(base))])
+        self.write(
+            self.projects / "subscription" / "s3.jsonl", [record("msg_c", str(base))]
+        )
         self.write(self.projects / "loose" / "s4.jsonl", [record("msg_d", unmarked)])
-        seat_worktree = f"{base}/.claude/worktrees/1700"
+        subscription_worktree = f"{base}/.claude/worktrees/1700"
         garbled = f"{base}/.claude/worktrees/1701"
         self.write(
-            self.projects / "seat" / "s5.jsonl", [record("msg_e", seat_worktree)]
+            self.projects / "subscription" / "s5.jsonl",
+            [record("msg_e", subscription_worktree)],
         )
         self.write(self.projects / "loose" / "s6.jsonl", [record("msg_f", garbled)])
         self.meter = fc.walk(self.projects, [DAY])
@@ -123,7 +126,7 @@ class WalkTest(unittest.TestCase):
     def test_substrates_are_split_and_unmarked_is_not_priced_in(self) -> None:
         summary = fc.day_summary(self.meter, DAY)
         # The base-repo session and the `anthropic`-marked worktree.
-        self.assertEqual(summary["substrates"]["seat"]["sessions"], 2)
+        self.assertEqual(summary["substrates"]["subscription"]["sessions"], 2)
         # The unmarked worktree and the one whose marker is unrecognized.
         self.assertEqual(summary["substrates"]["unattributed"]["sessions"], 2)
         services = summary["bedrock_by_service"]
@@ -163,12 +166,30 @@ class WalkTest(unittest.TestCase):
         self.assertIn("costliest issues: ENG-1651", out.getvalue())
         self.assertIn("not a complete UTC day", err.getvalue())
 
-    def test_seat_spend_is_priced_and_labelled_not_billed(self) -> None:
+    def test_the_meter_json_keys_the_subscription_issues(self) -> None:
+        out = io.StringIO()
+        with mock.patch.object(fc.sm, "claude_home", return_value=self.home):
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(fc.main(["meter", "--day", DAY, "--json"]), 0)
+        report = json.loads(out.getvalue())
+        self.assertIn(["ENG-1700", ONE_MESSAGE], report["subscription_issue_costs"])
+        self.assertIn("subscription_issues", report)
+        self.assertNotIn("seat_issue_costs", report)
+
+    def test_a_retired_seat_marker_classifies_as_the_subscription(self) -> None:
+        base = Path(self.tmp.name) / "repo"
+        (base / sm.SUBSTRATE_DIR / "1702").write_text("seat\n")
+        cwd = f"{base}/.claude/worktrees/1702"
+        self.assertEqual(fc.classify(cwd), fc.SUBSCRIPTION)
+
+    def test_subscription_spend_is_priced_and_labelled_not_billed(self) -> None:
         summary = fc.day_summary(self.meter, DAY)
-        seat = next(ln for ln in fc.render_meter(summary, DAY) if "seat" in ln)
-        self.assertIn("at Bedrock rates, not billed", seat)
-        self.assertIn("$", seat)
-        costs = dict(fc.issue_costs(self.meter, [DAY], fc.SEAT))
+        subscription = next(
+            ln for ln in fc.render_meter(summary, DAY) if "subscription" in ln
+        )
+        self.assertIn("at Bedrock rates, not billed", subscription)
+        self.assertIn("$", subscription)
+        costs = dict(fc.issue_costs(self.meter, [DAY], fc.SUBSCRIPTION))
         self.assertAlmostEqual(costs["ENG-1700"], ONE_MESSAGE)
         # ...and never into the Bedrock total the bill is compared against.
         self.assertNotIn("ENG-1700", dict(fc.issue_costs(self.meter, [DAY])))
@@ -179,10 +200,10 @@ class WalkTest(unittest.TestCase):
         self.assertAlmostEqual(costs["ENG-1073"], ONE_MESSAGE)
 
     def test_every_substrate_carries_its_issue(self) -> None:
-        # The seat worktree (1700) and the unmarked one (1999) are keyed to
+        # The subscription worktree (1700) and the unmarked one (1999) are keyed to
         # their issues the same way the Bedrock ones are, and listed, not priced.
         self.assertEqual(
-            fc.issue_session_counts(self.meter, [DAY], fc.SEAT),
+            fc.issue_session_counts(self.meter, [DAY], fc.SUBSCRIPTION),
             [("(no issue)", 1), ("ENG-1700", 1)],
         )
         self.assertEqual(
@@ -215,11 +236,13 @@ class WalkTest(unittest.TestCase):
             }
         )
         self.write(
-            self.projects / "seat" / "s7.jsonl",
+            self.projects / "subscription" / "s7.jsonl",
             [caveat, prompt, record("msg_g", base)],
         )
         meter = fc.walk(self.projects, [DAY])
-        self.assertIn(("ENG-2031", 1), fc.issue_session_counts(meter, [DAY], fc.SEAT))
+        self.assertIn(
+            ("ENG-2031", 1), fc.issue_session_counts(meter, [DAY], fc.SUBSCRIPTION)
+        )
 
     def _chore(self, name: str, issue: int, msg: str) -> None:
         base = str(Path(self.tmp.name) / "repo")
@@ -232,12 +255,13 @@ class WalkTest(unittest.TestCase):
             }
         )
         self.write(
-            self.projects / "seat" / f"{name}.jsonl", [prompt, record(msg, base)]
+            self.projects / "subscription" / f"{name}.jsonl",
+            [prompt, record(msg, base)],
         )
 
     def test_a_bedrock_chore_lands_on_the_bedrock_side(self) -> None:
         """Its session record decides; with none, its helper-tier tag marker
-        does — never the base checkout's seat default."""
+        does — never the base checkout's subscription default."""
         markers = Path(self.tmp.name) / "repo" / sm.SUBSTRATE_DIR
         (markers / "sessions").mkdir()
         (markers / "sessions" / "c1").write_text("bedrock\n")
@@ -253,10 +277,10 @@ class WalkTest(unittest.TestCase):
         self.assertAlmostEqual(bedrock["ENG-2040"], ONE_MESSAGE)
         self.assertAlmostEqual(bedrock["ENG-2041"], ONE_MESSAGE)
         self.assertNotIn("ENG-2042", bedrock)
-        seat = dict(fc.issue_session_counts(meter, [DAY], fc.SEAT))
-        self.assertNotIn("ENG-2040", seat)
-        self.assertNotIn("ENG-2041", seat)
-        self.assertEqual(seat["ENG-2042"], 1)
+        subscription = dict(fc.issue_session_counts(meter, [DAY], fc.SUBSCRIPTION))
+        self.assertNotIn("ENG-2040", subscription)
+        self.assertNotIn("ENG-2041", subscription)
+        self.assertEqual(subscription["ENG-2042"], 1)
 
     def test_a_session_record_closes_both_blind_spots(self) -> None:
         # A Bedrock `plan` (base repo, no tag) and a worktree session whose
@@ -273,7 +297,7 @@ class WalkTest(unittest.TestCase):
         summary = fc.day_summary(fc.walk(self.projects, [DAY]), DAY)
         self.assertEqual(summary["substrates"]["bedrock"]["sessions"], 4)
         # s3 and s5, unchanged: no record, so the old reading stands.
-        self.assertEqual(summary["substrates"]["seat"]["sessions"], 2)
+        self.assertEqual(summary["substrates"]["subscription"]["sessions"], 2)
 
     def test_a_bedrock_plan_session_is_priced_under_its_verb(self) -> None:
         base = Path(self.tmp.name) / "repo"
@@ -302,8 +326,10 @@ class WalkTest(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 self.assertEqual(fc.main(["meter", "--day", DAY]), 0)
         self.assertRegex(out.getvalue(), r"costliest issues: .*\bplan \$")
-        # The seat base-repo session with no command stays `(no issue)`.
-        self.assertIn(("(no issue)", 1), fc.issue_session_counts(meter, [DAY], fc.SEAT))
+        # The subscription base-repo session with no command stays `(no issue)`.
+        self.assertIn(
+            ("(no issue)", 1), fc.issue_session_counts(meter, [DAY], fc.SUBSCRIPTION)
+        )
 
     def test_verb_of_prompt(self) -> None:
         self.assertEqual(fc.verb_of_prompt("/plan"), "plan")
@@ -313,7 +339,9 @@ class WalkTest(unittest.TestCase):
             fc.verb_of_prompt("<command-name>/curate</command-name>"), "curate"
         )
         self.assertIsNone(fc.verb_of_prompt("/curated list"))
-        self.assertEqual(fc.verb_of_prompt("/launch"), "launch")
+        self.assertEqual(fc.verb_of_prompt("/analyze"), "analyze")
+        # The analyst's old verb groups under the one it became.
+        self.assertEqual(fc.verb_of_prompt("/launch"), "analyze")
         self.assertIsNone(fc.verb_of_prompt("/launcher"))
         self.assertEqual(
             fc.verb_of_prompt("<command-name>/housekeeping</command-name>"),
@@ -777,18 +805,24 @@ class LocalDayTest(unittest.TestCase):
     def test_the_walk_meters_by_local_day(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             projects = Path(tmp) / "projects"
-            (projects / "seat").mkdir(parents=True)
+            (projects / "subscription").mkdir(parents=True)
             line = json.loads(record("msg_late", tmp))
             line["timestamp"] = "2026-10-28T03:00:00.000Z"
-            (projects / "seat" / "s.jsonl").write_text(json.dumps(line) + "\n")
+            (projects / "subscription" / "s.jsonl").write_text(json.dumps(line) + "\n")
             meter = fc.walk(
                 projects,
                 ["2026-10-27", "2026-10-28"],
                 day_of=fc.local_day_of(PACIFIC),
                 floor=hour("2026-10-27T07:00:00").timestamp(),
             )
-        self.assertIn("seat", fc.day_summary(meter, "2026-10-27")["substrates"])
+        self.assertIn("subscription", fc.day_summary(meter, "2026-10-27")["substrates"])
         self.assertEqual(fc.day_summary(meter, "2026-10-28")["substrates"], {})
+        windows = fc.local_windows(hour("2026-10-28T17:00:00"), PACIFIC)
+        report = fc.local_report(meter, windows, None, None, "off", PACIFIC)
+        row = next(r for r in report["days"] if r["day"] == "2026-10-27")
+        self.assertGreater(row["subscription"], 0.0)
+        self.assertEqual(row["subscription_sessions"], 1)
+        self.assertIn("subscription", report["week"])
 
     def test_hours_bucket_by_local_start_and_name_the_last_billed(self) -> None:
         hours = fc.parse_hourly(
