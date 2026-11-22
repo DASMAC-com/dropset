@@ -298,6 +298,21 @@ That closes the loop from "workflow we keep running by hand" to "tool
 we extracted"; before it existed the candidate list had no consumer
 and sat in a report.
 
+### Name a skill's deferred tools in one entry `select:`
+
+A skill that calls a **deferred** tool (`SendMessage`, the Linear and
+GitHub MCP tools) carries one line under its title naming those tools,
+comma-joined into one `ToolSearch` `select:<a>,<b>,…` query at entry
+(listed, since a joined query outgrows the strict line cap). Without it
+the session loads each schema at its first use, one round each, and a
+keyword search for one tool returns a long list of unrelated schemas.
+The line names only the tools the skill **calls**, never the ones it
+mentions to forbid, and the Linear names use the local server's
+`mcp__linear__*` prefix, the one that reaches every session. A tool a
+skill delegates through another skill (a follow-up filed through
+`linear-task`) stays on that skill's line. The lists differ per skill,
+so the line has no `.claude/shared/` source.
+
 ## Repeated prose gets one source and a freshness gate
 
 The same argument applies to **prose**, not just to commands. Changing

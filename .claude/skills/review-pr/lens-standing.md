@@ -101,6 +101,10 @@ of this repo, and re-litigating one wastes a round trip:
   clarifying local binding).
 - **Consistency-only nits** ("wrap X the way Y is guarded") when both forms
   are already correct.
+- **Pure style nits on a CI-config-only diff** (every changed path under
+  `.github/`, or a CI workflow or ruleset file): wording, ordering, comment
+  phrasing. Several lenses raise the same one there and none changes what CI
+  does; a stale comment that now misstates the config is still a finding.
 
 These are **not** a free pass: a real bug on a suppressed *line* is still a
 finding.

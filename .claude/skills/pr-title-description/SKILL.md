@@ -6,6 +6,9 @@ user-invocable: true
 
 # `pr-title-description`
 
+**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
+`mcp__github__list_pull_requests`, `mcp__github__update_pull_request`.
+
 Write (or update) the title and description
 for the pull request on the current branch.
 

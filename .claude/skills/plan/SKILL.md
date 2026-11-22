@@ -11,6 +11,9 @@ model: fable
 
 # `plan`
 
+**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
+`SendMessage`.
+
 Implementation sessions run one deterministic spec to completion
 in a worktree (`/init-pr` → build → `/review-pr`). Scheduler
 sessions are their complement: they stage that work, keep the

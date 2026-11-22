@@ -14,6 +14,11 @@ user-invocable: true
 
 # `review-pr`
 
+**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
+`SendMessage`, `mcp__linear__get_issue`, `mcp__linear__list_comments`,
+`mcp__github__update_pull_request`, `mcp__github__pull_request_read`,
+`mcp__github__list_pull_requests`.
+
 Review adversarially before the human does: lint, audit the diff,
 catalogue every issue, fix what is mechanical, mark the PR ready only
 when clean, wait for green CI, print the summary. Run it once the work
@@ -1004,10 +1009,15 @@ migrations or generation inputs, and whether it spans crates.
    a full `--split --out <scratchpad>/review-diff.txt` run — not
    before.
 
+   **Collapse duplicates first**: write the lens findings as a JSON
+   list and run `review_summary.py --dedup <findings.json>` (the shape
+   is in its docstring), so a nit three lenses raised is one row naming
+   all three, triaged once.
+
    Spawn a fresh sub-agent on the `cross-check` brief
    (`--lens cross-check`), its material naming the **full**
    `<scratchpad>/review-diff.txt` rather than a per-lens slice, the
-   collected findings in a file of their own, the hoisted grep result
+   deduplicated findings in a file of their own, the hoisted grep result
    set, and the fix commits when they apply. The brief orders it to read
    the diff and list its own findings **before** opening the findings
    file, then adjudicate, so independent misses and false positives are

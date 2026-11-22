@@ -61,6 +61,18 @@ the facts needs no read of this file.
 The lint, artifact, test and title lines are session facts for now: no tool
 emits a lint or suite verdict file yet. When one does, it replaces the fact.
 
+``--dedup <findings.json>`` is a separate mode, run on the collected lens
+findings **before** the cross-check and the fix round: several lenses raising
+the same nit used to arrive as separate findings, each triaged on its own. It
+takes a JSON list of ``{"lens", "file", "line", "end_line"?, "severity",
+"claim"}`` (``end_line`` defaults to ``line``; severity is blocking | warning
+| nit) and prints one row per group of findings on the same file, with
+overlapping line ranges and near-identical claims (token-set overlap of at
+least ``CLAIM_OVERLAP`` once case, punctuation and filler words are dropped).
+Each row names every lens that raised it, spans the union of their ranges and
+carries the highest severity; the first claim reported is kept. Exit 0, or 2
+on bad input.
+
 Standard library only; tests in ``tests/test_review_summary.py``.
 """
 
@@ -68,6 +80,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -208,6 +221,109 @@ def _merge_line(merge: dict | None) -> tuple[str, bool]:
     )
 
 
+#: Severities in rising order; a group carries the highest of its members'.
+SEVERITY = ("nit", "warning", "blocking")
+#: Minimum token-set overlap (shared over combined words) for two claims to read as the same one.
+CLAIM_OVERLAP = 0.5
+#: Filler words dropped before claims are compared, so phrasing alone does not
+#: keep two lenses' copies of one finding apart.
+FILLER = frozenset(
+    "a an the this that these those is are was be it its of to in on for and or "
+    "but with as at by from should would could here there now".split()
+)
+
+
+def _claim_tokens(claim: str) -> frozenset[str]:
+    words = re.findall(r"[a-z0-9_]+", claim.lower())
+    return frozenset(w for w in words if w not in FILLER)
+
+
+def _same_claim(a: frozenset[str], b: frozenset[str]) -> bool:
+    if not a or not b:
+        return a == b
+    return len(a & b) / len(a | b) >= CLAIM_OVERLAP
+
+
+def _check_finding(f, i: int) -> dict:
+    where = f"finding {i}"
+    if not isinstance(f, dict):
+        raise SummaryError(f"{where} is not an object")
+    for key in ("lens", "file", "claim"):
+        if not isinstance(f.get(key), str) or not f[key].strip():
+            raise SummaryError(f"{where}: {key!r} must be a non-empty string")
+    _status(f.get("severity"), SEVERITY, f"{where} severity")
+    start = _count(f.get("line"), f"{where} line")
+    end = _count(f.get("end_line", start), f"{where} end_line")
+    if end < start:
+        raise SummaryError(f"{where}: end_line {end} is before line {start}")
+    return {**f, "line": start, "end_line": end}
+
+
+def dedup(findings: list) -> list[dict]:
+    """Group duplicate findings: same file, overlapping lines, same claim.
+
+    Grouping is transitive (a union-find over every matching pair), so a chain
+    of pairwise matches lands in one group. Groups keep first-report order.
+    """
+    if not isinstance(findings, list):
+        raise SummaryError("findings must be a JSON list")
+    rows = [_check_finding(f, i) for i, f in enumerate(findings)]
+    tokens = [_claim_tokens(r["claim"]) for r in rows]
+    parent = list(range(len(rows)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i, a in enumerate(rows):
+        for j in range(i + 1, len(rows)):
+            b = rows[j]
+            if (
+                a["file"] == b["file"]
+                and a["line"] <= b["end_line"]
+                and b["line"] <= a["end_line"]
+                and _same_claim(tokens[i], tokens[j])
+            ):
+                parent[root(j)] = root(i)
+
+    groups: dict[int, list[dict]] = {}
+    for i, r in enumerate(rows):
+        groups.setdefault(root(i), []).append(r)
+    out = []
+    for members in groups.values():
+        lenses = list(dict.fromkeys(m["lens"] for m in members))
+        out.append(
+            {
+                "file": members[0]["file"],
+                "line": min(m["line"] for m in members),
+                "end_line": max(m["end_line"] for m in members),
+                "severity": max((m["severity"] for m in members), key=SEVERITY.index),
+                "claim": members[0]["claim"],
+                "lenses": lenses,
+            }
+        )
+    return out
+
+
+def render_dedup(groups: list[dict], total: int) -> str:
+    """One markdown row per group, then a count line."""
+    lines = []
+    for g in groups:
+        span = (
+            f"{g['line']}"
+            if g["line"] == g["end_line"]
+            else f"{g['line']}-{g['end_line']}"
+        )
+        lines.append(
+            f"- `{g['file']}:{span}` [{g['severity']}] {g['claim']} "
+            f"— raised by {', '.join(g['lenses'])}"
+        )
+    lines.append(f"\n{total} finding(s) → {len(groups)} after dedup")
+    return "\n".join(lines) + "\n"
+
+
 def render(facts: dict, ci: dict | None, merge: dict | None) -> tuple[str, bool]:
     """The summary markdown and whether the review converged."""
     _check_shape(facts)
@@ -316,9 +432,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--schema", action="store_true", help="print the facts.json schema and exit"
     )
+    parser.add_argument(
+        "--dedup",
+        type=Path,
+        help="group duplicate lens findings from this JSON list and exit",
+    )
     args = parser.parse_args(argv)
     if args.schema:
         print(schema())
+        return 0
+    if args.dedup is not None:
+        try:
+            raw = json.loads(args.dedup.read_text())
+            groups = dedup(raw)
+        except (OSError, ValueError) as exc:
+            print(f"error: reading findings {args.dedup}: {exc}", file=sys.stderr)
+            return 2
+        except SummaryError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        sys.stdout.write(render_dedup(groups, len(raw)))
         return 0
     if args.facts is None:
         parser.error("--facts is required (see --schema for its shape)")
