@@ -842,10 +842,12 @@ _ds_fleet_knobs() {
 # enters the worktree inside the CLI, where no `chpwd` fires, so a launch that
 # skipped it handed its session the BASE checkout's lane and per-checkout keys
 # — one artifact slot shared by every such session, the leak in which one
-# sibling's in-flight rename failed builds in four others. A worded tag's
-# worktree does not exist yet (the CLI creates it), so its session keeps the
-# base keys. The `always` hands the tab back its own values however the launch
-# ends.
+# sibling's in-flight rename failed builds in four others. The pool is keyed
+# only for an existing directory: `_ds_worktree_ensure` creates it on every
+# create path, and a resume whose worktree is gone keeps the base keys. A
+# worded tag, whose worktree only the CLI would have created, is refused at
+# launch for exactly that reason. The `always` hands the tab back its own
+# values however the launch ends.
 _ds_claude_pooled() {
   local wt_dir="$_DS_REPO/.claude/worktrees/$1"
   shift
@@ -1161,7 +1163,8 @@ _DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"
 # `exp-882` all print `882` — so every issue-keyed session, tab and worktree
 # directory is named by the number alone (operator ruling: the prefix is dead
 # screen estate, and the number is what the operator looks up). Anything else
-# passes through lowercased, which keeps a free-form `exp-<name>` usable. Git
+# passes through lowercased: the launch verbs refuse it, and `cdds` and
+# `task resume` use it to reach an existing worktree. Git
 # BRANCHES are the one place the `eng-` prefix survives, for every verb that
 # takes a worktree (`_ds_worktree_ensure`), because Linear's GitHub integration
 # links on that form.
@@ -1226,7 +1229,8 @@ _ds_launch_dir() {
 # creating it here first is how the branch gets the scheme's name.
 #
 # A no-op for an existing directory (pre-rename spellings included, which
-# `_ds_launch_dir` has already resolved) and for a worded tag. An `eng-<n>`
+# `_ds_launch_dir` has already resolved) and for a worded tag, which no launch
+# verb lets through. An `eng-<n>`
 # branch that outlived its worktree is checked out where it stands, not reset
 # to `origin/main` — it may hold the earlier session's work. `--no-track`:
 # from `origin/main` git would otherwise set main as the upstream, and then
@@ -1795,6 +1799,15 @@ _ds_task_start() {
 
   # Shared with the resume side, which is the whole point — see `_ds_tag_of`.
   tag="$(_ds_tag_of "$tag")"
+  # A WORKTREE IS NAMED FOR ITS ISSUE, NEVER A WORD (operator ruling,
+  # 2026-10-30). A worded tag's worktree did not exist until the CLI made it,
+  # after `_ds_claude_pooled` had keyed the cargo pool, so its session built on
+  # the base checkout's slots; and nothing legitimate launched one.
+  if [[ "$tag" != <-> || "$tag" == 0 ]]; then
+    print -u2 'task: takes a Linear issue number (task <n>), not a word —' \
+      'file the issue first'
+    return 1
+  fi
 
   { read -r model; read -r substrate; } <<< "$(_ds_tier executor "$override")"
   [[ -n "$substrate" ]] || return 1
@@ -1969,10 +1982,12 @@ _ds_task_resume() {
 #
 #   explore <n>                 an explore task with a Linear issue: worktree and
 #                               name `<n>`, the advisor tier on Bedrock
-#   explore <name>              one without: worktree and name `exp-<name>`
-#   explore anthropic <n|name>  either, on the Anthropic subscription
-#   explore bedrock <n|name>    either, the default spelled out — the form a
+#   explore anthropic <n>       the same, on the Anthropic subscription
+#   explore bedrock <n>         the default spelled out — the form a
 #                               `[Explore/Bedrock]` title token types as
+#
+# There is no form without an issue: the free-form `explore <name>` and its
+# `exp-<name>` worktree are retired (see the refusal below).
 #
 # **It runs in its own worktree, and it is IDEMPOTENT** — both reverse what this
 # verb shipped with, and both are the same operator ruling that moved
@@ -2006,8 +2021,8 @@ _ds_task_resume() {
 # `_ds_task_resume`.
 #
 # THE `resume` TWIN IS GONE, and dropping it removes a wart rather than a
-# feature. `explore <name>` now creates the session if absent and resumes it if
-# present, so `explore resume <name>` would be a pure synonym — and the old
+# feature. `explore <n>` now creates the session if absent and resumes it if
+# present, so `explore resume <n>` would be a pure synonym — and the old
 # resume branch could not resume deterministically anyway: `-r/--resume` matches
 # on session ID, a name is not one, so a bare name PRE-FILTERED THE INTERACTIVE
 # PICKER. Keying on `_ds_topic_sid` computes an id the way `architect` does,
@@ -2047,38 +2062,32 @@ explore() {
 
   if [[ "$raw" == 'resume' ]]; then
     print -u2 'explore: `resume` is retired —' \
-      '`explore <n|name>` now resumes an existing session itself'
+      '`explore <n>` now resumes an existing session itself'
     return 1
   fi
-  # A substrate word is never a name: `explore bedrock bedrock` would otherwise
-  # make an `exp-bedrock` worktree.
-  if [[ -z "$raw" || -n "$2" || "$raw" == (anthropic|bedrock) ]]; then
-    print -u2 'Usage: explore [anthropic|bedrock] <n|name>   (a name is required: it' \
-      'names a worktree; a session keeps its substrate, so a switch means a' \
-      'fresh worktree)'
-    return 1
-  fi
-  # The name reaches a session name, a worktree and a branch, so hold it to the
-  # shape a branch would take, which the worktree home makes binding rather
-  # than merely tidy.
-  if [[ ! "$raw" =~ '^[a-z0-9][a-z0-9-]*$' ]]; then
-    print -u2 'explore: name must be lowercase letters, digits and dashes'
+  if [[ -z "$raw" || -n "$2" ]]; then
+    print -u2 'Usage: explore [anthropic|bedrock] <n>   (n is the Linear issue;' \
+      'a session keeps its substrate, so a switch means a fresh worktree)'
     return 1
   fi
 
   # NORMALIZE AN ISSUE REFERENCE TO ITS BARE NUMBER FIRST, through the ONE tag
-  # owner `task` uses, before the branch below reads it. `eng-1196` and `1196`
-  # name one issue and must produce one worktree, one session name and one
-  # session id. Deciding the branch before normalizing once sent `eng-1196`
-  # down the free-form path to a worktree `exp-eng-1196` with no bootstrap
-  # prompt — invisible to `cdds`, `fleet` and status-type pruning alike.
+  # owner `task` uses. `eng-1196` and `1196` name one issue and must produce
+  # one worktree, one session name and one session id.
+  #
+  # Then refuse anything else. The free-form `explore <name>` form, which made
+  # an `exp-<name>` worktree, is retired with `task`'s worded tag (operator
+  # ruling, 2026-10-30): a worktree is named for its issue, never a word. Its
+  # worktree did not exist until the CLI made it, after `_ds_claude_pooled` had
+  # keyed the cargo pool, so its session built on the base checkout's slots.
   raw="$(_ds_tag_of "$raw")"
-  if [[ "$raw" == 0 ]]; then
-    print -u2 'explore: 0 is not a Linear issue number'
+  if [[ "$raw" != <-> || "$raw" == 0 ]]; then
+    print -u2 'explore: takes a Linear issue number (explore <n>), not a' \
+      'name — file the issue first'
     return 1
   fi
 
-  # A bare number is an issue-keyed explore task.
+  # The issue-keyed explore task.
   #
   # THE ISSUE-KEYED FORM CARRIES A BOOTSTRAP PROMPT, and it has to. A session
   # launched with no initial prompt SITS IDLE until a human types something,
@@ -2092,31 +2101,25 @@ explore() {
   # deliberately states the read-only posture rather than assuming the issue
   # body does: an explore session that commits or opens a PR is the failure this
   # launch shape exists to prevent.
-  local prompt=''
-  if [[ "$raw" == <-> ]]; then
-    tag="$raw" name="$raw"
-    prompt="Bootstrap this explore task from Linear issue ENG-$raw. Read that"
-    prompt+=" issue as the spec, mark it In Progress, and verify its claims and"
-    prompt+=" any file:line citations against HEAD before acting on them. Every"
-    prompt+=" state write and the spec read are zero-echo, never save_issue:"
-    prompt+=" python3 .claude/tools/board_batch.py state --id ENG-$raw --state"
-    prompt+=" 'In Progress' (and --state 'In Review' at handoff), and"
-    prompt+=" python3 .claude/tools/linear_patch.py read --out <scratchpad>/spec.md"
-    prompt+=" ENG-$raw for the body."
-    prompt+=" This session is READ-ONLY toward the repo: no commits, no PR."
-    prompt+=" The worktree is temporary working state and its contents are"
-    prompt+=" expendable; Linear is the durable record, so findings go on the"
-    prompt+=" issue and anything repo-bound is filed as a follow-up worker"
-    prompt+=" task. Move the issue to In Review when you hand the deliverable"
-    prompt+=" off; only the operator marks it Done. Before announcing any spec"
-    prompt+=" or findings draft, run python3 .claude/tools/spec_markers.py on it and"
-    prompt+=" fix what it names. The full shape is in"
-    prompt+=" docs/conventions/local-integrations.md."
-  else
-    # Free-form: the operator names the subject in their first message, so
-    # inventing one here would only be a guess to correct.
-    tag="exp-$raw" name="exp-$raw"
-  fi
+  local prompt
+  tag="$raw" name="$raw"
+  prompt="Bootstrap this explore task from Linear issue ENG-$raw. Read that"
+  prompt+=" issue as the spec, mark it In Progress, and verify its claims and"
+  prompt+=" any file:line citations against HEAD before acting on them. Every"
+  prompt+=" state write and the spec read are zero-echo, never save_issue:"
+  prompt+=" python3 .claude/tools/board_batch.py state --id ENG-$raw --state"
+  prompt+=" 'In Progress' (and --state 'In Review' at handoff), and"
+  prompt+=" python3 .claude/tools/linear_patch.py read --out <scratchpad>/spec.md"
+  prompt+=" ENG-$raw for the body."
+  prompt+=" This session is READ-ONLY toward the repo: no commits, no PR."
+  prompt+=" The worktree is temporary working state and its contents are"
+  prompt+=" expendable; Linear is the durable record, so findings go on the"
+  prompt+=" issue and anything repo-bound is filed as a follow-up worker"
+  prompt+=" task. Move the issue to In Review when you hand the deliverable"
+  prompt+=" off; only the operator marks it Done. Before announcing any spec"
+  prompt+=" or findings draft, run python3 .claude/tools/spec_markers.py on it and"
+  prompt+=" fix what it names. The full shape is in"
+  prompt+=" docs/conventions/local-integrations.md."
 
   # AN EXISTING SESSION OR WORKTREE KEEPS THE SUBSTRATE ITS MARKER RECORDS —
   # anthropic where there is none, as `_ds_substrate_read` has it. The marker
@@ -2174,10 +2177,9 @@ explore() {
   # need: the reopen reads the SUBSTRATE back (now that a launch may be on
   # either), the pruner reads the TIER (`advisor` lifts its executor refusal),
   # and the fleet cost tool reads the substrate — an unmarked explore worktree
-  # used to meter as unattributed. A free-form `exp-<name>` tag is marked too,
-  # for the reopen; the pruner never matches one. And only for a worktree this
-  # launch creates — `recorded` is empty exactly then: an unmarked tree some
-  # other launch made may hold its uncommitted work.
+  # used to meter as unattributed. And only for a worktree this launch creates
+  # — `recorded` is empty exactly then: an unmarked tree some other launch made
+  # may hold its uncommitted work.
   if [[ -z "$recorded" ]]; then
     _ds_substrate_write "$tag" "$substrate" advisor
   fi

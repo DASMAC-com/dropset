@@ -132,8 +132,8 @@ _ISSUE_TAG_RE = re.compile(r"\A(?:(?:eng|ceo|exp)-)?0*(\d+)\Z", re.ASCII)
 def normalize_tag(raw: str) -> str:
     """``1051``, ``eng-1051``, ``ENG-1051`` and ``ceo-1051`` all name issue 1051,
     so all normalize to the bare ``1051`` — the name every issue-keyed session
-    and worktree now carries. Anything else (a free-form ``exp-<name>``) passes
-    through lowercased.
+    and worktree now carries. Anything else (a worded tag, which the launch
+    verbs now refuse) passes through lowercased.
 
     Matches ``_ds_tag_of`` in the shell, so the tool and the verbs agree on what
     a tag is.

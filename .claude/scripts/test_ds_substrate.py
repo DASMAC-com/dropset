@@ -507,28 +507,31 @@ class VerbLaunch(SubstrateHarness):
         self.assertNotIn("MODEL=", out)
         self.assertIn("keeps its substrate", result.stderr)
 
-    def test_free_form_explore_keeps_its_exp_name_and_is_marked(self):
+    def test_free_form_explore_is_refused_and_marks_nothing(self):
+        # A worktree is named for its issue, never a word: the retired
+        # `explore <name>` launches nothing and writes no marker.
         result, out = self._launch(
             "explore pricing-survey; " + self._MARK.format("exp-pricing-survey"),
             env=self._TOKEN,
         )
-        self.assertIn(
-            "-n exp-pricing-survey --permission-mode auto -w exp-pricing-survey",
-            out,
-            result.stderr,
+        self.assertNotIn("MODEL=", out)
+        self.assertIn("takes a Linear issue number", result.stderr)
+        self.assertFalse(
+            (
+                self.repo / ".claude" / "session-substrate" / "exp-pricing-survey"
+            ).exists()
         )
-        self.assertIn("MARK=bedrock advisor", out)
 
     def test_explore_rejects_a_bare_substrate_word(self):
-        for verb in (
-            "explore anthropic",
-            "explore bedrock",
-            "explore anthropic anthropic",
+        for verb, message in (
+            ("explore anthropic", "Usage: explore [anthropic|bedrock] <n>"),
+            ("explore bedrock", "Usage: explore [anthropic|bedrock] <n>"),
+            ("explore anthropic anthropic", "takes a Linear issue number"),
         ):
             with self.subTest(verb=verb):
                 result, out = self._launch(verb)
                 self.assertIn("RC=1", out)
-                self.assertIn("Usage: explore [anthropic|bedrock]", result.stderr)
+                self.assertIn(message, result.stderr)
 
     _TREE = 'mkdir -p "$_DS_REPO/.claude/worktrees/{0}"; '
 
@@ -578,8 +581,8 @@ class VerbLaunch(SubstrateHarness):
         # A pruned tree's leftover marker names no live session, so a fresh
         # launch takes its own word and records it.
         result, out = self._launch(
-            "_ds_substrate_write exp-survey bedrock advisor; "
-            "explore anthropic survey; " + self._MARK.format("exp-survey"),
+            "_ds_substrate_write 14 bedrock advisor; "
+            "explore anthropic 14; " + self._MARK.format(14),
             env=self._TOKEN,
         )
         self.assertIn("USE=unset SUB=unset", out, result.stderr)
