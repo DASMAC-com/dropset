@@ -7,9 +7,6 @@ user-invocable: true
 
 # `init-pr`
 
-**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
-`mcp__linear__list_comments`.
-
 Bootstrap the current worktree: fetch main, set up the branch, push a
 draft PR that every later tool keys on. This is the first skill an
 agent runs after `claude --worktree <tag>` starts.

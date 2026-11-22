@@ -15,7 +15,7 @@ user-invocable: true
 # `review-pr`
 
 **Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
-`SendMessage`, `mcp__linear__get_issue`, `mcp__linear__list_comments`,
+`SendMessage`, `mcp__linear__get_issue`,
 `mcp__github__update_pull_request`, `mcp__github__pull_request_read`.
 
 Review adversarially before the human does: lint, audit the diff,
