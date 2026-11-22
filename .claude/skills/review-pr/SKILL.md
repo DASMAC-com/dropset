@@ -1077,6 +1077,12 @@ migrations or generation inputs, and whether it spans crates.
      (`search_source.py '<symbol>' --files-only`), fixed in one pass.
      Consecutive builds returning one error class at different sites
      mean the compiler is *enumerating* rather than *checking*.
+   - **A line-length failure (MD013, yamllint) is one `rewrap.py`
+     call per flagged block**, never a hand split of the flagged
+     line: `python3 .claude/tools/rewrap.py <path> --line N`
+     re-flows the whole paragraph or `#` comment block to the
+     linter's cap (`docs/conventions/docs-and-style.md` → "Line
+     length").
    - **Every inline quick-check confirming a fix goes through the
      quiet runner** — usually `cargo` (`check`, a scoped `test`,
      `clippy`), though the runner wraps any command
