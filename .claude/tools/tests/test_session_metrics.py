@@ -839,12 +839,13 @@ class Costing(unittest.TestCase):
         self.assertAlmostEqual(report["total_cost"].total(), 28.60, places=6)
 
     def test_the_fable_and_sonnet_rows(self):
-        # Both seeded at the Opus 5.5 row's 1.10x Bedrock premium over list;
-        # each cache read is its own figure, not 0.1x input. Sonnet's was
-        # verified by usage type against a settled day, Fable's not yet.
+        # Each seeded at the Opus 5.5 row's 1.10x Bedrock premium over list
+        # and verified by usage type against a settled day; Fable's and Sonnet
+        # 5.5's cache reads are their own figures, Sonnet 5's is 0.1x input.
         expected = {
-            "claude-fable-5-1": ((11.00, 55.00, 22.00, 0.275), None),
+            "claude-fable-5-1": ((11.00, 55.00, 22.00, 0.275), "2026-10-22"),
             "claude-sonnet-5-5": ((2.20, 11.00, 4.40, 0.11), "2026-10-21"),
+            "claude-sonnet-5": ((2.20, 11.00, 4.40, 0.22), "2026-10-26"),
         }
         for model, ((inp, out, write, read), verified) in expected.items():
             cost = sm.Cost.price(self.MILLION_EACH, model)
@@ -1854,6 +1855,37 @@ class FrictionLines(unittest.TestCase):
         )
         self.assertEqual(parsed["rebases"][1]["after_tokens"], 1_000_000)
         self.assertEqual(parsed["rebases"][1]["after"][MODEL]["input"], 1_000_000)
+
+    def test_an_api_request_blob_is_skipped(self):
+        # Claude Code writes the blob, unstamped, before the stamped user
+        # record carrying the same result.
+        result = tool_result("t1", '"Successfully rebased"')
+        blob = json.dumps({**json.loads(result), "type": sm.API_REQUEST_BLOB})
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(
+            stamped(
+                self._turn("m1", bash("t1", "git rebase main")), "2026-10-26T10:00:00Z"
+            )
+        )
+        agg.ingest_main_line(blob)
+        agg.ingest_main_line(stamped(result, "2026-10-26T10:00:05Z"))
+        report = agg.finish(sm.SUBSTRATE_BEDROCK)
+        [event] = report["rebases"]
+        self.assertEqual(event.at, "2026-10-26T10:00:05")
+        [line] = report["tools"]
+        self.assertEqual((line.name, line.calls), ("Bash", 1))
+        self.assertEqual(line.result_bytes, sm.value_len("Successfully rebased"))
+
+    def test_friction_skips_an_api_request_blob_fed_directly(self):
+        # The fleet walk feeds `Friction` itself, past the aggregator's guard.
+        result = json.loads(tool_result("t1", '"Successfully rebased"'))
+        friction = sm.Friction()
+        turn = self._turn("m1", bash("t1", "git rebase main"))
+        friction.observe(json.loads(stamped(turn, "2026-10-26T10:00:00Z")))
+        friction.observe({**result, "type": sm.API_REQUEST_BLOB})
+        friction.observe({**result, "timestamp": "2026-10-26T10:00:05Z"})
+        [event] = friction.events
+        self.assertEqual(event.at, "2026-10-26T10:00:05")
 
     def test_a_noop_or_continued_rebase_is_not_an_event(self):
         report = self._finish(
