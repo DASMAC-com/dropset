@@ -955,116 +955,138 @@ class GateTests(unittest.TestCase):
         with self.assertRaises(rd.ReviewDiffError):
             rd.gate("no-such-base", self.out, fetch=False)
 
-    def test_split_partitions_the_diff_by_category(self):
-        self.commit("programs/dropset/src/swap.rs", "fn swap() {}\n", "Src")
-        self.commit("sdk/rs/tests/parity.rs", "fn parity() {}\n", "Tests")
-        self.commit("docs/architecture.md", "# Arch\n", "Docs")
-        v = rd.gate("main", self.out, fetch=False, split=True)
-
-        slices = v["slices"]
-        self.assertEqual(sorted(slices), ["docs", "source", "tests"])
-        for name in ("source", "tests", "docs"):
-            self.assertTrue(Path(slices[name]["path"]).exists())
-            self.assertGreater(slices[name]["lines"], 0)
-
-        source = Path(slices["source"]["path"]).read_text(encoding="utf-8")
-        tests = Path(slices["tests"]["path"]).read_text(encoding="utf-8")
-        docs = Path(slices["docs"]["path"]).read_text(encoding="utf-8")
-        self.assertIn("swap.rs", source)
-        self.assertNotIn("swap.rs", docs)
-        self.assertNotIn("architecture.md", source)
-        self.assertIn("parity.rs", tests)
-        self.assertIn("architecture.md", docs)
-
-    def test_split_line_counts_sum_to_the_whole_diff(self):
-        """Every line lands in exactly one slice — a lens reading its slice can't
-        be missing a hunk that the full diff had."""
-        self.commit("programs/dropset/src/swap.rs", "fn swap() {}\n", "Src")
-        self.commit("docs/architecture.md", "# Arch\n", "Docs")
-        v = rd.gate("main", self.out, fetch=False, split=True)
-        total = sum(s["lines"] for s in v["slices"].values())
-        self.assertEqual(total, v["diff_lines"])
-
-    def test_an_empty_category_is_still_written(self):
-        """A missing file would be ambiguous between "no docs changed" and "the
-        split didn't run"."""
-        self.commit("programs/dropset/src/swap.rs", "fn swap() {}\n", "Src")
-        v = rd.gate("main", self.out, fetch=False, split=True)
-        docs = Path(v["slices"]["docs"]["path"])
-        self.assertTrue(docs.exists())
-        self.assertEqual(docs.read_text(encoding="utf-8"), "")
-        self.assertEqual(v["slices"]["docs"]["lines"], 0)
-
-    def test_slices_are_owner_only(self):
-        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
-        v = rd.gate("main", self.out, fetch=False, split=True)
-        for s in v["slices"].values():
-            self.assertEqual(Path(s["path"]).stat().st_mode & 0o777, 0o600)
-
-    def test_no_slices_key_without_split(self):
+    def test_the_captured_diff_records_its_fingerprint(self):
         self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
         v = rd.gate("main", self.out, fetch=False)
-        self.assertNotIn("slices", v)
+        first = self.out.read_text(encoding="utf-8").splitlines()[0]
+        self.assertEqual(first, f"# review-diff fingerprint={v['fingerprint']} head={v['head']}")
+        self.assertEqual(rd.read_diff_fingerprint(self.out), v["fingerprint"])
+        # The header is not counted: diff_lines is the diff's own body.
+        self.assertEqual(v["diff_lines"], rd.count_lines(self.out) - 1)
 
-    def test_slice_paths_are_namespaced_off_the_out_stem(self):
-        """Two --out paths must not share slice files.
+    def test_an_empty_diff_stays_an_empty_file(self):
+        self.commit("Cargo.lock", "lock\n", "Lock only")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertTrue(v["diff_empty"])
+        self.assertEqual(self.out.read_text(encoding="utf-8"), "")
 
-        Fixed slice names made two runs in one scratchpad destroy each other's
-        output silently: a scoped run with no docs hunks wrote an empty
-        `review-diff-docs.txt` over an unscoped run's populated one, and the
-        affected lens then correctly reported nothing to review. The stem
-        derivation is what makes the skill's "hand each lens its own --out path"
-        instruction actually true.
-        """
-        self.commit("docs/a.md", "# a\n", "Docs")
-        first = rd.gate("main", self.out, fetch=False, split=True)
-        other = self.out.parent / "review-diff-tools.txt"
-        second = rd.gate("main", other, fetch=False, split=True)
-
-        first_paths = {s["path"] for s in first["slices"].values()}
-        second_paths = {s["path"] for s in second["slices"].values()}
-        self.assertEqual(first_paths & second_paths, set())
-
-    def test_the_default_out_keeps_its_documented_slice_names(self):
-        """`--out review-diff.txt` must still yield review-diff-<name>.txt, which
-        is what the skill prose and the lens-standing brief both name."""
-        self.commit("docs/a.md", "# a\n", "Docs")
-        v = rd.gate(
-            "main", self.out.parent / "review-diff.txt", fetch=False, split=True
+    def test_the_verdict_carries_the_tier_lenses_and_gates(self):
+        self.commit(".claude/tools/x.py", "def f():\n    return 1\n", "Tool")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertIn(v["tier"]["name"], rd.review_tier.TIER_LENSES)
+        names = [entry["lens"] for entry in v["lenses"]]
+        self.assertEqual(names[-1], "cross-check")
+        self.assertEqual(
+            set(v["gates"]), {"security", "freshness", "new_tree", "prose_heavy"}
         )
-        self.assertTrue(v["slices"]["docs"]["path"].endswith("review-diff-docs.txt"))
+        self.assertEqual(v["generated_share"], 0.0)
+        self.assertIsNone(v["subdivide"])
+        self.assertEqual(v["integrity"]["count"], 0)
 
-    def test_an_out_spelled_like_a_slice_is_still_refused(self):
-        """The stem derivation stops slice-vs-slice clobber, not out-vs-slice.
+    def test_a_new_top_level_tree_fires_the_freshness_lenses(self):
+        self.commit("newtree/src/lib.rs", "pub fn f() {}\n", "New tree")
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertEqual(v["gates"]["new_tree"]["path"], "newtree/src/lib.rs")
+        names = [entry["lens"] for entry in v["lenses"]]
+        self.assertIn("doc-freshness", names)
 
-        `--out review-diff-docs.txt` would write the WHOLE diff over a previous
-        run's docs slice — the same silent overwrite by a different route — so
-        that spelling stays refused deliberately rather than as a side effect of
-        the old guard.
-        """
+    def test_generated_share_reads_the_excluded_families(self):
+        self.commit("Cargo.lock", "a\nb\nc\n", "Lock")
         self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
-        for name in ("source", "tests", "docs"):
-            with self.assertRaises(rd.ReviewDiffError):
-                rd.gate(
-                    "main",
-                    self.out.parent / f"review-diff-{name}.txt",
-                    fetch=False,
-                    split=True,
-                )
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertEqual(v["generated_share"], 0.75)
 
-    def test_split_rewrites_slices_each_run(self):
-        """Same rationale as the full diff: a stale slice is the hazard."""
-        self.commit("docs/a.md", "# a\n", "Docs")
-        v1 = rd.gate("main", self.out, fetch=False, split=True)
-        docs_path = Path(v1["slices"]["docs"]["path"])
-        self.assertIn("a.md", docs_path.read_text(encoding="utf-8"))
+    def test_a_new_rust_files_trailing_test_module_counts_as_test(self):
+        # Folded lever: a new file is one hunk from line 1, so a start-line
+        # rule never saw its `#[cfg(test)]` tail.
+        self.commit(
+            "tui/src/keys.rs",
+            "pub fn k() -> u8 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n"
+            "    #[test]\n    fn k_is_one() {\n        assert_eq!(super::k(), 1);\n"
+            "    }\n}\n",
+            "Keys",
+        )
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertEqual(v["test_shape"]["hunks"], 1)
 
-        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
-        self.commit("docs/b.md", "# b\n", "Docs 2")
-        rd.gate("main", self.out, fetch=False, split=True)
-        after = docs_path.read_text(encoding="utf-8")
-        self.assertIn("b.md", after)
-        self.assertNotIn("a.md", after)
+    def _cli(self, *extra):
+        argv = ["review_diff.py", "--base", "main", "--out", str(self.out)]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = rd.run([*argv, "--no-fetch", *extra])
+        return code, json.loads(buf.getvalue())
+
+    def test_paths_only_prints_just_the_landing_fields(self):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        code, parsed = self._cli("--paths-only")
+        self.assertEqual(code, 0)
+        self.assertEqual(set(parsed), set(rd.PATHS_FIELDS))
+        self.assertTrue(Path(parsed["diff_path"]).exists())
+
+    def test_a_stale_base_prints_only_the_gate_fields(self):
+        # Folded levers: the inventory of an interacting stale base lists the
+        # base's own commits, and the next step is always a rebase.
+        self.advance_base("a.rs", "fn landed() {}\n")
+        code, parsed = self._cli("--overlap")
+        self.assertEqual(code, 1)
+        self.assertTrue(parsed["stale"])
+        for field in ("files", "crates", "tier", "lenses", "overlapping_prs"):
+            self.assertNotIn(field, parsed)
+
+    def test_a_disjoint_stale_base_keeps_the_full_verdict(self):
+        # The review proceeds on a disjoint drift, so it needs its tier.
+        self.advance_base("landed.rs", "fn landed() {}\n")
+        code, parsed = self._cli()
+        self.assertEqual(code, 0)
+        self.assertFalse(parsed["stale"])
+        self.assertIn("tier", parsed)
+
+    def _spawn(self, *extra):
+        return self._cli("--spawn-check", *extra)
+
+    def _write(self, name, text="x\n"):
+        path = self.root / name
+        path.write_text(text, encoding="utf-8")
+        return str(path)
+
+    def test_the_spawn_check_passes_with_every_input_in_place(self):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        rd.gate("main", self.out, fetch=False)
+        code, parsed = self._spawn(
+            "--brief", self._write("brief.md"), "--facts", self._write("facts.md")
+        )
+        self.assertEqual(code, 0, parsed)
+        self.assertEqual(parsed, {"spawn_ok": True, "missing": []})
+
+    def test_the_spawn_check_names_an_empty_brief_and_a_missing_facts_file(self):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        rd.gate("main", self.out, fetch=False)
+        brief = self._write("brief.md", "")
+        code, parsed = self._spawn(
+            "--brief", brief, "--facts", str(self.root / "absent.md")
+        )
+        self.assertEqual(code, 1)
+        joined = "\n".join(parsed["missing"])
+        self.assertIn(f"brief {brief}", joined)
+        self.assertIn("facts", joined)
+
+    def test_the_spawn_check_refuses_a_diff_from_another_fingerprint(self):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        rd.gate("main", self.out, fetch=False)
+        self.commit("tui/src/ui.rs", "fn ui() { draw(); }\n", "Amend")
+        code, parsed = self._spawn(
+            "--brief", self._write("brief.md"), "--facts", self._write("facts.md")
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("captured at fingerprint", "\n".join(parsed["missing"]))
+
+    def test_the_spawn_check_never_rewrites_the_diff(self):
+        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
+        self.out.write_text("the diff the lenses read\n", encoding="utf-8")
+        self._spawn("--brief", self._write("b.md"), "--facts", self._write("f.md"))
+        self.assertEqual(
+            self.out.read_text(encoding="utf-8"), "the diff the lenses read\n"
+        )
 
     def test_cli_print_grep_excludes_needs_no_out(self):
         """It is a pure query about the exclude lists — no repo state, no git."""
@@ -1079,26 +1101,6 @@ class GateTests(unittest.TestCase):
     def test_cli_requires_out_otherwise(self):
         with self.assertRaises(rd.ReviewDiffError):
             rd.run(["review_diff.py", "--base", "main", "--no-fetch"])
-
-    def test_cli_split_reports_slice_paths(self):
-        self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            code = rd.run(
-                [
-                    "review_diff.py",
-                    "--base",
-                    "main",
-                    "--out",
-                    str(self.out),
-                    "--no-fetch",
-                    "--split",
-                ]
-            )
-        self.assertEqual(code, 0)
-        parsed = json.loads(buf.getvalue())
-        self.assertIn("slices", parsed)
-        self.assertTrue(Path(parsed["slices"]["source"]["path"]).exists())
 
     def test_gate_only_keeps_the_verdict_and_drops_the_inventory(self):
         self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
@@ -1132,10 +1134,10 @@ class GateTests(unittest.TestCase):
             code = rd.run([*argv, "--no-fetch", "--only", "tui/**", *extra])
         return code, json.loads(buf.getvalue())
 
-    def test_an_only_run_prints_the_slice_summary(self):
-        code, parsed = self._only_run("--split")
+    def test_an_only_run_prints_the_scoped_summary(self):
+        code, parsed = self._only_run()
         self.assertEqual(code, 0)
-        self.assertEqual(set(parsed), set(rd.SLICE_FIELDS))
+        self.assertEqual(set(parsed), set(rd.ONLY_FIELDS))
         self.assertEqual([f["path"] for f in parsed["files"]], ["tui/src/ui.rs"])
 
     def test_full_restores_the_whole_verdict_on_an_only_run(self):
@@ -1198,19 +1200,6 @@ class GateTests(unittest.TestCase):
         self.assertTrue(parsed["ready"])
         # The gating still saw a real diff, not an empty stand-in.
         self.assertFalse(parsed["diff_empty"])
-
-    def test_gate_only_refuses_split(self):
-        with self.assertRaisesRegex(rd.ReviewDiffError, "takes no --split"):
-            rd.run(
-                [
-                    "review_diff.py",
-                    "--base",
-                    "main",
-                    "--no-fetch",
-                    "--gate-only",
-                    "--split",
-                ]
-            )
 
     def test_a_full_run_still_requires_out(self):
         with self.assertRaisesRegex(rd.ReviewDiffError, "--out is required"):
@@ -1486,202 +1475,6 @@ class RustTestRangeTests(unittest.TestCase):
         # so an unparsable tail errs toward `tests`.
         text = "#[cfg(test)]\nmod tests {\n    fn t() {}\n"
         self.assertEqual(rd.rust_test_ranges(text), [(1, 3)])
-
-
-class InlineRustTestSplitTests(unittest.TestCase):
-    """The end-to-end property: a Rust diff's test hunks reach the tests slice.
-
-    The regression: a 4,351-line Rust diff produced a **zero-line** tests slice
-    because inline `#[cfg(test)]` rides the source file, so the test-adequacy
-    lens read three source slices and became the run's costliest agent.
-    """
-
-    SOURCE = (
-        "pub fn add(a: i32, b: i32) -> i32 {\n"
-        "    a + b\n"
-        "}\n"
-        "\n"
-        "#[cfg(test)]\n"
-        "mod tests {\n"
-        "    use super::*;\n"
-        "\n"
-        "    #[test]\n"
-        "    fn it_adds() {\n"
-        "        assert_eq!(add(1, 2), 3);\n"
-        "    }\n"
-        "}\n"
-    )
-
-    DIFF = (
-        "diff --git a/src/lib.rs b/src/lib.rs\n"
-        "index 111..222 100644\n"
-        "--- a/src/lib.rs\n"
-        "+++ b/src/lib.rs\n"
-        "@@ -1,3 +1,3 @@\n"
-        " pub fn add(a: i32, b: i32) -> i32 {\n"
-        "-    a - b\n"
-        "+    a + b\n"
-        " }\n"
-        "@@ -9,3 +9,3 @@\n"
-        "     #[test]\n"
-        "-    fn it_adds() { assert_eq!(add(1, 2), 4); }\n"
-        "+    fn it_adds() { assert_eq!(add(1, 2), 3); }\n"
-        "\n"
-    )
-
-    def _split(self):
-        d = Path(self.tmp.name)
-        (d / "src").mkdir(parents=True, exist_ok=True)
-        (d / "src" / "lib.rs").write_text(self.SOURCE, encoding="utf-8")
-        diff_path = d / "review-diff.txt"
-        diff_path.write_text(self.DIFF, encoding="utf-8")
-        cwd = os.getcwd()
-        try:
-            os.chdir(d)
-            return rd.split_diff(diff_path, d)
-        finally:
-            os.chdir(cwd)
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-
-    def test_the_test_hunk_lands_in_the_tests_slice(self):
-        slices = self._split()
-        tests_text = Path(slices["tests"]["path"]).read_text(encoding="utf-8")
-        self.assertIn("it_adds", tests_text)
-        self.assertGreater(slices["tests"]["lines"], 0)
-
-    def test_the_source_hunk_stays_in_the_source_slice(self):
-        slices = self._split()
-        source_text = Path(slices["source"]["path"]).read_text(encoding="utf-8")
-        self.assertIn("a + b", source_text)
-        self.assertNotIn("it_adds", source_text)
-
-    def test_each_slice_carries_the_file_header_so_it_reads_as_a_diff(self):
-        # A hunk without its `diff --git`/`+++` preamble is not readable as a
-        # diff, and a lens is handed the slice file directly.
-        slices = self._split()
-        for name in ("source", "tests"):
-            text = Path(slices[name]["path"]).read_text(encoding="utf-8")
-            self.assertIn("diff --git a/src/lib.rs b/src/lib.rs", text)
-            self.assertIn("+++ b/src/lib.rs", text)
-
-    def test_an_ADDED_rust_file_carries_a_complete_header_into_each_slice(self):
-        # `new file mode` is not `index `/`--- `/`+++ `, so a prefix whitelist
-        # let it through early and the tests slice got `diff --git` immediately
-        # followed by `@@` — no ---/+++ at all, i.e. a malformed diff handed to
-        # a lens.
-        d = Path(self.tmp.name)
-        (d / "src").mkdir(parents=True, exist_ok=True)
-        (d / "src" / "added.rs").write_text(self.SOURCE, encoding="utf-8")
-        diff_path = d / "review-diff.txt"
-        diff_path.write_text(
-            "diff --git a/src/added.rs b/src/added.rs\n"
-            "new file mode 100644\n"
-            "index 0000000..111\n"
-            "--- /dev/null\n"
-            "+++ b/src/added.rs\n"
-            "@@ -0,0 +1,3 @@\n"
-            "+pub fn add(a: i32, b: i32) -> i32 {\n"
-            "+    a + b\n"
-            "+}\n"
-            "@@ -0,0 +9,3 @@\n"
-            "+    #[test]\n"
-            "+    fn it_adds() {}\n"
-            "+\n",
-            encoding="utf-8",
-        )
-        cwd = os.getcwd()
-        try:
-            os.chdir(d)
-            slices = rd.split_diff(diff_path, d)
-        finally:
-            os.chdir(cwd)
-        for name in ("source", "tests"):
-            text = Path(slices[name]["path"]).read_text(encoding="utf-8")
-            self.assertIn("diff --git a/src/added.rs", text)
-            self.assertIn("new file mode 100644", text)
-            self.assertIn("+++ b/src/added.rs", text)
-
-    def test_an_all_tests_file_leaves_the_source_slice_empty(self):
-        # A body line belongs to ITS OWN hunk's slice. Flushing the header to
-        # `source` on every body line instead wrote the whole preamble into the
-        # source slice for a file with no source hunks at all — a phantom "file
-        # changed" entry with nothing after it, and a non-zero source count,
-        # which is exactly the signal a caller reads as "spawn a source lens".
-        d = Path(self.tmp.name)
-        (d / "src").mkdir(parents=True, exist_ok=True)
-        (d / "src" / "lib.rs").write_text(self.SOURCE, encoding="utf-8")
-        diff_path = d / "review-diff.txt"
-        diff_path.write_text(
-            "diff --git a/src/lib.rs b/src/lib.rs\n"
-            "index 111..222 100644\n"
-            "--- a/src/lib.rs\n"
-            "+++ b/src/lib.rs\n"
-            "@@ -9,3 +9,3 @@ mod tests {\n"
-            "-    fn it_adds() { assert_eq!(add(1, 2), 4); }\n"
-            "+    fn it_adds() { assert_eq!(add(1, 2), 3); }\n"
-            "\n",
-            encoding="utf-8",
-        )
-        cwd = os.getcwd()
-        try:
-            os.chdir(d)
-            slices = rd.split_diff(diff_path, d)
-        finally:
-            os.chdir(cwd)
-        self.assertEqual(slices["source"]["lines"], 0)
-        source_text = Path(slices["source"]["path"]).read_text(encoding="utf-8")
-        self.assertNotIn("diff --git", source_text)
-        self.assertIn("it_adds", Path(slices["tests"]["path"]).read_text("utf-8"))
-
-    def test_a_header_only_diff_is_not_dropped_from_every_slice(self):
-        # A mode change has no hunk at all, so nothing ever triggered a flush
-        # and the file vanished from the output entirely.
-        d = Path(self.tmp.name)
-        (d / "src").mkdir(parents=True, exist_ok=True)
-        (d / "src" / "lib.rs").write_text(self.SOURCE, encoding="utf-8")
-        diff_path = d / "review-diff.txt"
-        diff_path.write_text(
-            "diff --git a/src/lib.rs b/src/lib.rs\nold mode 100644\nnew mode 100755\n",
-            encoding="utf-8",
-        )
-        cwd = os.getcwd()
-        try:
-            os.chdir(d)
-            slices = rd.split_diff(diff_path, d)
-        finally:
-            os.chdir(cwd)
-        joined = "".join(
-            Path(slices[name]["path"]).read_text(encoding="utf-8")
-            for name in ("source", "tests", "docs")
-        )
-        self.assertIn("diff --git a/src/lib.rs", joined)
-        self.assertIn("new mode 100755", joined)
-
-    def test_a_rust_file_with_no_inline_tests_is_untouched(self):
-        d = Path(self.tmp.name)
-        (d / "src").mkdir(parents=True, exist_ok=True)
-        (d / "src" / "plain.rs").write_text("fn a() {}\n", encoding="utf-8")
-        diff_path = d / "review-diff.txt"
-        diff_path.write_text(
-            "diff --git a/src/plain.rs b/src/plain.rs\n"
-            "--- a/src/plain.rs\n"
-            "+++ b/src/plain.rs\n"
-            "@@ -1 +1 @@\n"
-            "-fn a() {}\n"
-            "+fn a() {}\n",
-            encoding="utf-8",
-        )
-        cwd = os.getcwd()
-        try:
-            os.chdir(d)
-            slices = rd.split_diff(diff_path, d)
-        finally:
-            os.chdir(cwd)
-        self.assertEqual(slices["tests"]["lines"], 0)
-        self.assertGreater(slices["source"]["lines"], 0)
 
 
 class OverlappingPrsTests(unittest.TestCase):
