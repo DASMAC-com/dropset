@@ -252,6 +252,13 @@ class AbridgedAndSubdivisionTests(unittest.TestCase):
             ],
         )
 
+    def test_one_shared_tree_subdivides_a_level_deeper(self):
+        fl = files((".claude/tools/a.py", 30), (".claude/skills/x/SKILL.md", 9))
+        groups = rt.subdivision(fl, rt.SUBDIVIDE_DIFF_LINES + 1)
+        self.assertEqual(
+            [g["only"] for g in groups], [".claude/tools/**", ".claude/skills/**"]
+        )
+
 
 class IntegrityTests(unittest.TestCase):
     def kinds(self, text):

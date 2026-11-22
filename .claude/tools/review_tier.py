@@ -546,10 +546,19 @@ def subdivision(files: list[dict], diff_lines: int) -> list[dict] | None:
     """
     if diff_lines <= SUBDIVIDE_DIFF_LINES:
         return None
-    groups: Counter = Counter()
-    for f in files:
-        head, sep, _ = f["path"].partition("/")
-        groups[f"{head}/**" if sep else f["path"]] += f["changes"]
+    # One segment deep, or two when everything shares one top-level tree (a
+    # lone `.claude/**` group subdivides nothing).
+    for depth in (1, 2):
+        groups: Counter = Counter()
+        for f in files:
+            parts = f["path"].split("/")
+            if len(parts) > depth:
+                key = "/".join(parts[:depth]) + "/**"
+            else:
+                key = f["path"]
+            groups[key] += f["changes"]
+        if len(groups) > 1:
+            break
     return [{"only": glob, "changes": n} for glob, n in groups.most_common()]
 
 
