@@ -399,10 +399,12 @@ class FrictionRollupTest(unittest.TestCase):
         with (
             mock.patch.object(fc.sm, "claude_home", return_value=self.home),
             mock.patch.object(fc, "fetch_billed", return_value=billed),
+            mock.patch.object(fc, "fetch_usage", return_value={}),
             contextlib.redirect_stdout(out),
         ):
             fc.main(["reconcile", "--day", "2026-10-12", "--day", "2026-10-14"])
         text = out.getvalue()
+        self.assertEqual(text.count("  split "), 2)
         friction = [ln for ln in text.splitlines() if "friction" in ln]
         self.assertEqual(len(friction), 1)
         self.assertIn(
