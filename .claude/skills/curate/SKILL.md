@@ -178,7 +178,7 @@ Otherwise, the full bootstrap:
    live: say `analyst: not live` and tell the operator to type
    `plan` in a new tab. An analyst that comes up **after** the send
    messages `analyst up`; answer it with `state of play written`
-   again, once, so it opens the scheduler. A `analyst up` that
+   again, once, so it opens the scheduler. An `analyst up` that
    arrives **before** the write gets no reply: the one send covers
    it.
 
