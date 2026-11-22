@@ -1,6 +1,6 @@
 ---
 name: curate
-description: Run the curator — the daily advisor-tier session that runs the start-of-day bootstrap and owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Opened by the fresh-day `plan` pre-launch beside the launcher, or typed as `curate` (Bedrock; `curate anthropic` is the escape). Bootstraps the day — landings, the board, Next and holds, parked counts, the audit heartbeat, first-cut collision clusters — rewrites the Planning document to the state of play and sends `state of play written`; rules on irreconcilable rebases. Walks the operator through the ranked Backlog four tasks at a time, in ascending issue order, one checkbox each with commentary, plus proposed edges and the launcher's kill and merge candidates. Moves each ticked, uncommented task to Todo, folds comments, places only ticked edges, kills and merges, writes priorities under the agreement rule, and spins off architect tasks. Messages the scheduler every move. Event-driven; stops on the scheduler's close message.
+description: Run the curator — the daily advisor-tier session that runs the start-of-day bootstrap and owns everything between Backlog and Todo, in the base repo with no worktree, branch or PR. Opened by the fresh-day `plan` pre-launch beside the analyst, or typed as `curate` (Bedrock; `curate anthropic` is the escape). Bootstraps the day — landings, the board, Next and holds, parked counts, the audit heartbeat, first-cut collision clusters — rewrites the Planning document to the state of play and sends `state of play written`; rules on irreconcilable rebases. Walks the operator through the ranked Backlog four tasks at a time, in ascending issue order, one checkbox each with commentary, plus proposed edges and the analyst's kill and merge candidates. Moves each ticked, uncommented task to Todo, folds comments, places only ticked edges, kills and merges, writes priorities under the agreement rule, and spins off architect tasks. Messages the scheduler every move. Event-driven; stops on the scheduler's close message.
 user-invocable: true
 ---
 
@@ -16,15 +16,15 @@ rules on a rebase whose two intents cannot both stand. The
 **scheduler** (the `plan` session) warm-boots from that write and
 owns the live day — dispatch, the direction, the close-out — and
 the Planning document after the bootstrap. **Both hold
-priorities**, under the agreement rule (below). The **launcher**
-(to be renamed the analyst) runs the mechanical morning beside
-this tab: the lever fold, whose kill and merge candidates it hands
-here, and the scheduler's tab, opened on this session's
-`state of play written`. Todo means "should this be done", and the
+priorities**, under the agreement rule (below). The **analyst**
+runs the mechanical morning beside this tab: the lever fold, whose
+kill and merge candidates it hands here, and the scheduler's tab,
+opened on this session's `state of play written`. Todo means
+"should this be done", and the
 operator answers that question in this tab, four tasks at a time;
 an ask here never blocks a dispatch.
 
-The sibling shapes: `architect` for the seat-session discipline,
+The sibling shapes: `architect` for the advisor-session discipline,
 `ratify-staged` for the review round this reuses — the same ask
 text, the same fold protocol, the same tool — over a different
 pool, with each approval written as it lands rather than in one
@@ -35,7 +35,7 @@ batch at the end.
 The **base repo**, never a worktree; no branch, no commits, no PR.
 It is advisor tier, **Bedrock** by default; `curate anthropic` is
 the escape. The fresh-day `plan` pre-launch opens it each morning
-beside the launcher's tab (the launcher dispatches it when that tab
+beside the analyst's tab (the analyst dispatches it when that tab
 did not open), or the operator types `curate`. The `curate` shell
 verb pins the
 model and refuses an unresolved tier, so there is no in-session
@@ -54,7 +54,7 @@ upkeep report — belongs in the session with the fewest turns after
 it, and the scheduler, which carries the day's messages and every
 dispatch, warm-boots from what this writes. "Start of day" means
 the operator's `plan`, not a clock: its pre-launch opens this tab
-beside the launcher's, and the bootstrap starts at once. It runs
+beside the analyst's, and the bootstrap starts at once. It runs
 **unattended until its write** — no ask before the state of play
 is written, because the scheduler's start trigger waits on it.
 
@@ -91,7 +91,7 @@ Otherwise, the full bootstrap:
    re-authentication it names — the steps it gates were skipped,
    not broken. A run stamp older than today means
    the pass did not reach the document — say so. The destructive
-   items are the launcher's one ask, never asked here.
+   items are the analyst's one ask, never asked here.
 
 1. **Read the board**, two calls; `list` defaults to Backlog,
    milestoned issues dropped:
@@ -172,13 +172,13 @@ Otherwise, the full bootstrap:
    scheduler's.
 
 1. **Send `state of play written`**, exactly, once, in one turn:
-   `ListAgents`, then one `SendMessage` to the live `launch-<day>`
+   `ListAgents`, then one `SendMessage` to the live `analyze-<day>`
    (its cue to open the scheduler's tab) and one to a live
    `schedule-<day>` (an operator who started it by hand). Neither
-   live: say `launcher: not live` and tell the operator to type
-   `plan` in a new tab. A launcher that comes up **after** the send
-   messages `launcher up`; answer it with `state of play written`
-   again, once, so it opens the scheduler. A `launcher up` that
+   live: say `analyst: not live` and tell the operator to type
+   `plan` in a new tab. An analyst that comes up **after** the send
+   messages `analyst up`; answer it with `state of play written`
+   again, once, so it opens the scheduler. A `analyst up` that
    arrives **before** the write gets no reply: the one send covers
    it.
 
@@ -197,10 +197,10 @@ A row marked `[curator pending]` is a **leftover** from a curator
 that stopped mid-day: clear it before the first batch with one
 sweep, `python3 .claude/tools/ratify_staged.py unmark --all`.
 
-The **launcher's hand-off** arrives as one message, not a read,
+The **analyst's hand-off** arrives as one message, not a read,
 when its lever fold finishes — usually during this bootstrap, never
 waited for. Its first line names the sender,
-`Hand-off from launch-<day>: …`, then five labelled lists (`none`
+`Hand-off from analyze-<day>: …`, then five labelled lists (`none`
 when empty).
 Two feed the first ask — `Kill candidates:` and
 `Merge candidates:`, each with its evidence — and
@@ -208,7 +208,7 @@ Two feed the first ask — `Kill candidates:` and
 `Levers rejected:` are context only. A hand-off that arrives
 **after** the first ask is never dropped: its candidates and
 batches ride the next batch's ask instead. The fold is finished
-before the launcher sends it; the only folding here is a review
+before the analyst sends it; the only folding here is a review
 comment into a task body.
 
 Then state, in a few lines:
@@ -276,7 +276,7 @@ python3 .claude/tools/ratify_staged.py ask --pool inbox \
 ranking takes effect only through which four ids you pass —
 carried tasks first, then the top of the ranking. The checkboxes
 come out in **ascending issue number** whatever order you pass
-(the tool sorts, for this pool and the seat sessions' staged sets
+(the tool sorts, for this pool and the advisor sessions' staged sets
 alike), so the operator opens the batch as tabs left to right and
 reads the dialog top to bottom. `--notes` maps each of those ids
 to its line of commentary (an id with no note falls back to its
@@ -320,7 +320,7 @@ don't retitle around it.
 `--proposals`: **edges**, one checkbox per proposal with its
 one-line reason (what it consumes, what it unblocks) — the
 bootstrap's holds among them, in the first ask. In the
-**first ask** it also carries the launcher's hand-off, one
+**first ask** it also carries the analyst's hand-off, one
 checkbox per candidate with its evidence as the reason —
 `{"kill": <id>}` and `{"merge": [<ids> …]}`. A re-rank the curator
 wants the operator's word on rides here too, as

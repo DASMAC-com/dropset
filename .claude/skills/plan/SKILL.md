@@ -77,7 +77,7 @@ The **base repo**, never a worktree. Start or resume with a bare
 `plan` — idempotent; it creates or resumes today's
 `plan-<day-of-month>` on the advisor tier's model, with `/plan`
 as a new session's prompt, on Bedrock; `plan anthropic` is the
-seat override, and a reopen keeps the substrate its session
+Claude subscription override, and a reopen keeps the substrate its session
 recorded. There is no in-session model check: the `plan` helper pins
 the model and refuses an unresolved tier. Verbs:
 `docs/conventions/local-integrations.md`.
@@ -163,15 +163,15 @@ holds pending the operator's tick in the curator's tab. Then:
   runs to In Review like any chore. There is no third path.
 - **Release chains** the state of play names as landed.
 
-**Say the fold line.** The lever fold runs in the launcher's own
-tab (`launch`), never here:
+**Say the fold line.** The lever fold runs in the analyst's own
+tab (`analyze`), never here:
 
 ```sh
 python3 .claude/tools/upkeep.py fold-today
 ```
 
 Say its line verbatim — `fold ran at HH:MM, N batches` or
-`no fold today`; `no fold today` with a live `launch-<day>` means
+`no fold today`; `no fold today` with a live `analyze-<day>` means
 not yet stamped, likely still folding: say that, not "no fold".
 The new batches reach the inbox, where the curator reviews them.
 
@@ -328,8 +328,8 @@ filing skill binds this session:
   a **`**Cost band**:`** line beside the fingerprint — a dollar
   range, a line band and the substrate, from
   `docs/conventions/context-economy.md` → "Cost bands". A band,
-  never a point. A seat-bound issue (`architect`)
-  states its seat and a token profile instead: dollar bands bind
+  never a point. A subscription-bound issue (`architect`)
+  states its substrate and a token profile instead: dollar bands bind
   Bedrock workers only.
 
 - **The Todo / Backlog split** (step 1), **the `Claude:` prefix**,
@@ -577,7 +577,7 @@ the milestone** in one `board_batch.py fields` write, never by
 closing and refiling. **Do not re-adjudicate a finding** —
 `audit-scope` cross-checked it before filing.
 
-**`Session pending` is never promoted here**: a count is a seat
+**`Session pending` is never promoted here**: a count is an advisor
 session that died mid-review — offer to resume it.
 
 ## Notes

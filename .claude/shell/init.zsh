@@ -502,7 +502,7 @@ _ds_op_signout() {
   return 0
 }
 
-# Ensure this shell holds a USABLE AWS session before a seat verb launches, and
+# Ensure this shell holds a USABLE AWS session before a daily-role verb launches, and
 # refuse the launch if it does not.
 #
 # Why a gate rather than a mid-session fix: the login is **interactive**, so a
@@ -1069,8 +1069,8 @@ _ds_topic_sid() {
 #
 # THE RULE IS CAPABILITY, NOT ATTENDANCE. A session runs on Bedrock unless it
 # needs something Bedrock lacks — web search or deep research (web fetch works
-# there, measured 2026-10-23) — or it is a seat session by role (`architect`).
-# `plan` left the seat by default for pricing: a base-repo scheduler session on
+# there, measured 2026-10-23) — or it is a Claude subscription session by role (`architect`).
+# `plan` left the subscription by default for pricing: a base-repo scheduler session on
 # the subscription gets only a figure at Bedrock rates, never a billed one, and
 # `plan anthropic` remains the way back.
 # Sub-agents are NOT a differentiator: Opus-spawning-Opus sub-agents are
@@ -1177,7 +1177,7 @@ _DS_SUBSTRATE_DIR="$_DS_REPO/.claude/session-substrate"
 # start side let a non-`eng` name through literally while the resume side did
 # `eng-${1#eng-}`, which force-prefixes. So `task my-thing` recorded its
 # substrate under `my-thing` and `task resume my-thing` looked for
-# `eng-my-thing`, missed, and silently resumed on the seat — a miss in exactly
+# `eng-my-thing`, missed, and silently resumed on the subscription — a miss in exactly
 # the direction the design calls silent. Deriving both from here makes the
 # agreement structural rather than something two call sites have to remember.
 _ds_tag_of() {
@@ -1254,7 +1254,7 @@ _ds_worktree_ensure() {
 
 # Internal: the substrate-marker key for a tag. A marker written before the
 # rename sits under `eng-<n>`; reading it there keeps a pre-rename Bedrock
-# session resuming on Bedrock instead of silently moving to the seat.
+# session resuming on Bedrock instead of silently moving to the subscription.
 _ds_marker_key() {
   local tag="$1"
   if [[ "$tag" == <-> && ! -f "$_DS_SUBSTRATE_DIR/$tag" \
@@ -1347,14 +1347,14 @@ _ds_tier() {
 # Internal: put the calling shell on a tier's substrate. $1 substrate, $2 verb
 # name for messages. Non-zero means DO NOT LAUNCH.
 #
-# THE ORDER IS THE SEAT PIN. An anthropic launch clears whatever an earlier
+# THE ORDER IS THE SUBSCRIPTION PIN. An anthropic launch clears whatever an earlier
 # Bedrock launch in this tab left behind FIRST, and only then does the verb hand
 # its own model to `claude` — so an inherited pin can never win.
 _ds_substrate_enter() {
   if [[ "$1" == bedrock ]]; then
     _ds_bedrock_env
   else
-    _ds_seat_guard "$2"
+    _ds_subscription_guard "$2"
   fi
 }
 
@@ -1367,7 +1367,7 @@ _ds_substrate_enter() {
 #
 # WHY A MARKER AT ALL: a resume must land on the substrate its session started
 # on, and the slip is silent in BOTH directions. A Bedrock session resumed onto
-# the seat quietly eats the 5-hour subscription window; a seat session resumed
+# the subscription quietly eats its 5-hour window; a subscription session resumed
 # onto Bedrock quietly spends credits on attended work. Neither errors, so
 # neither gets noticed until the bill or the window does the telling.
 #
@@ -1394,7 +1394,7 @@ _ds_substrate_write() {
 # Record the substrate a NEW session launched on, keyed by its session id:
 # `sessions/<id>` holding `bedrock` or `anthropic`. Read by `plan`'s reopen and
 # by the pricing tools, which before it could not tell a Bedrock base-repo
-# session from a seat one, and reclassified a worktree's earlier sessions
+# session from a subscription one, and reclassified a worktree's earlier sessions
 # whenever a relaunch on the other substrate overwrote its tag marker.
 #
 # Decided by `CLAUDE_CODE_USE_BEDROCK`, so it runs after the caller has entered
@@ -1450,7 +1450,7 @@ _ds_new_sid() {
 # Read back a recorded substrate. Prints `bedrock` or `anthropic`.
 #
 # **Absent means anthropic**, deliberately: every session that existed before
-# markers did was a seat session, and the conservative error is spending the
+# markers did was a subscription session, and the conservative error is spending the
 # subscription window rather than spending credits on something unintended. A
 # garbage value — and the retired `seat` spelling — reads as anthropic for the
 # same reason.
@@ -1625,7 +1625,7 @@ _ds_model_probe() {
 
 # Clear the Bedrock exports from the calling shell.
 #
-# THIS IS NOT TIDINESS, IT IS THE SEAT PIN. These helpers export into the
+# THIS IS NOT TIDINESS, IT IS THE SUBSCRIPTION PIN. These helpers export into the
 # CALLING shell — they have to, since a child process could not set the
 # environment `claude` inherits — so the variables outlive the session that set
 # them. Run `task 1234`, quit it, and that tab is still a Bedrock tab: the next
@@ -1703,10 +1703,10 @@ _ds_substrate_unset() {
 # Warning alone was the ratified behavior and is not sufficient on its own — it
 # tells the operator about a slip it then allows to happen. The warning is kept
 # because a silent correction hides that the tab was in an unexpected state.
-_ds_seat_guard() {
+_ds_subscription_guard() {
   if [[ -n "$CLAUDE_CODE_USE_BEDROCK" ]]; then
     print -u2 "$1: this shell carried Bedrock exports (a previous \`task\` in" \
-      "the same tab); clearing them — $1 is a seat verb."
+      "the same tab); clearing them — $1 is a subscription verb."
   fi
   _ds_substrate_unset
 }
@@ -1875,13 +1875,13 @@ _ds_task_resume() {
   #
   # The picker cannot know which session will be chosen, so it cannot re-export
   # the right substrate — but it must not leave the tab's CURRENT one in place
-  # either, or picking a seat session in a tab that last ran `task` resumes it
+  # either, or picking a subscription session in a tab that last ran `task` resumes it
   # on Bedrock. Clearing makes the residual leak one-directional and matches the
-  # standing "absent marker = seat" default: the worst case becomes a Bedrock
-  # session resumed on the seat, which is loud (the model banner changes) rather
+  # standing "absent marker = subscription" default: the worst case becomes a Bedrock
+  # session resumed on the subscription, which is loud (the model banner changes) rather
   # than silent.
   if [[ -z "$1" ]]; then
-    _ds_seat_guard 'task resume'
+    _ds_subscription_guard 'task resume'
     _ds_secrets
     _ds_op_signout
     claude --resume --permission-mode auto
@@ -2036,7 +2036,7 @@ _ds_task_resume() {
 # folds in the third.
 #
 # **The advisor tier, on Bedrock.** Explore work is thinking-heavy, so it runs
-# the top tier like `plan` and `architect` do — but not on the seat. An audit
+# the top tier like `plan` and `architect` do — but not on the subscription. An audit
 # fans out sub-agents, and one (1813, 10-22) ran ten at 1.0M–2.3M input each on
 # the subscription and spent the session window and most of the weekly one. So
 # the substrate is Bedrock with no word, deliberately ignoring
@@ -2045,9 +2045,9 @@ _ds_task_resume() {
 # sub-agents default to the executor tier, as on every Bedrock launch.
 #
 # This was once PINNED to anthropic, because a pre-marker explore worktree has
-# no marker and so always resumed on the seat. Now a launch into an existing
+# no marker and so always resumed on the subscription. Now a launch into an existing
 # session or worktree takes the substrate the marker records (absent reads as
-# anthropic, so an unmarked tree stays on the seat), and only a launch that
+# anthropic, so an unmarked tree stays on the subscription), and only a launch that
 # creates its worktree chooses — and writes the marker. So the substrate a
 # session starts on is always the one its reopen reads back.
 #
@@ -2171,7 +2171,7 @@ explore() {
   # real: the marker is keyed on the WORKTREE TAG ALONE, and `_ds_task_start`
   # writes that same key, so `task 1196` (bedrock) followed by an
   # unconditional write from `explore anthropic 1196` would flip it, and the next `task resume 1196` — or `fleet` —
-  # would silently resume the IMPLEMENTATION session on the seat. An
+  # would silently resume the IMPLEMENTATION session on the subscription. An
   # `architect <n>` thread's marker is left alone for the same reason: the two
   # share one worktree, and its substrate is the one the thread chose.
   #
@@ -2225,7 +2225,7 @@ _ds_upkeep() {
     print -u2 'dropset: no base checkout to run the upkeep pass in — skipping.'
     return 0
   fi
-  # Named the seat way (`upkeep-<unpadded day>`) with its role set, so the tab says
+  # Named the daily-role way (`upkeep-<unpadded day>`) with its role set, so the tab says
   # which wait it is on; the title outlives the pass, and the green mark at the
   # end says it is done whatever the exit.
   if [[ "$DS_ITERM_DISABLED" != 1 ]]; then
@@ -2260,7 +2260,7 @@ _ds_upkeep() {
 #   chore bedrock <n>     the helper tier on Bedrock, whatever the config says
 #
 # The gap it fills: `task` is the executor tier plus a bootstrap PR, `explore`
-# is the advisor tier on the seat, and nothing was both cheap and PR-less. The
+# is the advisor tier on the subscription, and nothing was both cheap and PR-less. The
 # session is READ-ONLY toward the repo, files anything repo-bound as a
 # follow-up task, and goes to In Review at handoff, Done only on the operator's
 # word; it takes `task`'s argument shapes. Idempotent like `explore`, so there
@@ -2376,7 +2376,7 @@ _ds_plan_cycle() {
 #     warn-and-launch escapes (no `aws` at all, and an `aws` too old for
 #     `sso login --use-device-code`), so it is hard only when AWS is present
 #     and current. It runs
-#     AFTER the seat guard on purpose: the guard clears an `AWS_REGION`
+#     AFTER the subscription guard on purpose: the guard clears an `AWS_REGION`
 #     inherited from a previous `task` in the same tab, and the AWS CLI reads
 #     that variable, so probing first would probe under the Bedrock launcher's
 #     environment rather than the operator's own. On Bedrock the probe runs
@@ -2396,10 +2396,10 @@ _ds_plan_cycle() {
 # THE PRE-LAUNCH. On a FRESH day (`_ds_plan_fresh_day`) a bare `plan` starts
 # no session in the typed tab: it runs the AWS gate and the upkeep pass there,
 # in the foreground with the pass's progress lines, then opens the curator's
-# and the launcher's tabs; the launcher opens the scheduler's once the curator
+# and the analyst's tabs; the analyst opens the scheduler's once the curator
 # has written the state of play (`_ds_plan_prelaunch`). The typed tab's prompt
 # returns with the log in its scrollback. Any later `plan` that day — the one
-# the launcher types into the scheduler's own tab first — is WARM and runs the
+# the analyst types into the scheduler's own tab first — is WARM and runs the
 # scheduler below, in the tab it was typed in, with no pass.
 #
 # THE CYCLE LOOP. A scheduler session that cycles (the `plan` skill's "Cycling")
@@ -2421,7 +2421,7 @@ _ds_plan_cycle() {
 # `session_dispatch.py` reads to open new tabs just left of both. Set once
 # outside the loop, so a cycle relaunch inherits it, and cleared by the
 # `always` block on every way out. `DS_PLAN_TAB_RIGHTMOST=0` in the runtime
-# config skips it for both seat tabs, which then sort like any other.
+# config skips it for both daily-role tabs, which then sort like any other.
 #
 # THE DISPLAY NAME is `schedule-<day>` — the verb-form word for the scheduler,
 # beside the curator's `curate-<day>` (operator, 2026-10-26). Only the name
@@ -2437,7 +2437,7 @@ plan() {
     _ds_plan_prelaunch "$day" "$1"
     return
   fi
-  _ds_daily_seat plan schedule "$1"
+  _ds_daily_role plan schedule "$1"
 }
 
 # Internal: is $1 (YYYYMMDD) a FRESH day for `plan`? Yes only while the upkeep
@@ -2460,26 +2460,27 @@ _ds_plan_fresh_day() {
 # word or "". The AWS gate and the pass run in this tab (the gate first, so a
 # refused login stops the morning before the minutes-long pass, and in the
 # operator's own environment: inherited Bedrock exports are cleared first, as
-# the seat guard would). The day's marker is written only after the pass, so a
-# refused login or a Ctrl-C at the gate leaves the day fresh for a retry.
+# the subscription guard would). The day's marker is written only after the
+# pass, so a refused login or a Ctrl-C at the gate leaves the day fresh for a
+# retry.
 #
-# Then ONE dispatch opens the curator's and the launcher's tabs
-# (`session_dispatch.py curate + launch`), in parallel: the curator runs the
-# day's bootstrap and writes the state of play while the launcher folds the
-# levers. The SCHEDULER opens last — the launcher dispatches it on the
+# Then ONE dispatch opens the curator's and the analyst's tabs
+# (`session_dispatch.py curate + analyze`), in parallel: the curator runs the
+# day's bootstrap and writes the state of play while the analyst folds the
+# levers. The SCHEDULER opens last — the analyst dispatches it on the
 # curator's `state of play written` — so the day's marker carries the
-# scheduler verb (`plan` plus any substrate word typed), which the `launch`
-# helper exports as `DS_LAUNCH_SCHEDULER`. What opened is read back from the
+# scheduler verb (`plan` plus any substrate word typed), which the `analyze`
+# helper exports as `DS_ANALYZE_SCHEDULER`. What opened is read back from the
 # dispatch's own per-tab lines, failure listing included, and so is what the
 # machine gate HELD: a hold is the gate's refusal, so it is said out loud and
-# never overridden by a fallback here. Once a launcher is up, the last line
-# names the tab the morning waits on; a held launcher is itself the wait.
-# FALLBACKS, for a tab that neither opened nor was held: a launcher that did
+# never overridden by a fallback here. Once an analyst is up, the last line
+# names the tab the morning waits on; a held analyst is itself the wait.
+# FALLBACKS, for a tab that neither opened nor was held: an analyst that did
 # not open runs in this tab instead; a curator that did not open is dispatched
-# by the launcher as its first act, which finds no `curate-<day>` live.
+# by the analyst as its first act, which finds no `curate-<day>` live.
 _ds_plan_prelaunch() {
   setopt localoptions extendedglob
-  local day="$1" word="$2" out rc line curate_tab='' launch_tab=''
+  local day="$1" word="$2" out rc line curate_tab='' analyze_tab=''
   local curator="curate-${${day[7,8]}#0}"
   print -u2 'plan: pre-launch'
   _ds_substrate_unset
@@ -2490,50 +2491,50 @@ _ds_plan_prelaunch() {
   # Both streams: a driver that fails part-way lists the tabs it DID open on
   # stderr, and those must not be launched a second time here.
   out="$(python3 "$_DS_REPO/.claude/tools/session_dispatch.py" \
-    curate + launch 2>&1)"
+    curate + analyze 2>&1)"
   rc=$?
   print -r -- "$out"
   for line in "${(@f)out}"; do
     [[ "$line" == [[:space:]]#curate(| *)' -> '* ]] && curate_tab=opened
-    [[ "$line" == [[:space:]]#launch(| *)' -> '* ]] && launch_tab=opened
+    [[ "$line" == [[:space:]]#analyze(| *)' -> '* ]] && analyze_tab=opened
     [[ "$line" == 'held  curate'(| *)':'* ]] && curate_tab=held
-    [[ "$line" == 'held  launch'(| *)':'* ]] && launch_tab=held
+    [[ "$line" == 'held  analyze'(| *)':'* ]] && analyze_tab=held
   done
   [[ "$curate_tab" == held ]] && print -u2 'plan: the machine gate held the' \
     'curator — type `curate` once a slot frees.'
-  [[ "$launch_tab" == held ]] && print -u2 'plan: the machine gate held the' \
-    "launcher — type \`launch\` once a slot frees; the scheduler waits on it."
-  if [[ "$launch_tab" == held ]]; then
+  [[ "$analyze_tab" == held ]] && print -u2 'plan: the machine gate held the' \
+    "analyst — type \`analyze\` once a slot frees; the scheduler waits on it."
+  if [[ "$analyze_tab" == held ]]; then
     [[ -z "$curate_tab" ]] && print -u2 "plan: the curator's tab did not" \
       "open (dispatch exit $rc) — type \`curate\` in a new tab."
     return 0
   fi
-  if [[ "$launch_tab" == opened ]]; then
+  if [[ "$analyze_tab" == opened ]]; then
     [[ -z "$curate_tab" ]] && print -u2 "plan: the curator's tab did not" \
-      "open (dispatch exit $rc) — the launcher dispatches it first."
-    print -u2 "plan: waiting on $curator's state of play — the launcher" \
+      "open (dispatch exit $rc) — the analyst dispatches it first."
+    print -u2 "plan: waiting on $curator's state of play — the analyst" \
       "opens the scheduler's tab on it."
     return 0
   fi
   if [[ -n "$curate_tab" ]]; then
-    print -u2 "plan: the launcher's tab did not open (dispatch exit $rc) —" \
+    print -u2 "plan: the analyst's tab did not open (dispatch exit $rc) —" \
       'running it in this tab.'
   else
     print -u2 "plan: neither tab opened (dispatch exit $rc) — running the" \
-      'launcher in this tab; it dispatches the curator first.'
+      'analyst in this tab; it dispatches the curator first.'
   fi
-  print -u2 "plan: waiting on $curator's state of play — the launcher" \
+  print -u2 "plan: waiting on $curator's state of play — the analyst" \
     "opens the scheduler's tab on it."
-  launch
+  analyze
 }
 
-# Internal: refuse to resume daily seat $2 (display name; $1 the verb, for the
+# Internal: refuse to resume daily role $2 (display name; $1 the verb, for the
 # message) while a live client already holds it. Resuming by id never checks,
 # so a second `plan` forks the running session into a second client — measured
 # 2026-10-28, when a test harness's dispatched `plan anthropic` did exactly that
 # to the live scheduler, twice. Refuses only on a positive answer from
 # `plan_cycle.py live-name` (0 held, 1 free); an unanswered check warns and
-# proceeds, so a broken probe never locks the operator out of their own seat.
+# proceeds, so a broken probe never locks the operator out of their own session.
 _ds_live_guard() {
   local rc
   python3 "$_DS_REPO/.claude/tools/plan_cycle.py" live-name "$2" 2>/dev/null
@@ -2548,17 +2549,17 @@ _ds_live_guard() {
   return 0
 }
 
-# Internal: start OR resume today's session of a daily SEAT verb — the body
+# Internal: start OR resume today's session of a DAILY-ROLE verb — the body
 # `plan` and `curate` share. $1 the kind (the id seed, the counter and marker
 # names, the `/<kind>` prompt and the iTerm role), $2 the display-name prefix,
 # $3 the substrate word or "". Everything `plan`'s header describes holds for
 # both; the AWS gate is the scheduler's alone, and the upkeep pass is the
-# pre-launch's (`_ds_plan_prelaunch`), never a seat's.
+# pre-launch's (`_ds_plan_prelaunch`), never a daily role's.
 #
 # DS_PLAN_DATE tells the session its LAUNCH day and DS_DAILY_KIND its kind, so
 # plan_cycle.py and resolve_session.py name it after midnight, and a bare
-# `plan_cycle.py check` serves whichever seat ran it.
-_ds_daily_seat() {
+# `plan_cycle.py check` serves whichever daily role ran it.
+_ds_daily_role() {
   local kind="$1" model substrate day counter cycle name rc relaunch='' word="$3"
   local sid marker="$_DS_SUBSTRATE_DIR/$1-cycle-pending"
   day="$(date +%Y%m%d)" name="$2-$(date +%-d)"
@@ -2619,7 +2620,7 @@ _ds_daily_seat() {
 }
 
 # Start OR resume today's CURATOR session — review between Backlog and Todo,
-# the scheduler's seat-mate. Built from the same parts as `plan`:
+# the scheduler's companion. Built from the same parts as `plan`:
 #
 #   curate             the advisor tier on Bedrock
 #   curate anthropic   the advisor tier on the subscription — the override
@@ -2629,7 +2630,7 @@ _ds_daily_seat() {
 # keeping the substrate its session recorded; the base repo, no worktree, no
 # PR; its own cycle counter and marker (`curate-cycle-<date>`,
 # `curate-cycle-pending`); display name `curate-<day>`, prompt `/curate`. A
-# free, non-building seat verb, so its class is stamped `free` through the same
+# free, non-building daily-role verb, so its class is stamped `free` through the same
 # resolver and it builds on lane 0, as the base checkout always does.
 #
 # NO AWS GATE (it reads no cost data) and NO UPKEEP PASS (that is the `plan`
@@ -2641,7 +2642,7 @@ curate() {
     print -u2 'Usage: curate [anthropic|bedrock]   (the name is derived from the date)'
     return 1
   fi
-  _ds_daily_seat curate curate "$1"
+  _ds_daily_role curate curate "$1"
 }
 
 # A one-time, source-time check: a `curate` command on PATH would be shadowed
@@ -2650,40 +2651,40 @@ if (( $+commands[curate] )); then
   print -u2 "dropset: the curate helper shadows $commands[curate]."
 fi
 
-# Start OR resume today's LAUNCHER session — the morning's dispatcher, which the
+# Start OR resume today's ANALYST session — the morning's dispatcher, which the
 # `plan` pre-launch opens beside the curator's tab:
 #
-#   launch             the executor tier on Bedrock
-#   launch anthropic   the executor tier on the subscription — the override
-#   launch bedrock     the default, spelled out; a no-op
+#   analyze            the executor tier on Bedrock
+#   analyze anthropic  the executor tier on the subscription — the override
+#   analyze bedrock    the default, spelled out; a no-op
 #
-# The base checkout, no worktree, no PR; display name `launch-<day>`, prompt
-# `/launch`, a daily id seeded `launch` (`_ds_daily_sid`, no cycling). Its
+# The base checkout, no worktree, no PR; display name `analyze-<day>`, prompt
+# `/analyze`, a daily id seeded `analyze` (`_ds_daily_sid`, no cycling). Its
 # per-session substrate record is written on create (`_ds_session_mark`), the
 # marker the pricing tools read, and a reopen keeps the substrate it recorded.
-# A free seat verb, stamped `free`. Its tab carries `ds_role=launch`, which
-# rests it left of the curator's (`iterm-reorder.py`) and keeps worker tabs
-# left of it (`session_dispatch.py`). NO AWS GATE and NO UPKEEP PASS — both
-# ran in the pre-launch before this tab opened. `DS_LAUNCH_SCHEDULER` names
-# the scheduler verb the session dispatches on the curator's `state of play
-# written`: the caller's value when non-empty, else the one the day's
+# A free daily-role verb, stamped `free`. Its tab carries `ds_role=analyze`,
+# which rests it left of the curator's (`iterm-reorder.py`) and keeps worker
+# tabs left of it (`session_dispatch.py`). NO AWS GATE and NO UPKEEP PASS —
+# both ran in the pre-launch before this tab opened. `DS_ANALYZE_SCHEDULER`
+# names the scheduler verb the session dispatches on the curator's `state of
+# play written`: the caller's value when non-empty, else the one the day's
 # pre-launch marker records, else `plan`.
-launch() {
+analyze() {
   if [[ -n "$2" || ( -n "$1" && "$1" != (anthropic|bedrock) ) ]]; then
-    print -u2 'Usage: launch [anthropic|bedrock]   (the name is derived from the date)'
+    print -u2 'Usage: analyze [anthropic|bedrock]   (the name is derived from the date)'
     return 1
   fi
   local day model substrate name sid word="$1"
-  day="$(date +%Y%m%d)" name="launch-$(date +%-d)"
-  sid="$(_ds_daily_sid launch 0 "$day")"
+  day="$(date +%Y%m%d)" name="analyze-$(date +%-d)"
+  sid="$(_ds_daily_sid analyze 0 "$day")"
   if _ds_session_exists "$sid"; then
-    _ds_live_guard launch "$name" || return 1
+    _ds_live_guard analyze "$name" || return 1
     local recorded="$(_ds_substrate_read "sessions/$sid")"
     if [[ ! -f "$_DS_SUBSTRATE_DIR/sessions/$sid" ]]; then
-      print -u2 "launch: $name has no substrate record — reopening on" \
+      print -u2 "analyze: $name has no substrate record — reopening on" \
         'anthropic, where an unmarked reopen reads.'
     elif [[ -n "$word" && "$word" != "$recorded" ]]; then
-      print -u2 "launch: $name is recorded on $recorded — keeping it; a session" \
+      print -u2 "analyze: $name is recorded on $recorded — keeping it; a session" \
         'keeps its substrate.'
     fi
     word="$recorded"
@@ -2691,29 +2692,29 @@ launch() {
   { read -r model; read -r substrate; } <<< \
     "$(_ds_tier executor "${word:-bedrock}")"
   [[ -n "$substrate" ]] || return 1
-  _ds_substrate_enter "$substrate" 'launch' || return 1
+  _ds_substrate_enter "$substrate" 'analyze' || return 1
   if [[ "$substrate" == bedrock ]] && ! _ds_model_probe "$model"; then
     _ds_substrate_unset
     return 1
   fi
-  local scheduler="${DS_LAUNCH_SCHEDULER-}" mark="$_DS_SUBSTRATE_DIR/plan-prelaunch-$day"
+  local scheduler="${DS_ANALYZE_SCHEDULER-}" mark="$_DS_SUBSTRATE_DIR/plan-prelaunch-$day"
   [[ -z "$scheduler" && -s "$mark" ]] && scheduler="$(<"$mark")"
-  [[ "${DS_PLAN_TAB_RIGHTMOST:-1}" == 1 ]] && _ds_iterm_role launch
+  [[ "${DS_PLAN_TAB_RIGHTMOST:-1}" == 1 ]] && _ds_iterm_role analyze
   {
     local _ds_class_key="sessions/$sid" _ds_class=free
-    DS_LAUNCH_SCHEDULER="${scheduler:-plan}" DS_PLAN_DATE="$day" \
-      _ds_session "$sid" "$name" '/launch' "$model"
+    DS_ANALYZE_SCHEDULER="${scheduler:-plan}" DS_PLAN_DATE="$day" \
+      _ds_session "$sid" "$name" '/analyze' "$model"
   } always {
     _ds_iterm_role ''
   }
 }
 
-if (( $+commands[launch] )); then
-  print -u2 "dropset: the launch helper shadows $commands[launch]."
+if (( $+commands[analyze] )); then
+  print -u2 "dropset: the analyze helper shadows $commands[analyze]."
 fi
 
 # Start OR resume an ARCHITECT session on one design thread — the CEO hat. Same
-# seat quality as `plan` and the same idempotency; a different job.
+# tier as `plan` and the same idempotency; a different job.
 #
 # Takes the thread's GOVERNING ISSUE NUMBER as its only argument (operator
 # direction — there is no topic argument), and keys the session on it, so each
@@ -2829,7 +2830,7 @@ architect() {
 # the thin verb over it, per the skill-tooling convention.
 #
 # Each tab it opens types `task resume <n>`, which reads that session's own
-# substrate marker — so a mixed fleet of Bedrock and seat sessions comes back
+# substrate marker — so a mixed fleet of Bedrock and subscription sessions comes back
 # on the right provider per session, with no substrate knowledge here.
 fleet() {
   _ds_base || return 1

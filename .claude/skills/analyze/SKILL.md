@@ -1,45 +1,44 @@
 ---
-name: launch
-description: Run the launcher — the executor-tier session that runs the mechanical morning, opened by the fresh-day `plan` pre-launch beside the curator's tab (or typed as `launch`), in the base repo with no worktree, branch or PR. Runs the trim-context lever fold in its own visible tab, filing the Claude: batches into Backlog and writing the fold stamp; gathers kill and merge candidates, filing nothing on them. Then prunes, unasked, every worktree (once the digest has read its session) and stray branch whose issue is Done or Canceled, reporting each tip. Hands the curator the fold's hand-off, and on the curator's `state of play written` opens the scheduler's tab. Weekly, a read-only sub-agent judges every memory stale, superseded, repo-bound or keep. Then asks the one destructive question — the transcript purge, the upkeep report's other destructive items and the judged memories — applying only what is ticked. Ends with session metrics and its cost; the tab stays open.
+name: analyze
+description: Run the analyst — the executor-tier session that runs the mechanical morning, opened by the fresh-day `plan` pre-launch beside the curator's tab (or typed as `analyze`), in the base repo with no worktree, branch or PR. Runs the trim-context lever fold in its own visible tab, filing the Claude: batches into Backlog and writing the fold stamp; gathers kill and merge candidates, filing nothing on them. Then prunes, unasked, every worktree (once the digest has read its session) and stray branch whose issue is Done or Canceled, reporting each tip. Hands the curator the fold's hand-off, and on the curator's `state of play written` opens the scheduler's tab. Weekly, a read-only sub-agent judges every memory stale, superseded, repo-bound or keep. Then asks the one destructive question — the transcript purge, the upkeep report's other destructive items and the judged memories — applying only what is ticked. Ends with session metrics and its cost; the tab stays open.
 disable-model-invocation: false
 user-invocable: true
 ---
 
-# `launch`
+# `analyze`
 
 **Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
 `SendMessage`.
 
-The **launcher** (to be renamed the analyst) runs the mechanical
-morning. The pre-launch (a fresh-day `plan` in the typed tab) ran
-the AWS gate and the upkeep pass, then opened two tabs in parallel:
-the curator's and this one
+The **analyst** runs the mechanical morning. The pre-launch (a
+fresh-day `plan` in the typed tab) ran the AWS gate and the upkeep
+pass, then opened two tabs in parallel: the curator's and this one
 (`docs/conventions/local-integrations.md` → the verb table). The
 curator bootstraps the board and writes the state of play while
 this tab folds the levers; the scheduler opens last, from here, on
 the curator's `state of play written`.
 
-Three seats, three jobs (ruling 2):
+Three daily roles, three jobs (ruling 2):
 
 - the **curator** (`curate`) bootstraps the day and owns review —
   Backlog to Todo, kills and merges, rebase rulings;
 - the **scheduler** (`plan`) warm-boots from the curator's write
   and owns the live day and the Planning document after it;
-- the **launcher** files the levers, hands the curator its
+- the **analyst** files the levers, hands the curator its
   candidates, opens the scheduler's tab, and asks the destructive
   question.
 
 ## Where it runs
 
 The **base repo**, never a worktree; no branch, no commits, no PR.
-Executor tier, **Bedrock** by default (`launch anthropic` is the
-escape). The `launch` helper pins the model and refuses an
+Executor tier, **Bedrock** by default (`analyze anthropic` is the
+escape). The `analyze` helper pins the model and refuses an
 unresolved tier, so there is no in-session model check. There is
 **no governing issue**: no state write, no close tool. It does not
-cycle — one session a day, `launch-<day>`.
+cycle — one session a day, `analyze-<day>`.
 
 **The curator first.** Run `ListAgents`. No `curate-<day>` listed
-means its tab did not open (a pre-launch fallback, or a `launch`
+means its tab did not open (a pre-launch fallback, or an `analyze`
 typed by hand): dispatch it before anything else, so the bootstrap
 is not waiting on the fold — on Bedrock unless the operator named
 `anthropic` in this tab (then append it):
@@ -52,16 +51,16 @@ A `held` line is the machine gate's refusal: say it loudly and name
 `curate` for the operator to type; never pass `--over-budget` on
 your own. A `curate-<day>` already listed may have sent its
 `state of play written` before this session existed: message it
-`launcher up`, once, and it re-sends the line if its write has
+`analyst up`, once, and it re-sends the line if its write has
 landed.
 
 **Then the scheduler verb**, with its own bare call:
 
 ```sh
-printenv DS_LAUNCH_SCHEDULER
+printenv DS_ANALYZE_SCHEDULER
 ```
 
-The `launch` helper sets it — the caller's value, else the day's
+The `analyze` helper sets it — the caller's value, else the day's
 pre-launch marker, else `plan` — and step 2 dispatches exactly it.
 
 ## 1. The lever fold
@@ -135,7 +134,7 @@ seconds; re-list at most three times), then send it **one**
 message, this shape exactly, with each list's lines or `none`:
 
 ```txt
-Hand-off from launch-<day>: lever fold done.
+Hand-off from analyze-<day>: lever fold done.
 Batches filed:
 - ENG-### — <title> (<n> parts)
 Folds made:
@@ -158,13 +157,13 @@ held at dispatch, or a tab that opened but whose session is not
 listed after the three re-lists: say so, print the hand-off block
 in this tab and tell the operator to type `curate` once a slot
 frees, then `curator up` here: that message re-lists and sends the
-block, so nothing nudges the launcher unasked and nothing is lost.
+block, so nothing nudges the analyst unasked and nothing is lost.
 
 **The scheduler, on `state of play written`.** The curator sends
 it exactly once its bootstrap has rewritten the Planning document.
 It may land **while the fold is still running**: dispatch at once
 all the same — the scheduler warm-boots from the document, not the
-fold. Dispatch the verb `DS_LAUNCH_SCHEDULER` named:
+fold. Dispatch the verb `DS_ANALYZE_SCHEDULER` named:
 
 ```sh
 python3 .claude/tools/session_dispatch.py plan

@@ -41,7 +41,7 @@ from pathlib import Path
 
 DEFAULT_MIN_INTERVAL_HOURS = 20.0
 MARKER_NAME = ".memory-staleness-scan.json"
-# The launcher's staleness judge — a sub-agent reading every memory against
+# The analyst's staleness judge — a sub-agent reading every memory against
 # HEAD and the board — runs weekly, on its own marker beside the scan's.
 JUDGE_INTERVAL_HOURS = 168.0
 JUDGE_MARKER_NAME = ".memory-staleness-judge.json"
@@ -162,7 +162,7 @@ def decide_judge(
     now: datetime,
     min_interval_hours: float = JUDGE_INTERVAL_HOURS,
 ) -> tuple[bool, bool, str]:
-    """Pure decision for the launcher's staleness judge: ``(judge, first,
+    """Pure decision for the analyst's staleness judge: ``(judge, first,
     reason)``. Time alone gates it — a memory saved yesterday must not buy a
     full read of the store every morning — and ``first`` (no usable prior run)
     makes it the uncapped full cull."""
@@ -219,7 +219,7 @@ Usage:
   memory_scan_gate.py record MEMORY_DIR
       Record that a scan just ran (marker = current signature + now).
   memory_scan_gate.py judge-check MEMORY_DIR [--min-interval-hours H]
-      Print {judge, first, reason, last_judged} — whether the launcher's
+      Print {judge, first, reason, last_judged} — whether the analyst's
       weekly staleness judge is due, and whether it is the first (full) cull.
   memory_scan_gate.py judge-record MEMORY_DIR
       Record that a judge run just finished.

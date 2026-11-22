@@ -249,20 +249,21 @@ lifts. `trim-context`, the **fold analyst**, judges the whole day at
 once, dedups by fingerprint and Backlog title (folding a near-match
 into the existing issue), and files **small themed `Claude:` batches
 of ~4–5 parts** into Backlog, no milestone. A rejection filed Canceled
-with its reason is permanent. The **launcher** (`launch`, its own tab)
+with its reason is permanent. The **analyst** (`analyze`, its own tab)
 runs that fold each morning beside the curator, hands it the kill and
 merge candidates, opens the scheduler on the curator's
 `state of play written`, and asks
 the day's **one destructive question**. Detail:
-`docs/conventions/linear-automation.md`, `trim-context` and `launch`.
+`docs/conventions/linear-automation.md`, `trim-context` and `analyze`.
 
 ### Blocking relations
 
 **No automated writer files a blocking edge — ever**, semantic ones
 included; a human places them — in the **scheduler**, by a ticked
-curator proposal, or by a seat session's filing yes. The scheduler and
-curator message each other any change to the other's edge; both write
-priorities under the agreement rule. A spurious edge (dropping an issue out of
+curator proposal, or by an advisor session's filing yes.
+The scheduler and curator message each other any change to the other's
+edge; both write priorities under the agreement rule. A spurious edge
+(dropping an issue out of
 the available set) costs more than a missing one (a rebase). A filer
 that believes a real dependency exists **proposes** it via
 `AskUserQuestion` with the concrete evidence and writes it only on an
@@ -393,7 +394,7 @@ you hand a sub-agent. Three opt-in `PreToolUse` guards enforce it:
 **Firming has three homes and no per-session sweep**: `allowlist.py add`
 ad hoc (the dominant path), `fewer-permission-prompts` on demand, and
 the upkeep pass's roughly **monthly** refresh gate — the only periodic
-adder, which proposes for the launcher's one ask and reports cruft to
+adder, which proposes for the analyst's one ask and reports cruft to
 prune. Do not reinstate a per-session pass.
 
 ## Local integrations and guard hooks
@@ -431,10 +432,11 @@ shape the committed
 ### Session substrate: capability, not attendance
 
 A session runs on **Bedrock** unless it needs something Bedrock lacks —
-web search or deep research (web fetch works there) — or it is a **seat
-session by role** (`architect`); sub-agents are not a differentiator.
-Every other verb defaults to Bedrock, with `anthropic` the escape
-(`plan anthropic` puts planning back on the seat). Models are named by
+web search or deep research (web fetch works there) — or it is a
+**subscription session by role** (`architect`); sub-agents are not a
+differentiator. Every other verb defaults to Bedrock, with `anthropic`
+the escape (`plan anthropic` puts planning back on the subscription).
+Models are named by
 **role tier** — advisor, executor, helper, background — each set in the
 untracked runtime config (`DS_MODEL_<TIER>[_SUBSTRATE]`); each verb
 pins its tier at launch and refuses an unresolved one, so no skill
