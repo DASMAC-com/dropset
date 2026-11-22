@@ -35,10 +35,14 @@ the whole fall-through inside one Bash call::
    running.
    **One exception: the E0463 doctest race.** A local test red whose only
    failures are doctests that could not find a crate (``error[E0463]``,
-   every other test binary green) is the cargo pool swapping an rlib under
-   rustdoc, not the change. The doctests alone are rerun once, at the same
-   scope, and that rerun settles the check; the verdict line carries
-   ``recovered=doctest-e0463`` (before ``ci=``) so the retry is never silent.
+   every other test binary green) is taken as the unlocked doctest phase
+   racing the cargo pool, not the change. That covers rustdoc failing to
+   compile the crate itself before any doctest ran. The doctests alone are
+   rerun once, at the same scope, and that rerun settles the check; the
+   verdict line carries ``recovered=doctest-e0463`` (before ``ci=``) so the
+   retry is never silent. Whenever the retry starts, the line also carries
+   ``race=lane:<CARGO_TARGET_DIR>,key:<RUSTC_WORKSPACE_WRAPPER>,crate:<name>``,
+   so the next instance names the lane, key and missing crate it hit.
 5. **HEAD moving** ends the race (commit, then call again); ``--timeout``
    bounds it; a CI read failing :data:`MAX_CI_ERRORS` times in a row stops
    the polling, and the local side settles alone.
@@ -156,6 +160,12 @@ _DOC_HEADER = re.compile(r"^\s*Doc-tests\s+\S+")
 #: One failing test's block header in the test harness's ``failures:`` section.
 _FAILURE_HEADER = re.compile(r"^---- .+ stdout ----$")
 
+#: A compiler error's code, e.g. ``E0463`` in ``error[E0463]: …``.
+_ERROR_CODE = re.compile(r"^error\[(E\d+)\]")
+
+#: The crate an E0463 names; rustc backticks it, a pasted log may not.
+_MISSING_CRATE = re.compile(r"error\[E0463\]: can't find crate for `?(\w+)`?")
+
 #: The scoped test command ``cargo_scope.py`` echoes before running it.
 _SCOPED_TEST = re.compile(r"^cargo_scope: (cargo test\b.*)$")
 
@@ -198,6 +208,7 @@ class Race:
     outcome: str = ""
     ci_note: str = ""
     recovered: str = ""
+    race: str = ""  # :func:`race_attribution`, set only when the retry starts
     order: list[str] = field(default_factory=lambda: [n for n, _ in STAGES])
     mode: str = ""  # "" for the abridged pair, "full" under --full
     skipped: list[str] = field(default_factory=list)  # targets out of reach
@@ -224,24 +235,36 @@ def failure_line(log: Path) -> str:
     return f"{log}:{hit + 1}: {lines[hit].strip()[:160]}"
 
 
+def _doc_section(log: Path) -> tuple[list[str], list[str]] | None:
+    """A test log split at its first ``Doc-tests`` header, or ``None`` when
+    it is unreadable or has no doctest section."""
+    try:
+        lines = log.read_text(errors="replace").splitlines()
+    except OSError:
+        return None
+    first_doc = next((i for i, t in enumerate(lines) if _DOC_HEADER.match(t)), None)
+    if first_doc is None:
+        return None
+    return lines[:first_doc], lines[first_doc:]
+
+
 def is_doctest_race(log: Path) -> bool:
     """Whether a red test log is the pool's E0463 doctest race and nothing else.
 
     The shape: every unit and integration binary passed (cargo runs the
     doctests last and stops at the first red binary, so reaching them proves
-    that), and every failing doctest failed on ``error[E0463]`` — a crate not
-    found because a sibling checkout on the cargo pool swapped the rlib out
-    from under rustdoc. A real doctest failure beside it, or an E0463 outside
-    the doctests (a genuine build break), is not the race.
+    that), and the doctest section failed only on ``error[E0463]`` — a crate
+    not found although the rlib is on disk. It comes in two forms: every
+    failing doctest's block carries the E0463, or rustdoc failed compiling
+    the crate itself before any doctest ran, so there are no blocks and the
+    E0463 sits directly under the ``Doc-tests`` header. A real doctest
+    failure beside it, any other error code in the section, or an E0463
+    outside the doctests (a genuine build break), is not the race.
     """
-    try:
-        lines = log.read_text(errors="replace").splitlines()
-    except OSError:
+    split = _doc_section(log)
+    if split is None:
         return False
-    first_doc = next((i for i, t in enumerate(lines) if _DOC_HEADER.match(t)), None)
-    if first_doc is None:
-        return False
-    before, doc = lines[:first_doc], lines[first_doc:]
+    before, doc = split
     if any("E0463" in t or "test result: FAILED" in t for t in before):
         return False
     blocks: list[list[str]] = []
@@ -254,7 +277,32 @@ def is_doctest_race(log: Path) -> bool:
             open_block = False  # The name list that follows is not a block.
         elif open_block:
             blocks[-1].append(text)
-    return bool(blocks) and all(any("E0463" in t for t in b) for b in blocks)
+    if blocks:
+        return all(any("E0463" in t for t in b) for b in blocks)
+    # The crate-compile form: no doctest ran, so only E0463 errors may appear.
+    codes = [m.group(1) for t in doc if (m := _ERROR_CODE.match(t.strip()))]
+    return bool(codes) and all(c == "E0463" for c in codes)
+
+
+def race_attribution(log: Path, env=None) -> str:
+    """The ``race=`` field naming what the E0463 race ran under.
+
+    ``lane`` is the session's ``CARGO_TARGET_DIR``, ``key`` its
+    ``RUSTC_WORKSPACE_WRAPPER`` (``-`` when unset), and ``crate`` every crate
+    rustdoc could not find in the doctest section, ``+``-joined. A key naming
+    another checkout points at a shared key; one naming this checkout means
+    the writer is not yet found.
+    """
+    env = os.environ if env is None else env
+    split = _doc_section(log)
+    crates: list[str] = []
+    for text in split[1] if split else []:
+        hit = _MISSING_CRATE.search(text)
+        if hit and hit.group(1) not in crates:
+            crates.append(hit.group(1))
+    lane = env.get("CARGO_TARGET_DIR") or "-"
+    key = env.get("RUSTC_WORKSPACE_WRAPPER") or "-"
+    return f"lane:{lane},key:{key},crate:{'+'.join(crates) or '-'}"
 
 
 def doctest_retry_cmd(log: Path) -> list[str]:
@@ -559,6 +607,7 @@ def race(
                 elif name == "test" and not retried and is_doctest_race(stage.log):
                     # Once only: a second E0463 is no longer a race to retry.
                     retried = True
+                    r.race = race_attribution(stage.log)
                     current = (name, start(DOC_RETRY))
                 else:
                     r.settled[name] = Settled("local", False, failure_line(stage.log))
@@ -598,6 +647,7 @@ def render(r: Race, wall: float) -> str:
             f"wall={round(wall)}s",
             f"killed={','.join(r.killed) or '-'}",
             *([f"recovered={r.recovered}"] if r.recovered else []),
+            *([f"race={r.race}"] if r.race else []),
             f"ci={r.ci_note}",
         ]
     )

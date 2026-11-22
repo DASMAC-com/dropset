@@ -1519,10 +1519,14 @@ so the session — and every Bash command its agent runs — inherits the pool
   lane's artifacts while a sibling builds. Distinct per-checkout slots
   keep a sibling's build out of them, but a slot deleted under a
   doctest fails it: a sibling's `cargo clean -p` gives
-  `extern location … does not exist` (measured). The `E0463` form, on
-  a transitive crate, appears in session logs and was not reproduced;
-  it is the only form `verify_head.py` retries, by re-running
-  `cargo test --doc`.
+  `extern location … does not exist` (measured). The `E0463` form
+  appears in session logs, on a transitive crate or on rustdoc's
+  compile of the crate itself with the rlib untouched, and was not
+  reproduced. It is the only form `verify_head.py` retries, by
+  re-running `cargo test --doc`, and its verdict line then records the
+  lane, the key and the missing crate (`race=lane:…,key:…,crate:…`).
+  A key naming another checkout points at a shared key; one naming its
+  own checkout means the writer is not yet found.
 - **`CARGO_BUILD_JOBS`** comes from the runtime config, **required**
   like the lane count (see "Lanes" below): the hook no longer derives
   it. Exported, it also bounds any cargo outside the lock.
