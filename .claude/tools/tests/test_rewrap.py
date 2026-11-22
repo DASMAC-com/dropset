@@ -137,10 +137,69 @@ class Rewrap(unittest.TestCase):
             ((self._file("lint.yml", YAML), "--line", "2"), "not a `#` comment"),
             ((self._file("x.rs", "// a\n"), "--line", "1"), "pass --width"),
             ((self._file("hard.md", "one  \ntwo\n"), "--line", "1"), "hard line break"),
+            ((self._file("crlf.md", "one\r\ntwo\r\n"), "--line", "1"), "CRLF"),
+            ((self._file("sx.md", "Title words\n=====\n"), "--line", "1"), "setext"),
+            ((self._file("t.md", "a | b\n--- | ---\n1 | 2\n"), "--line", "1"), "table"),
+            (
+                (self._file("bt.md", "an ` open tick\n"), "--line", "1"),
+                "no span closes",
+            ),
+            ((self._file("d.yml", "# cspell:word zz\n"), "--line", "1"), "directive"),
         ):
             with self.subTest(argv=argv[1:]):
                 with self.assertRaisesRegex(rewrap.RewrapError, message):
                     self._run(*argv)
+
+    def _rewrapped(self, name, text, *argv):
+        path = self._file(name, text)
+        self._run(path, *argv)
+        return path.read_text().splitlines()
+
+    def test_a_code_span_may_cross_a_line_and_survives_intact(self):
+        lines = self._rewrapped(
+            "s.md", "Text (`a\nb`) and `` a ` b `` end.\n", "--line", "1"
+        )
+        self.assertEqual(lines, ["Text (`a b`) and `` a ` b `` end."])
+
+    def test_a_quote_line_after_a_paragraph_is_its_own_block(self):
+        lines = self._rewrapped("q.md", "Some para\n> quoted\n", "--line", "1")
+        self.assertEqual(lines, ["Some para", "> quoted"])
+
+    def test_a_backtick_fence_with_a_backtick_info_string_is_not_a_fence(self):
+        # Not a fence, so the paragraph after it is not swallowed as code.
+        text = "``` a ` b\n\n" + "word " * 20 + "\n"
+        path = self._file("f.md", text)
+        code, out = self._run(path, "--line", "3")
+        self.assertEqual(code, 0)
+        self.assertIn("rewrapped", out)
+
+    def test_a_rule_like_token_never_starts_a_line(self):
+        text = "x" * 70 + " words ---\n"
+        lines = self._rewrapped("r.md", text, "--line", "1")
+        self.assertFalse(any(line.startswith("---") for line in lines))
+
+    def test_a_comment_keeps_directives_examples_and_bullets_apart(self):
+        text = (
+            "# cspell:word zz\n"
+            "# Usage, a sentence long enough that the rewrap tool must break it in two.\n"
+            "#   make foo ARG=1\n"
+            "# - a bullet item that is also long enough to wrap onto a second line here\n"
+            "# - a second bullet\n"
+        )
+        lines = self._rewrapped("c.yml", text, "--anchor", "Usage")
+        self.assertEqual(lines[0], "# cspell:word zz")
+        self.assertIn("#   make foo ARG=1", lines)
+        self.assertEqual(lines[-1], "# - a second bullet")
+        lines = self._rewrapped("c.yml", text, "--anchor", "a bullet item")
+        item = lines[lines.index("#   make foo ARG=1") + 1 : -1]
+        self.assertTrue(item[0].startswith("# - a bullet"))
+        self.assertTrue(all(line.startswith("#   ") for line in item[1:]))
+
+    def test_a_changed_line_count_names_the_new_range(self):
+        path = self._file("n.md", "one two three four five six\n")
+        _, out = self._run(path, "--line", "1", "--width", "10")
+        self.assertIn("1 -> 3 line(s), now 1-3", out)
+        self.assertEqual(path.read_text(), "one two\nthree four\nfive six\n")
 
 
 if __name__ == "__main__":
