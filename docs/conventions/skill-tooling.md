@@ -273,7 +273,7 @@ target call it.
 
 ## MCP first for prototyping and fallback; harden settled workflows
 
-The MCP servers (`mcp__github__*`, `mcp__claude_ai_Linear__*`, …) are
+The MCP servers (`mcp__github__*`, `mcp__linear__*`, …) are
 the right tool while a workflow is still being figured out, and the
 right fallback for one-off or rarely-run operations. But once a
 workflow is **established and repeated** — same calls, same shape,
@@ -310,8 +310,10 @@ The line names only the tools the skill **calls**, never the ones it
 mentions to forbid, and the Linear names use the local server's
 `mcp__linear__*` prefix, the one that reaches every session. A tool a
 skill delegates through another skill (a follow-up filed through
-`linear-task`) stays on that skill's line. The lists differ per skill,
-so the line has no `.claude/shared/` source.
+`linear-task`) stays on that skill's line, and a tool reached only on a
+failure fallback (`init-pr`'s `get_issue` when the spec spill failed)
+loads at that fallback. The lists differ per skill, so the line has no
+`.claude/shared/` source.
 
 ## Repeated prose gets one source and a freshness gate
 

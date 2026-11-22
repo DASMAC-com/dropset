@@ -239,6 +239,35 @@ class DedupTests(unittest.TestCase):
         self.assertEqual(groups[1]["severity"], "blocking")
         self.assertEqual(groups[2]["file"], "tools/y.py")
 
+    def test_blocking_wins_over_alphabetical_order(self):
+        # Alphabetically "blocking" sorts lowest, so this pins the rank key.
+        mixed = [
+            {**FINDINGS[0], "severity": "warning"},
+            {**FINDINGS[1], "severity": "blocking"},
+        ]
+        (group,) = rs.dedup(mixed)
+        self.assertEqual(group["severity"], "blocking")
+
+    def test_every_distinct_claim_survives_a_merge(self):
+        (group,) = rs.dedup(FINDINGS[:3])
+        self.assertEqual(group["other_claims"], [f["claim"] for f in FINDINGS[1:3]])
+        text = rs.render_dedup([group], 3)
+        self.assertIn(f"  - also: {FINDINGS[2]['claim']}", text)
+
+    def test_exactly_half_overlap_stays_apart(self):
+        a = {**FINDINGS[0], "claim": "unused import re"}
+        b = {**FINDINGS[0], "claim": "unused import json", "lens": "naming"}
+        self.assertEqual(len(rs.dedup([a, b])), 2)
+
+    def test_filler_only_claims_never_merge(self):
+        a = {**FINDINGS[0], "claim": "It is."}
+        b = {**FINDINGS[0], "claim": "This should be.", "lens": "naming"}
+        self.assertEqual(len(rs.dedup([a, b])), 2)
+
+    def test_null_end_line_means_line(self):
+        (group,) = rs.dedup([{**FINDINGS[0], "end_line": None}])
+        self.assertEqual((group["line"], group["end_line"]), (40, 40))
+
     def test_disjoint_ranges_stay_apart(self):
         far = {**FINDINGS[0], "line": 90, "lens": "naming"}
         self.assertEqual(len(rs.dedup([FINDINGS[0], far])), 2)

@@ -16,8 +16,7 @@ user-invocable: true
 
 **Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
 `SendMessage`, `mcp__linear__get_issue`, `mcp__linear__list_comments`,
-`mcp__github__update_pull_request`, `mcp__github__pull_request_read`,
-`mcp__github__list_pull_requests`.
+`mcp__github__update_pull_request`, `mcp__github__pull_request_read`.
 
 Review adversarially before the human does: lint, audit the diff,
 catalogue every issue, fix what is mechanical, mark the PR ready only
@@ -984,6 +983,12 @@ migrations or generation inputs, and whether it spans crates.
    `completeness`; and `doc-freshness` and `ci-skip-list` under the
    surface gate.
 
+   **Collapse duplicates once two or more lenses report**, at any tier
+   and whether or not step 6 runs: write the findings as a JSON list
+   and run `review_summary.py --dedup <findings.json>` (shape in its
+   docstring), so a nit three lenses raised is one row naming all
+   three, triaged once (`history.md` → "Duplicate lens nits").
+
 1. **Adversarial cross-check.** (Skipped for a trivial
    diff that took the scaled-down path above.)
 
@@ -1008,11 +1013,6 @@ migrations or generation inputs, and whether it spans crates.
    and a rebase changes the diff, re-run the affected lenses and then
    a full `--split --out <scratchpad>/review-diff.txt` run — not
    before.
-
-   **Collapse duplicates first**: write the lens findings as a JSON
-   list and run `review_summary.py --dedup <findings.json>` (the shape
-   is in its docstring), so a nit three lenses raised is one row naming
-   all three, triaged once.
 
    Spawn a fresh sub-agent on the `cross-check` brief
    (`--lens cross-check`), its material naming the **full**

@@ -755,6 +755,15 @@ to move and by how much.
   had been fixed after the lenses read it and before the cross-check
   did, so the refutation was wrong — and so was the process caution it
   derived from it, to distrust convergent findings.
+- **Duplicate lens nits.** In one review all three lenses raised the
+  same nit about an exception reason, and it took four sub-agents to
+  converge on a one-line wording fix; in another, a full fan-out on a
+  mostly-YAML CI diff returned the same stale-comment nits from four
+  lenses. In both the cross-check found the real miss. Hence the
+  `--dedup` pass at step 5's end, at any tier, and the standing
+  suppression of pure style nits on a CI-workflow-only diff. The dedup
+  renders every distinct claim in a merged row, so a near-miss merge
+  costs a longer row, never a lost finding.
 
 ## Step 7: fixing
 

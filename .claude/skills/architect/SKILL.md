@@ -123,11 +123,11 @@ python3 .claude/tools/planning_doc.py --sections \
   '^(Current direction|In-session notes|Notes for the next planning session)'
 ```
 
-Never `get_document`, and never the whole body: the
-machine-written sections — `Fleet state and chains`,
-`Collision clusters`, `Audit state`, `Session-metrics state`
-and the `Upkeep report` — are the scheduler's board state, about
-two fifths of the document, and are deliberately skipped. Should
+Never `get_document`, and never the whole body: the board-state
+sections the scheduler and the upkeep pass maintain —
+`Fleet state and chains`, `Collision clusters`, `Audit state`,
+`Session-metrics state` and the `Upkeep report` — are about two
+fifths of the document, and are deliberately skipped. Should
 a design question turn on one of them, read that one section
 with `--section`.
 

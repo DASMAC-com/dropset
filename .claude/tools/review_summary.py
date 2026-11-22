@@ -65,13 +65,14 @@ emits a lint or suite verdict file yet. When one does, it replaces the fact.
 findings **before** the cross-check and the fix round: several lenses raising
 the same nit used to arrive as separate findings, each triaged on its own. It
 takes a JSON list of ``{"lens", "file", "line", "end_line"?, "severity",
-"claim"}`` (``end_line`` defaults to ``line``; severity is blocking | warning
-| nit) and prints one row per group of findings on the same file, with
-overlapping line ranges and near-identical claims (token-set overlap of at
-least ``CLAIM_OVERLAP`` once case, punctuation and filler words are dropped).
+"claim"}`` (``end_line`` absent or null means ``line``; severity is blocking
+| warning | nit) and prints one row per group of findings on the same file,
+with overlapping line ranges and near-identical claims (token-set overlap
+above ``CLAIM_OVERLAP`` once case, punctuation and filler words are dropped).
 Each row names every lens that raised it, spans the union of their ranges and
-carries the highest severity; the first claim reported is kept. Exit 0, or 2
-on bad input.
+carries the highest severity; the first claim heads the row and every other
+distinct wording follows it as an ``also:`` line, so a merge never drops a
+finding. Exit 0, or 2 on bad input.
 
 Standard library only; tests in ``tests/test_review_summary.py``.
 """
@@ -223,7 +224,9 @@ def _merge_line(merge: dict | None) -> tuple[str, bool]:
 
 #: Severities in rising order; a group carries the highest of its members'.
 SEVERITY = ("nit", "warning", "blocking")
-#: Minimum token-set overlap (shared over combined words) for two claims to read as the same one.
+#: Token-set overlap (shared over combined words) two claims must EXCEED to
+#: read as the same one. Strict, so "unused import re" and "unused import
+#: json" (exactly half) stay apart.
 CLAIM_OVERLAP = 0.5
 #: Filler words dropped before claims are compared, so phrasing alone does not
 #: keep two lenses' copies of one finding apart.
@@ -239,9 +242,10 @@ def _claim_tokens(claim: str) -> frozenset[str]:
 
 
 def _same_claim(a: frozenset[str], b: frozenset[str]) -> bool:
+    # A claim of filler words alone carries nothing to match on.
     if not a or not b:
-        return a == b
-    return len(a & b) / len(a | b) >= CLAIM_OVERLAP
+        return False
+    return len(a & b) / len(a | b) > CLAIM_OVERLAP
 
 
 def _check_finding(f, i: int) -> dict:
@@ -253,7 +257,8 @@ def _check_finding(f, i: int) -> dict:
             raise SummaryError(f"{where}: {key!r} must be a non-empty string")
     _status(f.get("severity"), SEVERITY, f"{where} severity")
     start = _count(f.get("line"), f"{where} line")
-    end = _count(f.get("end_line", start), f"{where} end_line")
+    raw_end = f.get("end_line")
+    end = start if raw_end is None else _count(raw_end, f"{where} end_line")
     if end < start:
         raise SummaryError(f"{where}: end_line {end} is before line {start}")
     return {**f, "line": start, "end_line": end}
@@ -294,13 +299,15 @@ def dedup(findings: list) -> list[dict]:
     out = []
     for members in groups.values():
         lenses = list(dict.fromkeys(m["lens"] for m in members))
+        claims = list(dict.fromkeys(m["claim"] for m in members))
         out.append(
             {
                 "file": members[0]["file"],
                 "line": min(m["line"] for m in members),
                 "end_line": max(m["end_line"] for m in members),
                 "severity": max((m["severity"] for m in members), key=SEVERITY.index),
-                "claim": members[0]["claim"],
+                "claim": claims[0],
+                "other_claims": claims[1:],
                 "lenses": lenses,
             }
         )
@@ -320,6 +327,8 @@ def render_dedup(groups: list[dict], total: int) -> str:
             f"- `{g['file']}:{span}` [{g['severity']}] {g['claim']} "
             f"— raised by {', '.join(g['lenses'])}"
         )
+        # Every distinct wording survives, so a merge never drops a finding.
+        lines += [f"  - also: {c}" for c in g["other_claims"]]
     lines.append(f"\n{total} finding(s) → {len(groups)} after dedup")
     return "\n".join(lines) + "\n"
 

@@ -7,6 +7,9 @@ user-invocable: true
 
 # `purge-conversations`
 
+**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
+`mcp__github__list_pull_requests`.
+
 Reclaim disk from Claude Code's **local state** — the
 session transcripts and adjacent caches that pile up as
 you work — with an **age rule** guarded by **open-PR
