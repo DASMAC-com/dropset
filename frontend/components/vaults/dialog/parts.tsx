@@ -5,8 +5,9 @@ import { stablecoinDecimals } from "@/lib/data/currencies";
 import { FORMATS } from "@/lib/format/formats";
 import { BPS_SCALE, cappedPercentLabel } from "@/lib/format/percent";
 
-// The presentational helpers the vault dialog's sections share: balance
-// formatting, the label / value row, the token chip and the percent label.
+// The helpers the vault dialog's sections share: balance formatting and the
+// atoms-to-units conversion, the label / value row, the token chip, the
+// percent label and the amount-over-USD stack.
 
 // A wallet / receivable balance: full token precision as needed — up to the
 // token's own decimals, trailing zeros trimmed, but at least two places so it
