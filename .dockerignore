@@ -114,10 +114,10 @@ keys
 
 # === Machine-local runtime state ===
 
-# Not REQUIRED: these hold neither credentials nor enough bytes to matter, so
-# neither the presence check nor the ceiling has a reason to enrol them. They
-# are excluded because they are machine-local and simply not build inputs.
-# (See .gitignore for what it holds.)
+# Not REQUIRED: this holds neither credentials nor enough bytes to matter, so
+# neither the presence check nor the ceiling has a reason to enrol it. It is
+# excluded because it is machine-local and simply not a build input. (See
+# .gitignore for what it holds.)
 .maker-bot
 
 # === Presentation and asset trees ===
