@@ -1501,17 +1501,18 @@ so the session — and every Bash command its agent runs — inherits the pool
   cargo keys each by its exact version and features; the final binaries it
   copies to the top of `debug/` or `release/` are last-build-wins (see the
   carve-outs below). Cargo locks the directory for
-  a build's length, so two worktrees building at once in one lane take
-  turns at full width. The only visible change is cargo's one-line
+  each compile's length, so two worktrees building at once in one lane
+  take turns at full width. The only visible change is cargo's one-line
   `Blocking waiting for file lock on …` message. **The lock covers
   compilation only**: `cargo test` releases it before running its
-  binaries and doctests, and a doctest compiles (rustdoc) against the
+  doctests (measured), so a doctest compiles (rustdoc) against the
   lane's artifacts while a sibling builds. Distinct per-checkout slots
-  keep a sibling's build out of them, but anything that deletes or
-  rewrites a slot a doctest links fails it with `E0463` or
-  `extern location … does not exist` (a sibling's `cargo clean -p`
-  does, measured). Only the `E0463` form is the race `verify_head.py`
-  recovers by re-running `cargo test --doc`.
+  keep a sibling's build out of them, but a slot deleted under a
+  doctest fails it: a sibling's `cargo clean -p` gives
+  `extern location … does not exist` (measured). The `E0463` form, on
+  a transitive crate, appears in session logs and was not reproduced;
+  it is the only form `verify_head.py` retries, by re-running
+  `cargo test --doc`.
 - **`CARGO_BUILD_JOBS`** comes from the runtime config, **required**
   like the lane count (see "Lanes" below): the hook no longer derives
   it. Exported, it also bounds any cargo outside the lock.
