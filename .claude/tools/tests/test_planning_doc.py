@@ -151,6 +151,134 @@ class Spill(_Stubbed):
             self._run("--out", "")
 
 
+AUDIT_NEW = "# Audit state\n\n| unit | last | findings |\n| seam | 11-21 | 3 |\n\n"
+
+
+class ReplaceSections(unittest.TestCase):
+    """The close-out's section patch must equal the wholesale rewrite."""
+
+    def test_the_result_is_byte_identical_to_the_wholesale_rewrite(self):
+        stored = DOC + "\n"
+        start = stored.index("# Audit state")
+        end = stored.index("# Standing decisions")
+        wholesale = stored[:start] + AUDIT_NEW + stored[end:]
+        got, count = pd.replace_sections(stored, pd._file_blocks(AUDIT_NEW), [])
+        self.assertEqual(got, wholesale)
+        self.assertEqual(count, 1)
+
+    def test_a_section_carries_its_subsections_out_and_in(self):
+        new = "# Standing decisions\n\nonly this now\n"
+        got, _ = pd.replace_sections(DOC, pd._file_blocks(new), [])
+        self.assertNotIn("Program and timing", got)
+        self.assertTrue(got.endswith("only this now\n"))
+        self.assertIn("| seam | 09-01 | 8 |", got)
+
+    def test_drop_deletes_a_section_and_keeps_the_rest(self):
+        got, count = pd.replace_sections(
+            DOC, pd._file_blocks(AUDIT_NEW), ["# Board schema"]
+        )
+        self.assertNotIn("read this first", got)
+        self.assertTrue(got.startswith("# Audit state"))
+        self.assertEqual(count, 2)
+
+    def test_a_heading_must_match_exactly_not_by_prefix(self):
+        with self.assertRaises(pd.PlanningDocError) as ctx:
+            pd.replace_sections(DOC, pd._file_blocks("# Audit\n\nx\n"), [])
+        self.assertIn("0 stored heading(s)", str(ctx.exception))
+
+    def test_a_heading_matching_twice_is_refused(self):
+        twice = DOC + "\n# Audit state\n\nagain\n"
+        with self.assertRaises(pd.PlanningDocError):
+            pd.replace_sections(twice, pd._file_blocks(AUDIT_NEW), [])
+
+    def test_depth_must_match_too(self):
+        with self.assertRaises(pd.PlanningDocError):
+            pd.replace_sections(DOC, pd._file_blocks("## Audit state\n\nx\n"), [])
+
+    def test_a_missing_final_newline_does_not_glue_the_next_heading(self):
+        got, _ = pd.replace_sections(DOC, pd._file_blocks("# Audit state\n\nx"), [])
+        self.assertIn("x\n# Standing decisions", got)
+
+    def test_the_file_is_validated(self):
+        for bad in (
+            "no heading",
+            "stray\n# Audit state\n",
+            "## A\n# B\n",
+            "# A\n# A\n",
+        ):
+            with self.subTest(bad=bad), self.assertRaises(pd.PlanningDocError):
+                pd._file_blocks(bad)
+
+    def test_a_malformed_drop_is_refused(self):
+        with self.assertRaises(pd.PlanningDocError):
+            pd.replace_sections(DOC, pd._file_blocks(AUDIT_NEW), ["Board schema"])
+
+
+class ReplaceRun(unittest.TestCase):
+    def _run(self, responses, *extra):
+        calls = []
+
+        def post(api_key, query, variables, error):
+            calls.append((query, variables))
+            return responses.pop(0)
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "changed.md")
+            Path(path).write_text(AUDIT_NEW, encoding="utf-8")
+            err = io.StringIO()
+            with mock.patch.object(pd.linear_api, "post", side_effect=post):
+                with mock.patch.dict(os.environ, ENV, clear=True):
+                    with redirect_stdout(io.StringIO()) as out, redirect_stderr(err):
+                        code = pd.run(
+                            [
+                                "planning_doc.py",
+                                "replace-sections",
+                                "--file",
+                                path,
+                                *extra,
+                            ]
+                        )
+        return code, out.getvalue(), err.getvalue(), calls
+
+    @staticmethod
+    def doc(content):
+        return {"document": {"title": "Planning", "content": content}}
+
+    def test_writes_once_reads_back_and_echoes_nothing(self):
+        composed, _ = pd.replace_sections(DOC, pd._file_blocks(AUDIT_NEW), [])
+        code, out, err, calls = self._run(
+            [self.doc(DOC), {"documentUpdate": {"success": True}}, self.doc(composed)]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[1][1], {"id": "doc-1", "content": composed})
+        self.assertIn("read-back identical", err)
+        # Zero echo: neither the carried sections nor the new one reach output.
+        self.assertNotIn("never hardcode", out + err)
+        self.assertNotIn("11-21", out + err)
+
+    def test_a_differing_read_back_exits_one_naming_the_line(self):
+        code, _, err, _ = self._run(
+            [self.doc(DOC), {"documentUpdate": {"success": True}}, self.doc(DOC)]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("read-back differs from line", err)
+
+    def test_dry_run_reads_and_writes_nothing(self):
+        code, _, err, calls = self._run([self.doc(DOC)], "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("WOULD REPLACE", err)
+
+    def test_an_unchanged_set_is_refused(self):
+        composed, _ = pd.replace_sections(DOC, pd._file_blocks(AUDIT_NEW), [])
+        with self.assertRaises(pd.PlanningDocError):
+            self._run([self.doc(composed)])
+
+    def test_a_failed_update_raises(self):
+        with self.assertRaises(pd.PlanningDocError):
+            self._run([self.doc(DOC), {"documentUpdate": {"success": False}}])
+
+
 class Failures(unittest.TestCase):
     def test_empty_content_is_an_error_not_a_silent_empty_read(self):
         with mock.patch.object(

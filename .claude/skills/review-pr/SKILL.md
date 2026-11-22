@@ -262,7 +262,8 @@ migrations or generation inputs, and whether it spans crates.
      neither yields one, skip this step and say so in the report.
 
    - **Hold the body once per session**: the one `init-pr` already
-     has, else one `get_issue` plus `list_comments` (`history.md` →
+     has, and its `comments.md` spill, else one `get_issue` plus
+     `linear_issue.py comments --out <path> ENG-<n>` (`history.md` →
      "Cross-skill echo budget").
 
    - **Grade every requirement** — checkboxes (an `[x]` is a claim to

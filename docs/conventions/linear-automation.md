@@ -187,12 +187,18 @@ the API-key session returns **73** tools, one-for-one the same set the
 hosted connector exposes. That is the same server answering, reached with
 a different credential.
 
-`list_comments` is the one worth naming. The committed zero-echo tools
-already cover state transitions and body edits, so a session without
-Linear MCP can run most of the flow — but none of them reads comments,
-and acceptance criteria sometimes live in an anchored comment rather than
-the issue body. Such a session can therefore believe it holds the whole
-spec while missing a criterion, with nothing signalling the omission.
+`list_comments` was the one worth naming. The committed zero-echo tools
+covered state transitions and body edits, so a session without Linear MCP
+could run most of the flow — but none of them read comments, and
+acceptance criteria sometimes live in an anchored comment rather than the
+issue body. Such a session could believe it held the whole spec while
+missing a criterion, with nothing signalling the omission. That gap is now
+closed by `linear_issue.py comments --out <path> ENG-###`, which spills
+the comments to a file and prints only their count and size; it is also
+the default over `list_comments`, whose whole payload lands early in a
+session and is replayed on every later turn. Its sibling
+`linear_issue.py state ENG-### …` answers "is it Done?" in one line per
+issue, no body.
 
 **What this verification does and does not establish.** The registration
 above was confirmed `✔ Connected` at user scope, which proves the
@@ -207,9 +213,9 @@ with `CLAUDE_CODE_USE_BEDROCK=1` on the `us.`-profile Opus 5 model
 received the locally configured `linear` server and drove the whole
 Linear half of its work through it — `save_issue` state transitions, two
 anchored body `patch` writes, and `list_comments`. So the inference is now
-an observation, and the `list_comments` gap named above is closed for a
+an observation, and the `list_comments` gap named above was closed for a
 Bedrock session that has this server registered: the tool the zero-echo
-writers cannot replace is the one that was exercised.
+writers could not then replace is the one that was exercised.
 
 That session also received all nine locally configured servers and
 neither claude.ai connector, which is the same split the spike measured.

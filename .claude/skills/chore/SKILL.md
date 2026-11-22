@@ -47,10 +47,13 @@ sessions: temporary worktree, no PR".
      --out <scratchpad>/spec.md ENG-<n>
    ```
 
-   Read that file once, whole. Then `list_comments` once: acceptance
-   criteria sometimes live in a comment. Treat any `file:line` or
-   "already landed" claim as a snapshot of its filing day and verify it
-   before acting.
+   Read that file once, whole. Then spill the comments once —
+   acceptance criteria sometimes live in one — with
+   `linear_issue.py comments --out <scratchpad>/comments.md ENG-<n>`,
+   never `list_comments`; read the file only when it reports N > 0.
+   Treat any `file:line` or "already landed" claim as a snapshot of its
+   filing day and verify it before acting; a sibling's state is
+   `linear_issue.py state ENG-<a> …`, one line each, never its body.
 
 1. **Restate the job in three lines** before doing it: the
    deliverable, where it lands (outside the repo, or on the issue),

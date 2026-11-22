@@ -36,6 +36,15 @@ Usage::
 when several sections are wanted: slice that file with ``read_result.py``
 afterwards rather than re-fetching.
 
+One write mode, the scheduler's close-out::
+
+    python3 .claude/tools/planning_doc.py replace-sections \
+        --file <scratchpad>/changed.md [--drop '## Old addendum'] [--dry-run]
+
+Each top-depth section in the file replaces the stored section with the same
+heading text and depth (exactly one match, else nothing is written); every
+other section is carried byte for byte, and the result is read back.
+
 **A live scheduler is still the better source when there is one.** It
 answers the question rather than the text — one session that read the document
 then messaged its scheduler peer got the state of both blockers, the operator's
@@ -83,7 +92,178 @@ def fetch(api_key: str, doc_id: str) -> tuple[str, str]:
     return str(doc.get("title") or "(untitled)"), content
 
 
+_UPDATE_MUTATION = """
+mutation SetDoc($id: String!, $content: String!) {
+  documentUpdate(id: $id, input: { content: $content }) { success }
+}
+"""
+
+
+def _file_blocks(text: str) -> list[tuple[int, str, str]]:
+    """``(depth, heading, block)`` for each top-depth section of ``text``.
+
+    The top depth is the first heading's; a deeper heading stays inside its
+    block, a shallower one is refused (it would own sections the caller did
+    not name). Text before the first heading is refused too: it belongs to
+    no section, so where it should land is a guess.
+    """
+    plain = text.splitlines()
+    kept = text.splitlines(keepends=True)
+    heads = list(read_result.iter_headings(plain))
+    if not heads:
+        raise PlanningDocError("the sections file holds no heading")
+    if any(line.strip() for line in plain[: heads[0][0]]):
+        raise PlanningDocError(
+            "the sections file has text before its first heading — every line "
+            "must belong to a section"
+        )
+    top = heads[0][1]
+    starts = []
+    for index, depth, heading in heads:
+        if depth < top:
+            raise PlanningDocError(
+                f"heading {heading!r} is shallower than the file's first "
+                f"({'#' * top}) — one depth of section per file"
+            )
+        if depth == top:
+            starts.append((index, heading))
+    blocks = []
+    for n, (index, heading) in enumerate(starts):
+        end = starts[n + 1][0] if n + 1 < len(starts) else len(kept)
+        blocks.append((top, heading, "".join(kept[index:end])))
+    names = [b[1] for b in blocks]
+    dupes = sorted({h for h in names if names.count(h) > 1})
+    if dupes:
+        raise PlanningDocError(f"the sections file repeats heading(s): {dupes}")
+    return blocks
+
+
+def _stored_range(plain: list[str], depth: int, heading: str) -> tuple[int, int]:
+    """Line range ``[start, end)`` of the stored section titled exactly ``heading``.
+
+    Exact text at the same depth, matched exactly once: a regex or a prefix
+    match would let ``Notes`` replace ``Notes for the next planning session``.
+    """
+    heads = list(read_result.iter_headings(plain))
+    found = [i for i, d, text in heads if d == depth and text == heading]
+    if len(found) != 1:
+        raise PlanningDocError(
+            f"{'#' * depth} {heading!r} matches {len(found)} stored heading(s), "
+            "not exactly one — run --headings and use its exact text"
+        )
+    start = found[0]
+    end = next((i for i, d, _ in heads if i > start and d <= depth), len(plain))
+    return start, end
+
+
+def replace_sections(content: str, blocks: list, drops: list[str]) -> tuple[str, int]:
+    """``content`` with each named section replaced (or dropped); and the count.
+
+    Every unnamed section is carried byte for byte, so the result equals the
+    wholesale rewrite that changed only those sections. Every range is
+    resolved against the stored text before any splice, so one bad heading
+    refuses the whole set.
+    """
+    plain = content.splitlines()
+    kept = content.splitlines(keepends=True)
+    edits = [(*_stored_range(plain, d, h), text) for d, h, text in blocks]
+    for heading in drops:
+        hashes, _, title = heading.partition(" ")
+        if not hashes or set(hashes) != {"#"} or not title.strip():
+            raise PlanningDocError(
+                f"--drop {heading!r} must be a full heading line, e.g. '## Notes'"
+            )
+        edits.append((*_stored_range(plain, len(hashes), title.strip()), ""))
+    edits.sort()
+    for (_, prev_end, _), (start, _, _) in zip(edits, edits[1:]):
+        if start < prev_end:
+            raise PlanningDocError("two named sections overlap — name each once")
+    out, cursor = [], 0
+    for start, end, text in edits:
+        if text and not text.endswith("\n") and end < len(kept):
+            text += "\n"  # else the next stored heading glues onto its last line
+        out.append("".join(kept[cursor:start]))
+        out.append(text)
+        cursor = end
+    out.append("".join(kept[cursor:]))
+    return "".join(out), len(edits)
+
+
+def run_replace(argv: list[str]) -> int:
+    """``replace-sections``: the close-out's section-scoped write.
+
+    Measured on two scheduler close-outs: the wholesale rewrite re-sent 44k
+    characters to carry eleven unchanged sections forward, and in another the
+    spill was re-read whole twice (about 37k and 74k characters) because the
+    rewrite needed the full body — while a save race with an architect's
+    appends lost two patches. Here the stored body is fetched, spliced and
+    written inside this process: the transcript carries only the changed
+    sections, and the read-modify-write window shrinks from the minutes a
+    model takes to compose a body to one round trip.
+    """
+    parser = argparse.ArgumentParser(
+        prog="planning_doc.py replace-sections",
+        description="Replace named sections of the Planning document in one write.",
+    )
+    parser.add_argument("--file", required=True, help="the changed sections")
+    parser.add_argument(
+        "--drop",
+        action="append",
+        default=[],
+        metavar="HEADING",
+        help="a stored section to delete, as its heading line (repeatable)",
+    )
+    parser.add_argument("--id", default=None, help="default $LINEAR_PLANNING_DOC_ID")
+    parser.add_argument("--dry-run", action="store_true", help="write nothing")
+    args = parser.parse_args(argv)
+
+    try:
+        with open(args.file, encoding="utf-8") as fh:
+            blocks = _file_blocks(fh.read())
+    except OSError as exc:
+        raise PlanningDocError(f"cannot read {args.file}: {exc}") from exc
+    doc_id = args.id or linear_api.env_var(
+        "LINEAR_PLANNING_DOC_ID", error=PlanningDocError
+    )
+    api_key = linear_api.env_var("LINEAR_API_KEY", error=PlanningDocError)
+    title, stored = fetch(api_key, doc_id)
+    composed, count = replace_sections(stored, blocks, args.drop)
+    if composed == stored:
+        raise PlanningDocError("the sections match what is stored — nothing to write")
+    summary = f"{title} | {count} section(s), {len(stored)} -> {len(composed)} chars"
+    if args.dry_run:
+        print(f"planning-doc | WOULD REPLACE {summary}", file=sys.stderr)
+        return 0
+    data = linear_api.post(
+        api_key,
+        _UPDATE_MUTATION,
+        {"id": doc_id, "content": composed},
+        error=PlanningDocError,
+    )
+    if not (data.get("documentUpdate") or {}).get("success"):
+        raise PlanningDocError(f"documentUpdate failed for {doc_id}")
+    # The read-back the close-out requires, done here without an echo: a
+    # concurrent writer or Linear's markdown re-parse both show as a mismatch.
+    _, after = fetch(api_key, doc_id)
+    if after != composed:
+        old, new = composed.splitlines(), after.splitlines()
+        line = next(
+            (n + 1 for n, (a, b) in enumerate(zip(old, new)) if a != b),
+            min(len(old), len(new)) + 1,
+        )
+        print(
+            f"planning-doc | REPLACED {summary} — but the read-back differs from "
+            f"line {line}: slice it (--grep / --section) before trusting it",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"planning-doc | REPLACED {summary}; read-back identical", file=sys.stderr)
+    return 0
+
+
 def run(argv: list[str]) -> int:
+    if argv[1:2] == ["replace-sections"]:
+        return run_replace(argv[2:])
     parser = argparse.ArgumentParser(
         prog="planning_doc.py",
         description="Read named sections of the Planning document, not all of it.",

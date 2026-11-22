@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# cspell:word keepends
 """Render shared prose blocks into skill files, and gate their freshness.
 
 Changing a convention today means editing the convention doc **and** every
