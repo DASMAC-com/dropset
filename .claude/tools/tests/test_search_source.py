@@ -973,6 +973,19 @@ class AroundTests(unittest.TestCase):
                 with self.assertRaisesRegex(ss.SearchSourceError, "exactly one file"):
                     self._run(["--around", "5", *scope])
 
+    def test_a_single_file_dir_is_one_file_too(self):
+        code, lines, _ = self._run(["--around", "5", "--span", "0", "--dir", "one.rs"])
+        self.assertEqual((code, lines), (0, ["one.rs:5:line 5"]))
+
+    def test_locations_and_a_negative_span_are_refused(self):
+        for argv, message in (
+            (["x", "--around", "5", "--locations", "--glob", "one.rs"], "alternatives"),
+            (["--around", "5", "--span", "-1", "--glob", "one.rs"], "--span from 0"),
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaisesRegex(ss.SearchSourceError, message):
+                    self._run(argv)
+
     def test_conflicting_and_orphan_flags_are_refused(self):
         for argv, message in (
             (

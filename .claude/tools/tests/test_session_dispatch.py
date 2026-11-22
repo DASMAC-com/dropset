@@ -1072,6 +1072,30 @@ class Probe(unittest.TestCase):
         self.assertTrue(argv[1].endswith("machine_load.py"))
         self.assertEqual(argv[2:], ["--json", "--sessions", "2", "--state-dir", "/s"])
 
+    def test_the_probe_runs_under_the_env_it_is_handed(self):
+        # The stale-tab fix on the real-reading path: the merged knobs must
+        # reach the probe's own process, not only the in-process fallback.
+        env = {**FLEET, "DS_FLEET_TOTAL": "20"}
+        with unittest.mock.patch.object(
+            session_dispatch.subprocess,
+            "run",
+            return_value=unittest.mock.Mock(stdout=""),
+        ) as run:
+            session_dispatch.probe([slot(["task", "1"])], Path("/s"), env=env)
+        self.assertEqual(run.call_args.kwargs["env"]["DS_FLEET_TOTAL"], "20")
+
+    def test_the_wait_re_probe_runs_under_the_same_env(self):
+        waiting = reading(slots=0, reasons=["wait"], longest=465, waiting=1)
+        seen = []
+
+        def reader(_slots, _directory, env=None):
+            seen.append(env)
+            return waiting
+
+        env = {**FLEET, "DS_FLEET_TOTAL": "20"}
+        session_dispatch.gate([slot(["task", "1"])], Path("/s"), env=env, reader=reader)
+        self.assertEqual(seen, [env, env])
+
 
 class GatedRun(unittest.TestCase):
     def _run(self, *argv, readings=(), bodies=None, ttys=None, config=""):
@@ -1180,7 +1204,7 @@ class RuntimeConfig(unittest.TestCase):
     def test_literal_assignments_parse_and_the_last_wins(self):
         got = self._read(
             "DS_FLEET_TOTAL=8\n"
-            '  export DS_FLEET_TOTAL="16"\n'
+            'export DS_FLEET_TOTAL="16"\n'
             "typeset -x DS_FLEET_RESERVE_GB=6 # comment\n"
             "# DS_FLEET_BUILD_WAIT_S=99\n"
             "NOT_OURS=1\n"
@@ -1190,6 +1214,29 @@ class RuntimeConfig(unittest.TestCase):
     def test_an_expansion_is_not_a_literal(self):
         got = self._read('DS_FLEET_TOTAL=$(nproc)\nDS_FLEET_CPU_LOAD_MAX="$X"\n')
         self.assertEqual(got, {})
+
+    def test_an_indented_assignment_in_a_body_is_left_to_the_environment(self):
+        # A line scan cannot evaluate a branch or a function, so the textually
+        # last assignment would win on every host or call; it is not read.
+        got = self._read(
+            "DS_FLEET_TOTAL=16\n"
+            "if [[ $HOST == mini ]]; then\n"
+            "  export DS_FLEET_TOTAL=8\n"
+            "fi\n"
+            "ds_low() {\n"
+            "  export DS_FLEET_TOTAL=4\n"
+            "}\n"
+        )
+        self.assertEqual(got, {"DS_FLEET_TOTAL": "16"})
+
+    def test_only_the_first_command_is_read_and_unset_clears(self):
+        got = self._read(
+            "DS_FLEET_TOTAL=20; echo hi\n"
+            "export DS_FLEET_CPU_LOAD_MAX=8 DS_FLEET_RESERVE_GB=6\n"
+            "DS_FLEET_BUILD_WAIT_S=30 some_command\n"
+            "unset DS_FLEET_RESERVE_GB\n"
+        )
+        self.assertEqual(got, {"DS_FLEET_TOTAL": "20", "DS_FLEET_CPU_LOAD_MAX": "8"})
 
     def test_a_missing_file_is_unreadable(self):
         self.assertIsNone(session_dispatch.read_runtime_config(Path("/nonexistent/z")))

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word commenters
 """Open a new iTerm tab per session verb and type the verb into it.
 
 A board session's dispatch arm (the scheduler's, or the curator's for an
@@ -422,12 +423,13 @@ FLEET_KNOBS = (
     "DS_FLEET_RESERVE_GB",
 )
 
-#: A literal assignment in the shell profile: `NAME=v`, `export NAME=v` or
-#: `typeset -x NAME=v`, the value optionally quoted. An expansion (`$`, a
-#: backtick, a command substitution) is not a literal and is skipped.
-_ASSIGNMENT = re.compile(
-    r"^\s*(?:export\s+|typeset\s+(?:-x\s+)?)?(DS_[A-Z0-9_]+)=(\S*)"
-)
+#: A `DS_*` name, and a value that is a plain literal once unquoted: a
+#: number, a word, a path. Anything else (`$`, a backtick, a substitution) is
+#: not read.
+_DS_NAME = re.compile(r"DS_[A-Z0-9_]+")
+_LITERAL = re.compile(r"[A-Za-z0-9._/:+-]*")
+#: The builtins that assign (or clear) a variable in the current shell.
+_DECLARERS = ("export", "typeset", "declare", "local", "readonly")
 
 
 def runtime_config_path() -> Path:
@@ -435,23 +437,60 @@ def runtime_config_path() -> Path:
     return Path(os.environ.get("ZDOTDIR") or Path.home()) / ".zshrc"
 
 
+def _first_command(line: str) -> list[str]:
+    """The words of the line's first command: quotes removed, a comment
+    dropped, stopped at `;` `&` `|`. Empty on a line the lexer refuses."""
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=";&|()")
+    lexer.whitespace_split = True
+    lexer.commenters = "#"
+    words: list[str] = []
+    try:
+        for word in lexer:
+            if word and all(ch in ";&|()" for ch in word):
+                break
+            words.append(word)
+    except ValueError:
+        return []
+    return words
+
+
 def read_runtime_config(path: Path) -> dict[str, str] | None:
-    """Every literal `DS_*` assignment in the profile, the last one winning, as
-    zsh would leave it. `None` when the file cannot be read."""
+    """The literal `DS_*` values the profile leaves set, as zsh would, or
+    `None` when it cannot be read.
+
+    Only COLUMN-ZERO lines count: an indented assignment is presumed to sit in
+    a function or conditional body, which a line scan cannot evaluate, so it is
+    left to the environment rather than guessed at. On each line only the
+    first command is read: `NAME=v`, or `export` / `typeset` / `declare` with
+    any number of `NAME=v` words (flags skipped), while `unset NAME` clears
+    one. A `NAME=v cmd` prefix sets the variable for that command alone, so it
+    is skipped; a value that is not a plain literal is skipped too.
+    """
     try:
         text = path.read_text(errors="replace")
     except OSError:
         return None
     values: dict[str, str] = {}
     for line in text.splitlines():
-        match = _ASSIGNMENT.match(line)
-        if not match:
+        if not line[:1].isalpha():
             continue
-        name, value = match.groups()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            value = value[1:-1]
-        if not any(ch in value for ch in "$`()'\""):
-            values[name] = value
+        words = _first_command(line)
+        if not words:
+            continue
+        if words[0] == "unset":
+            for name in words[1:]:
+                values.pop(name, None)
+            continue
+        if words[0] in _DECLARERS:
+            assigns = [w for w in words[1:] if not w.startswith("-")]
+        elif all("=" in w for w in words):
+            assigns = words
+        else:
+            continue  # a command, or a `NAME=v cmd` prefix
+        for word in assigns:
+            name, eq, value = word.partition("=")
+            if eq and _DS_NAME.fullmatch(name) and _LITERAL.fullmatch(value):
+                values[name] = value
     return values
 
 

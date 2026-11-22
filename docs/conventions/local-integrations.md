@@ -1349,7 +1349,9 @@ gate) does not trust that export: a long-lived scheduler or curator tab
 holds the value it was launched with. It re-reads the four `DS_FLEET_*`
 knobs from the profile (`$ZDOTDIR/.zshrc`, else `~/.zshrc`) at call time,
 runs the probe under them, and prints a note naming both values when the
-shell disagrees. Only an unreadable profile falls back to the environment.
+shell disagrees. Only literal assignments at column zero are read, so a knob
+set inside a function or conditional, a knob the profile does not set, and
+an unreadable profile all fall back to the environment.
 
 | Knob                    | Default      | Bounds                                                               |
 | ----------------------- | ------------ | -------------------------------------------------------------------- |
