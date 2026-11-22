@@ -1139,9 +1139,50 @@ class State(_Stubbed):
         with self.assertRaises(li.LinearIssueError):
             li.state_lines("k", ["ENG-1", "ENG-2"])
 
+    def test_a_transport_not_found_is_raised_not_read_as_missing_issues(self):
+        # A bare "not found" match turned an HTTP 404 into one "(not found)"
+        # line per issue and exit 0 — a real failure dressed as an answer.
+        def post(*_a):
+            raise li.LinearIssueError("HTTP 404: Not Found")
+
+        li._post = post
+        with self.assertRaises(li.LinearIssueError):
+            li.state_lines("k", ["ENG-1", "ENG-2"])
+
     def test_no_identifier_is_refused(self):
         with self.assertRaises(li.LinearIssueError):
             li.state_lines("k", ["  "])
+
+
+class NewSubcommandCli(_Stubbed):
+    """The argparse layer and dispatch, not just the functions behind them."""
+
+    def _run(self, *argv):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                code = li.run(["prog", *argv])
+        return code, out.getvalue()
+
+    def test_state_takes_several_identifiers_and_prints_a_line_each(self):
+        issue = State.issue
+        self.install([{"i0": issue("ENG-1"), "i1": issue("ENG-2")}])
+        code, out = self._run("state", "ENG-1", "ENG-2")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(out.splitlines()), 2)
+
+    def test_state_needs_an_identifier(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            li._parse_args(["prog", "state"])
+
+    def test_comments_needs_out_and_prints_the_count_line(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            li._parse_args(["prog", "comments", "ENG-1"])
+        self.install([Comments.page([])])
+        with tempfile.TemporaryDirectory() as d:
+            code, out = self._run("comments", "--out", f"{d}/c.md", "ENG-1")
+        self.assertEqual(code, 0)
+        self.assertIn("0 comment(s), 0 bytes", out)
 
 
 class Read(unittest.TestCase):

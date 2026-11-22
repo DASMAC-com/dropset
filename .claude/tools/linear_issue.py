@@ -482,7 +482,7 @@ def render_comments(nodes: list) -> str:
     blocks: list[str] = []
     for index, node in enumerate(ordered, start=1):
         author = ((node.get("user") or {}).get("name")) or "(unknown)"
-        tags = [str(node.get("createdAt") or "")]
+        tags = [str(node.get("createdAt") or "(undated)")]
         if node.get("parent"):
             tags.append("reply")
         if node.get("resolvedAt"):
@@ -561,7 +561,9 @@ def state_lines(api_key: str, identifiers: list[str]) -> list[str]:
         # One unresolved identifier fails the whole aliased query ("Entity not
         # found"), which would hide the states that did resolve. Fall back to
         # one lookup each so the miss is named and the rest still print.
-        if "not found" not in str(exc).lower():
+        # Linear's own wording, matched exactly: a bare "not found" would also
+        # catch a transport 404 and print every issue as missing, exit 0.
+        if "entity not found" not in str(exc).lower():
             raise
         if len(wanted) == 1:
             return [f"{wanted[0]} | (not found)"]

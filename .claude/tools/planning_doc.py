@@ -163,25 +163,55 @@ def replace_sections(content: str, blocks: list, drops: list[str]) -> tuple[str,
     wholesale rewrite that changed only those sections. Every range is
     resolved against the stored text before any splice, so one bad heading
     refuses the whole set.
+
+    A section owns its subsections, so a stored subsection the replacement
+    does not re-supply would vanish — the machine-written ``## Upkeep report``
+    under the notes heading is the live case. That is refused unless the
+    subsection is also named in ``drops``, which makes the loss deliberate.
     """
     plain = content.splitlines()
     kept = content.splitlines(keepends=True)
-    edits = [(*_stored_range(plain, d, h), text) for d, h, text in blocks]
+    heads = list(read_result.iter_headings(plain))
+    dropped: list[tuple[int, int, str]] = []
     for heading in drops:
         hashes, _, title = heading.partition(" ")
         if not hashes or set(hashes) != {"#"} or not title.strip():
             raise PlanningDocError(
                 f"--drop {heading!r} must be a full heading line, e.g. '## Notes'"
             )
-        edits.append((*_stored_range(plain, len(hashes), title.strip()), ""))
+        title = title.strip()
+        dropped.append((*_stored_range(plain, len(hashes), title), f"{hashes} {title}"))
+    edits = []
+    for depth, heading, text in blocks:
+        start, end = _stored_range(plain, depth, heading)
+        supplied = {(d, t) for _, d, t in read_result.iter_headings(text.splitlines())}
+        for i, d, t in heads:
+            if start < i < end and (d, t) not in supplied:
+                line = f"{'#' * d} {t}"
+                named_drop = [x for x in dropped if x[0] == i]
+                if not named_drop:
+                    raise PlanningDocError(
+                        f"replacing {'#' * depth} {heading!r} would delete its "
+                        f"stored subsection {line!r} — re-supply it in the file, "
+                        f"or --drop {line!r} to delete it on purpose"
+                    )
+                dropped.remove(named_drop[0])  # inside this splice; not its own edit
+        edits.append((start, end, text))
+    edits += [(start, end, "") for start, end, _ in dropped]
     edits.sort()
     for (_, prev_end, _), (start, _, _) in zip(edits, edits[1:]):
         if start < prev_end:
             raise PlanningDocError("two named sections overlap — name each once")
     out, cursor = [], 0
     for start, end, text in edits:
-        if text and not text.endswith("\n") and end < len(kept):
-            text += "\n"  # else the next stored heading glues onto its last line
+        if text and end < len(kept):
+            # Keep the stored spacing before the next heading: a range ending in
+            # a blank separator gets one back, else the next heading would butt
+            # against this block (or glue onto its last line, with no newline).
+            if not kept[end - 1].strip() and not text.endswith("\n\n"):
+                text = text.rstrip("\n") + "\n\n"
+            elif not text.endswith("\n"):
+                text += "\n"
         out.append("".join(kept[cursor:start]))
         out.append(text)
         cursor = end
@@ -199,7 +229,8 @@ def run_replace(argv: list[str]) -> int:
     appends lost two patches. Here the stored body is fetched, spliced and
     written inside this process: the transcript carries only the changed
     sections, and the read-modify-write window shrinks from the minutes a
-    model takes to compose a body to one round trip.
+    model takes to compose a body to one round trip (a re-fetch just before
+    the write re-splices over an edit that landed meanwhile).
     """
     parser = argparse.ArgumentParser(
         prog="planning_doc.py replace-sections",
@@ -234,6 +265,25 @@ def run_replace(argv: list[str]) -> int:
     if args.dry_run:
         print(f"planning-doc | WOULD REPLACE {summary}", file=sys.stderr)
         return 0
+    # Linear's GraphQL `documentUpdate` takes whole content only — there is no
+    # server-side anchored patch to call — so a write that lands between our
+    # fetch and our update is overwritten. Re-fetching immediately before the
+    # write and re-splicing on any change narrows that window to one round
+    # trip; a second change in that window refuses rather than guesses.
+    _, fresh = fetch(api_key, doc_id)
+    if fresh != stored:
+        composed, count = replace_sections(fresh, blocks, args.drop)
+        _, again = fetch(api_key, doc_id)
+        if again != fresh:
+            raise PlanningDocError(
+                "the document is changing under this write (two concurrent edits "
+                "in a row) — wait for the other writer and re-run"
+            )
+        stored = fresh
+        summary = (
+            f"{title} | {count} section(s), {len(stored)} -> {len(composed)} chars "
+            "(re-spliced over a concurrent edit)"
+        )
     data = linear_api.post(
         api_key,
         _UPDATE_MUTATION,
@@ -243,7 +293,8 @@ def run_replace(argv: list[str]) -> int:
     if not (data.get("documentUpdate") or {}).get("success"):
         raise PlanningDocError(f"documentUpdate failed for {doc_id}")
     # The read-back the close-out requires, done here without an echo: a
-    # concurrent writer or Linear's markdown re-parse both show as a mismatch.
+    # writer landing after ours, or Linear's markdown re-parse, shows as a
+    # mismatch. (One landing before ours is what the re-fetch above narrows.)
     _, after = fetch(api_key, doc_id)
     if after != composed:
         old, new = composed.splitlines(), after.splitlines()
@@ -267,6 +318,7 @@ def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="planning_doc.py",
         description="Read named sections of the Planning document, not all of it.",
+        epilog="The one write mode: planning_doc.py replace-sections --help",
     )
     parser.add_argument(
         "--id",

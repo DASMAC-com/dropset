@@ -104,7 +104,7 @@ operator lever, never this mechanism.
 
 - **The procedure.** A one-line FYI to every live worker with an
   unanswered consult — planning is cycling, re-send anything
-  unanswered; then step 6's close-out rewrite, echo verified;
+  unanswered; then step 6's close-out write, read back clean;
   then `plan_cycle.py cycle`, which leaves the marker and ends
   the client.
 
@@ -476,7 +476,7 @@ an item the operator executes by hand `[Operator]`.
   implementing issue's body, then delete the file.** One still in
   its read-back is live work.
 
-**6. Write back — incrementally, then rewritten at the gate.**
+**6. Write back — incrementally, then section-patched at the gate.**
 Write after each major decision: scheduler sessions are often
 closed abruptly, and an unwritten decision is lost. A session
 that decides without writing back has dropped its main
@@ -486,7 +486,7 @@ deliverable — the board shows *what*, only the document carries
 **Gate the close-out; don't wait to be told.** When the operator
 signals wrap-up, or the conversation lulls after significant
 decisions, offer via `AskUserQuestion` — "close out now?
-(rewrites the Planning doc to the current state of play)" —
+(brings the Planning doc to the current state of play)" —
 recommended first.
 
 **On the yes, stop the curator first.** `ListAgents`; a live
@@ -506,12 +506,14 @@ no operator-actions list: an open operator action is an
 sections that changed**, never the whole body: put each changed
 top-level section in one file and run
 `planning_doc.py replace-sections --file <path>` (`--drop '# <heading>'`
-deletes one; `--dry-run` first). Unchanged sections are carried
-byte for byte, any heading not matching exactly once refuses
-the whole write, and the tool reads the document back itself —
-exit 1 names the first differing line, so slice it. A section
-written this way still re-parses on the round trip, so compose
-it:
+deletes one; `--dry-run` first). A section owns its
+subsections: re-supply each one kept (the machine-written upkeep
+report included) or `--drop` it, else the write is refused.
+Unchanged sections are carried byte for byte, any heading not
+matching exactly once refuses the whole write, and the tool
+reads the document back itself — exit 1 names the first
+differing line, so slice it. A section written this way still
+re-parses on the round trip, so compose it:
 
 - **without inline code spans** — plain names, not backticked;
 - with **no emphasis span crossing a newline**;

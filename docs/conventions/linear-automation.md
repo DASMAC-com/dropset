@@ -1653,9 +1653,11 @@ match on an issue body, and a checked box stores as an uppercase
 `- [X]` (so anchor on that spelling, not `- [x]`).
 
 A **wholesale** content replacement re-parses the entire body, so it is
-where every rule here bites hardest — see the `plan` skill's close-out
-step, which additionally composes without inline code spans for this
-reason.
+where every rule here bites hardest — the `curate` skill's daily
+state-of-play write is one. The `plan` skill's close-out writes only the
+changed sections (`planning_doc.py replace-sections`), but each section
+it writes still re-parses, so both compose without inline code spans for
+this reason.
 
 ### The write floor assumes the body is read once
 
