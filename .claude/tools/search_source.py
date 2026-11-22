@@ -47,7 +47,19 @@ search under; default the repo root), ``--glob`` (path globs a file must match �
 see below), ``--context N`` (lines of context each side), ``--files-only`` (just
 the matching paths), ``--fixed`` (treat the pattern as a literal, not a regex),
 ``--ignore-case``, ``--max N`` (cap on reported matches, default 200),
-``--root`` (repo root, default cwd).
+``--root`` (repo root, default cwd), ``--around LINE [--span N]`` (below).
+
+``--around LINE`` answers the single-file search and its surrounding lines
+in one call, where the context clamp would otherwise cost a second
+slice-``Read``. Valid only when ``--glob`` / ``--dir`` names exactly one file,
+it prints lines ``LINE - span`` to ``LINE + span`` (``--span``, default 15)
+with their numbers; the pattern is optional, and a line in the window that
+matches it is marked ``path:N:`` while the rest read ``path-N-``, grep's
+context convention::
+
+    python3 .claude/tools/search_source.py --around 120 --glob src/lib.rs
+    python3 .claude/tools/search_source.py 'fn fill' --around 120 --span 8 \
+        --glob src/lib.rs
 
 ``--ext``, ``--dir`` and ``--glob`` each take a comma-separated list **and**
 accumulate across repetitions, so ``--ext ts,tsx`` and ``--ext ts --ext tsx``
@@ -1091,9 +1103,50 @@ def print_result(
     print(summary, file=sys.stderr)
 
 
+#: ``--around``'s default half-width: 31 lines, about one function.
+DEFAULT_SPAN = 15
+
+
+def print_around(path: str, line: int, span: int, matcher) -> int:
+    """Print the window of ``path`` around ``line``, one summary on stderr.
+
+    Returns grep's exit convention over the window: 0 when a line in it
+    matched (or no pattern was given and the window is non-empty), else 1.
+    """
+    try:
+        lines = Path(path).read_text(errors="replace").splitlines()
+    except OSError as exc:
+        raise SearchSourceError(f"--around cannot read {path}: {exc}") from exc
+    if line > len(lines):
+        raise SearchSourceError(
+            f"--around {line} is past the end of {path} ({len(lines)} lines)"
+        )
+    first, last = max(1, line - span), min(len(lines), line + span)
+    hits = 0
+    for number in range(first, last + 1):
+        text = lines[number - 1]
+        hit = matcher is not None and matcher.search(text)
+        hits += bool(hit)
+        mark = ":" if hit or matcher is None else "-"
+        print(f"{path}{mark}{number}{mark}{clip(text)}")
+    summary = (
+        f"search-source | around {line} ±{span} in {path} "
+        f"(lines {first}-{last} of {len(lines)})"
+    )
+    if matcher is not None:
+        summary += f" | {hits} match(es) in the window"
+    print(summary, file=sys.stderr)
+    return 0 if hits or matcher is None else 1
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="search_source.py")
-    parser.add_argument("pattern", help="regex (or literal with --fixed)")
+    parser.add_argument(
+        "pattern",
+        nargs="?",
+        default=None,
+        help="regex (or literal with --fixed); optional with --around",
+    )
     parser.add_argument("--root", default=".", help="repo root (default cwd)")
     parser.add_argument(
         "--dir",
@@ -1165,7 +1218,51 @@ def run(argv: list[str]) -> int:
         default=DEFAULT_MAX,
         help=f"cap on reported matches (default {DEFAULT_MAX})",
     )
+    parser.add_argument(
+        "--around",
+        type=int,
+        default=None,
+        metavar="LINE",
+        help="print the window around LINE of the one file --glob / --dir "
+        "names, the pattern's matches in it marked — a search and its slice "
+        "in one call",
+    )
+    parser.add_argument(
+        "--span",
+        type=int,
+        default=None,
+        help=f"--around's half-width in lines (default {DEFAULT_SPAN})",
+    )
     args = parser.parse_args(argv[1:])
+
+    if args.around is None:
+        if args.span is not None:
+            raise SearchSourceError("--span widens --around, which was not given")
+        if args.pattern is None:
+            raise SearchSourceError("a pattern is required unless --around is given")
+    else:
+        span = DEFAULT_SPAN if args.span is None else args.span
+        if args.around < 1 or span < 0:
+            raise SearchSourceError("--around takes a line from 1, --span from 0")
+        if args.files_only or args.locations or args.context:
+            raise SearchSourceError(
+                "--around prints its own window, so --files-only, --locations "
+                "and --context are alternatives to it"
+            )
+        target = single_file_scope(
+            accumulate_flag(args.glob), accumulate_flag(args.dir)
+        )
+        if target is None:
+            raise SearchSourceError(
+                "--around needs exactly one file, named by --glob or --dir "
+                "with no wildcard"
+            )
+        matcher = (
+            None
+            if args.pattern is None
+            else build_matcher(args.pattern, args.fixed, args.ignore_case)
+        )
+        return print_around(target, args.around, span, matcher)
 
     # Each of these three is repeatable, so flatten every occurrence into one
     # ordered tuple before anything reads it.
@@ -1325,8 +1422,8 @@ def run(argv: list[str]) -> int:
         notes.append(
             f"NOTE: --context {width} was clamped to {SINGLE_FILE_CONTEXT_LIMIT} "
             f"because the scope is the single file {target} — a wide sweep of "
-            f"one named file is a whole-file read with extra steps. Slice-read "
-            f"it with Read offset/limit if you need more around a match."
+            f"one named file is a whole-file read with extra steps. For more "
+            f"around one match, re-run with --around <line> [--span N]."
         )
 
     # DEGRADE to --files-only when the windows would be large. The search itself

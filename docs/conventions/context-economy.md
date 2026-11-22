@@ -547,6 +547,13 @@ Two rules keep the cap from turning into deletion:
   **match count** — it rejected genuinely cheap calls, and an unanswered
   question just costs a second one.
 
+  **When the line is known, `--around LINE [--span N]` is the search and
+  the slice in one call.** Valid only on a single-file `--glob`, it
+  prints that window (default ±15) with line numbers, marking the
+  pattern's hits `path:N:` and the rest `path-N-`; the pattern is
+  optional. It replaces the search-then-`Read` pair one session paid on
+  five code questions.
+
   **Past a size threshold, any `--context` sweep degrades to
   `--files-only` by itself**, whatever its scope, printing the file list
   plus a note saying that it degraded and how to override. This covers
