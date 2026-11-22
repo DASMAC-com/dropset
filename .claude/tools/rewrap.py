@@ -20,7 +20,8 @@ The block is the one holding ``--line N`` or the single line containing the
   item. Block-quote and list-marker prefixes are kept, continuation lines
   indented under the marker; a change of quote depth ends the block. A line
   inside a fence or the front matter is refused, as is a block carrying a
-  hard line break, a setext heading, a table, or a backtick no span closes.
+  hard line break, a setext heading, a table, an indented code block, or a
+  backtick no span closes.
 * **Everything else**: the ``#`` comment run around the line, its indent and
   ``# `` kept, split into paragraphs at a bare ``#`` and at a ``-`` / ``*``
   bullet as markdown is. A tool directive (``# cspell:word x``) and an
@@ -63,17 +64,21 @@ _STANDALONE = re.compile(r"^\s*(?:#{1,6}(?:\s|$)|\||<|(?:[-*_]\s*){3,}$|=+\s*$|-
 _TABLE_DELIMITER = re.compile(r"^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$")
 #: A token that, starting a line, would change what the line is: a heading,
 #: a list marker, a quote, a setext underline or rule, a fence, a table, HTML.
+#: Any run of dashes is a setext underline, and any `>` opens a quote.
 _RISKY_START = re.compile(
-    r"^(?:#{1,6}$|[-*+>]$|\d{1,9}[.)]$|=+$|[-*_]{3,}$|`{3,}|~{3,}|\||<)"
+    r"^(?:#{1,6}$|[*+]$|-+$|>|\d{1,9}[.)]$|=+$|[*_]{3,}$|`{3,}|~{3,}|\||<)"
 )
 #: A word: escapes, code spans (a backtick run closed by a run of the same
 #: length) and other non-space characters, glued. A backtick no span closes
 #: is matched alone, and refused.
 _TOKEN = re.compile(r"(?:\\.|(`+)(?:(?!\1)[\s\S])*?(?<!`)\1(?!`)|[^\s`\\])+|`+|\\")
-#: A comment line that is a tool's directive, never prose to join.
+#: A comment line that is a tool's directive, never prose to join. Each form
+#: carries the directive's own punctuation, so a prose line that merely
+#: starts with `check` or `ruff` is not one.
 _DIRECTIVE = re.compile(
-    r"^(?:cspell|yamllint|shellcheck|syntax|escape|check|noqa|pylint|type:|"
-    r"fmt:|ruff|prettier|biome|eslint|markdownlint|hadolint|taplo)\b"
+    r"^(?:cspell:|yamllint (?:disable|enable)|shellcheck (?:disable|source)="
+    r"|hadolint ignore=|(?:syntax|escape|check)=|(?:type|fmt|pylint|ruff|taplo):"
+    r"|noqa\b|(?:prettier|biome|eslint|markdownlint)-)"
 )
 
 
@@ -219,6 +224,17 @@ def rewrap_markdown(
     opaque = _opaque_lines(lines)
     first, last = find_block(lines, index, opaque, markdown)
     block = lines[first : last + 1]
+    body = _QUOTE.sub("", block[0])
+    if (
+        markdown
+        and len(body) - len(body.lstrip()) >= 4
+        and not _starts_item(block[0])
+        and (first == 0 or not lines[first - 1].strip())
+    ):
+        raise RewrapError(
+            f"lines {first + 1}-{last + 1} are an indented code block (or a "
+            "list item's later paragraph); rewrap it by hand"
+        )
     for n, line in enumerate(block[:-1]):
         if line.endswith("  ") or line.endswith("\\"):
             raise RewrapError(

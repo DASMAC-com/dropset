@@ -174,9 +174,31 @@ class Rewrap(unittest.TestCase):
         self.assertIn("rewrapped", out)
 
     def test_a_rule_like_token_never_starts_a_line(self):
-        text = "x" * 70 + " words ---\n"
-        lines = self._rewrapped("r.md", text, "--line", "1")
-        self.assertFalse(any(line.startswith("---") for line in lines))
+        for tail in ("---", "--", ">80", ">="):
+            with self.subTest(tail=tail):
+                # 79 columns before the tail, so the tail must wrap.
+                text = "x" * 76 + f" ab {tail}\n"
+                lines = self._rewrapped("r.md", text, "--line", "1")
+                self.assertEqual(lines, ["x" * 76, f"ab {tail}"])
+                self.assertEqual(" ".join(lines).split()[-1], tail)
+
+    def test_an_indented_code_block_is_refused(self):
+        path = self._file("i.md", "Para.\n\n    code_token one\n    more code\n")
+        with self.assertRaisesRegex(rewrap.RewrapError, "indented code block"):
+            self._run(path, "--line", "3")
+
+    def test_directive_forms_match_and_prose_words_do_not(self):
+        for text, directive in (
+            ("type: ignore", True),
+            ("fmt: off", True),
+            ("yamllint disable-line rule:line-length", True),
+            ("shellcheck disable=SC2086", True),
+            ("check the next line before you run it", False),
+            ("syntax highlighting is on", False),
+            ("ruff format runs first", False),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(bool(rewrap._DIRECTIVE.match(text)), directive)
 
     def test_a_comment_keeps_directives_examples_and_bullets_apart(self):
         text = (
