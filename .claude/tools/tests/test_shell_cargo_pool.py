@@ -218,9 +218,10 @@ class TwoCheckoutsTest(unittest.TestCase):
                 self.assertNotEqual(self.cargo("B", "B", *args), 0)
 
     def test_concurrent_builds_stay_isolated(self) -> None:
-        # Both at once on the one target dir: cargo's lock serializes them and
-        # the keys give each its own slot, so neither reads the other's
-        # artifact mid-build (the race suspected on 2183, not reproduced).
+        # Both at once on the one target dir: cargo's lock serializes the
+        # compiles and the keys give each its own slot, so neither reads the
+        # other's artifact mid-build. (Doctests run after cargo drops the lock
+        # and are not covered here.)
         for _ in range(3):
             (self.root / "A" / "a" / "src" / "lib.rs").touch()
             (self.root / "B" / "a" / "src" / "lib.rs").touch()

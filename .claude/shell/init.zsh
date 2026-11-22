@@ -166,7 +166,8 @@ _ds_cargo_pool() {
   # checkouts sharing one target dir, a sibling's newer build skipped under no
   # wrapper or a shared one, and each of check, build, test and build-sbf
   # compiled the checkout's own source under its own, run at once as well as
-  # in turn (the lock serializes them); `make program` is
+  # in turn (the lock serializes compiles, but not the doctests `cargo test`
+  # runs after releasing it); `make program` is
   # build-sbf and `make wasm` runs the wrapper under wasm-pack (both
   # measured), while `make idl`, anchor's host `cargo test`, is inferred and
   # not measured. Rustdoc is not wrapped but

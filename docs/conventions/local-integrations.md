@@ -1503,7 +1503,15 @@ so the session — and every Bash command its agent runs — inherits the pool
   carve-outs below). Cargo locks the directory for
   a build's length, so two worktrees building at once in one lane take
   turns at full width. The only visible change is cargo's one-line
-  `Blocking waiting for file lock on …` message.
+  `Blocking waiting for file lock on …` message. **The lock covers
+  compilation only**: `cargo test` releases it before running its
+  binaries and doctests, and a doctest compiles (rustdoc) against the
+  lane's artifacts while a sibling builds. Distinct per-checkout slots
+  keep a sibling's build out of them, but anything that deletes or
+  rewrites a slot a doctest links fails it with `E0463` or
+  `extern location … does not exist` (a sibling's `cargo clean -p`
+  does, measured), which is the doctest failure `verify_head.py`
+  recovers with `cargo test --doc`.
 - **`CARGO_BUILD_JOBS`** comes from the runtime config, **required**
   like the lane count (see "Lanes" below): the hook no longer derives
   it. Exported, it also bounds any cargo outside the lock.
