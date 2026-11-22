@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Run a scheduler session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Bootstraps from the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`), runs the audit heartbeat (file an audit issue or decline with a recorded reason), and messages the launcher once the state of play is written, before its one ask, so it starts the curator on the Backlog review inbox. Holds the fleet resume and first wave for the operator's start trigger in that ask. Then keeps the board coherent: Todo dispatched as standing authorization once the day is started, blocking edges curated by a human, file collisions reconciled by reading, the inbox kept stocked with staged specs, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
+description: Run a scheduler session — board work, the complement to a worktree implementation session, in the base repo and never a worktree. Warm-boots from the state of play the curator's start-of-day bootstrap writes to the "Planning" Linear document (`LINEAR_PLANNING_DOC_ID`) — no board read, no audit heartbeat — and holds the fleet resume and first wave for the operator's start trigger in its one ask. Then keeps the board coherent: Todo dispatched as standing authorization once the day is started, blocking edges curated by a human, file collisions reconciled by reading, the inbox kept stocked with staged specs, issues filed and amended to house convention, and architect or explore specs folded into their implementing issues. Writes decisions back to the Planning document as it goes and rewrites it at close-out.
 user-invocable: true
 model: fable
 ---
@@ -35,8 +35,9 @@ title, or decisions land in the wrong place.
 instruction is committed: the method here, the operator's
 rulings, fleet doctrine and standing decisions in
 [`rulings.md`](rulings.md). Work items live in issues. The
-document is **not** an append log; step 6's rewrite produces
-exactly these headings, in this order, and nothing else:
+document is **not** an append log; the curator's bootstrap
+rewrite and step 6's close-out each produce exactly these
+headings, in this order, and nothing else:
 
 1. **Discuss with operator** — a single blank checkbox the
    operator fills before a session (Enter in Linear adds the
@@ -45,8 +46,10 @@ exactly these headings, in this order, and nothing else:
    tracks, and the next bootstrap's first moves.
 1. **Fleet state and chains** — in flight, in review, queued,
    held with reasons, and the parked counts.
-1. **Collision clusters** (step 1).
-1. **Audit state** — the bounded table (step 1).
+1. **Collision clusters** — the curator's first cut, revised here
+   (step 1).
+1. **Audit state** — the bounded table, the curator's heartbeat
+   (`curate` → "Bootstrap: the state of play").
 1. **Session-metrics state** (step 7).
 1. **In-session notes** — this session's incremental writes;
    after a close-out, only the rulings not yet landed in
@@ -55,8 +58,10 @@ exactly these headings, in this order, and nothing else:
    other sessions write under. The upkeep tool's machine-written
    report is its level-2 subsection, carried verbatim.
 
-Above them, a header of one line plus the `Bootstrap stamp` and,
-once the day is started, the `Fleet start:` line (step 5).
+Above them, a header of one line — which also states the
+ownership: the curator's bootstrap rewrite, then the scheduler's
+every write after it — plus the `Bootstrap stamp` and, once the
+day is started, the `Fleet start:` line (step 5).
 
 **A new ruling is a reviewed change**, never a document edit:
 file a `Claude:` issue carrying its text, which a worker lands as
@@ -100,35 +105,49 @@ operator lever, never this mechanism.
   then `plan_cycle.py cycle`, which leaves the marker and ends
   the client.
 
-- **The warm bootstrap.** A full bootstrap writes a
-  `Bootstrap stamp: <YYYY-MM-DD>` line to the document, and every
-  close-out rewrite keeps it. A bootstrap finding today's date
-  there is **warm**: read `rulings.md` and the document (step 1's
-  spill and slice), run
-  `ListAgents` — and skip the once-a-day duties (the fold line,
-  the audit heartbeat, the parked counts, the upkeep report, the
-  launcher's message, step 8) — **save the start trigger**,
-  asked alone when the document carries no `Fleet start:` line
-  for today or `ListAgents` shows no worker session (`task`,
-  `chore`, `explore`) live (a machine restart; step 5). That
-  `ListAgents` read finding no `curate-<day>` while the board
-  holds `Curator pending` issues means the curator stopped
-  mid-day: say it needs relaunching. No stamp means a full
-  bootstrap.
+- **Every bootstrap is warm.** The curator's start-of-day
+  bootstrap writes the `Bootstrap stamp: <YYYY-MM-DD>` line with
+  the state of play, and every close-out rewrite keeps it, so a
+  first launch and a cycle relaunch boot alike: step 1. A relaunch
+  asks the start trigger alone, and only when the document carries
+  no `Fleet start:` line for today or `ListAgents` shows no worker
+  session (`task`, `chore`, `explore`) live (a machine restart;
+  step 5). That `ListAgents` read finding no `curate-<day>` while
+  the board holds `Curator pending` issues means the curator
+  stopped mid-day: say it needs relaunching.
 
 ## Steps
 
-**1. Bootstrap.** Read
+**1. Warm-boot from the state of play.** The start-of-day
+bootstrap — the landing check, the board read, Next and the
+holds, the parked counts, the audit heartbeat, the first cut of
+the collision clusters and the wholesale rewrite — is the
+**curator's** (`curate` → "Bootstrap: the state of play"; ruling
+2), so this session reads the result and keeps the live day. Read
 [`rulings.md`](rulings.md) first — the rules this session obeys.
-Then read the Planning document — the last session's handoff —
-with `python3 .claude/tools/planning_doc.py --out <scratch>`,
+Then read the Planning document with
+`python3 .claude/tools/planning_doc.py --out <scratch>`,
 which spills it and prints only the heading map, and slice it by
 `--section`. **The document and `rulings.md` are each read
 once**; a later check is a `--section` read, never the whole body
-in context a second time. Then, warm or full:
+in context a second time.
 
-- **Act on each `Discuss with operator` item first**, before the
-  board — one needing the operator's word joins step 8's ask.
+**No `Bootstrap stamp` of today** means the curator's write has not
+landed. Run `ListAgents`: with a live `curate-<day>`, say
+`waiting on curate-<day>'s state of play` and end the turn; its
+`state of play written` resumes this session, which spills the
+document again — the one licensed second read, since the first
+held yesterday's. No curator live: tell the operator to type
+`curate` in a new tab. **The start trigger waits for the write**;
+nothing is dispatched before it.
+
+**No board read, no PR read, no audit heartbeat, no parked
+counts** at boot: each is in the curator's write — the fleet
+state, the counts, the clusters, the heartbeat's decision, the
+holds pending the operator's tick in the curator's tab. Then:
+
+- **Act on each `Discuss with operator` item first** — one
+  needing the operator's word joins step 8's ask.
 - **Recite no operator list.** An operator action is asked for
   **when it binds**, in the tab that needs it, through
   `AskUserQuestion` — the scheduler for a Done that releases an
@@ -139,55 +158,27 @@ in context a second time. Then, warm or full:
   once: `[Operator]`, which Todo holds until the operator's Done,
   or a chore when a session can do the surrounding work, which
   runs to In Review like any chore. There is no third path.
-- **Verify overnight landings with `git log`** and the In Review
-  listing, never the Done column; release chains as blockers land.
-
-**Say the upkeep report's highlights, with the parked counts.**
-The pre-launch ran `.claude/tools/upkeep.py` before this
-session started and spliced its report under the document's
-machine-written `Upkeep report` heading, so the fetch above holds
-it; never re-run the pass here. Say its `parked` line — each
-pool's count and direction (ruling 23) — what was pruned and dismissed
-(or would have been, unarmed), each refusal (a live session
-lock, an open PR — reported, never retried) and each pruned
-name's ahead count, and any inert guard,
-dangling reference or file near its size cap. Say the
-`Curator pending` count in the parked line: still inbox, the
-curator's to clear, never promoted here. Say the `fleet-cost` day
-lines too, any flagged day first. Say the run line's duration as
-`upkeep ran in 4m10s (last 3m50s)`, and a failed `auth` line as
-the one re-authentication it names — the steps it gates were
-skipped, not broken. A run stamp
-older than today means the pass did not reach the document —
-say so. The launcher prunes finished worktrees unasked; the
-other **destructive items** (the transcript purge, allowlist
-cruft, refresh candidates, judged memories) are its one ask
-(ruling 16) — never asked here.
+- **Release chains** the state of play names as landed.
 
 **Say the fold line.** The lever fold runs in the launcher's own
-tab (`launch`), alongside this bootstrap, never here:
+tab (`launch`), never here:
 
 ```sh
 python3 .claude/tools/upkeep.py fold-today
 ```
 
 Say its line verbatim — `fold ran at HH:MM, N batches` or
-`no fold today`. The fold runs alongside this bootstrap, so
-`no fold today` with a live `launch-<day>` means not yet stamped,
-likely still folding: say that, not "no fold". The new batches
-reach the inbox, where the curator reviews them.
+`no fold today`; `no fold today` with a live `launch-<day>` means
+not yet stamped, likely still folding: say that, not "no fold".
+The new batches reach the inbox, where the curator reviews them.
 
-**The bootstrap runs unattended until its one ask.** Do every duty
-that asks nothing — the overnight landing check, the board read,
-Next, the collision clusters, the audit heartbeat, the Queue's
-honesty — write the state of play back, message the launcher
-(below), then stop at step 8's consolidated ask. **`fleet resume`
-and every dispatch wait for that ask's start trigger** (ruling:
-fleet doctrine 1). A Discuss item or duty needing the operator's
-word joins that ask.
+**The boot runs to its one ask.** Then stop at step 8's
+consolidated ask. **`fleet resume` and every dispatch wait for that
+ask's start trigger** (ruling: fleet doctrine 1). A Discuss item
+or duty needing the operator's word joins that ask. A question
+open in the curator's tab never holds the trigger or a dispatch.
 
-Then read the board. **Which tier an issue sits in is the whole
-scoping signal:**
+**Which tier an issue sits in is the whole scoping signal:**
 
 - **Backlog is the review inbox** — specs awaiting the
   operator's review. Priority there is review order.
@@ -195,23 +186,12 @@ scoping signal:**
   standing authorization to dispatch (step 5); priority there is
   advisory. Planning never moves an issue to Todo.
 - **A project milestone means parked** — Backlog plus a parking
-  milestone, not this phase. Out of scope for a bootstrap read
-  unless the operator names it.
+  milestone, not this phase. Out of scope unless the operator
+  names it.
 
-Two calls; `list` defaults to Backlog, milestoned issues dropped:
-
-```sh
-python3 .claude/tools/board_batch.py list --include-milestoned \
-  --show-milestone
-```
-
-```sh
-python3 .claude/tools/board_batch.py list --state Todo
-```
-
-The first keeps parked issues, tagged, for step 8's counts.
-**Say three counts**: the inbox (untagged Backlog), its Urgent
-subset, and Todo. Pull a body only when a decision turns on it.
+Pull a body or a listing only when a decision turns on it — step
+8's field-selected `Audit findings` listing is one; the board read
+itself is the curator's.
 
 **The fold protocol**, which every reviser reuses: fold the
 comment into the body, reply saying how it was addressed, then
@@ -220,92 +200,32 @@ Resolved means addressed-and-how, never approval. Never fold an
 In Progress spec; a fold into an approved (Todo) body moves it
 back to Backlog, priority and edges unchanged.
 
-**The curator reviews the inbox; the launcher dispatches it.**
-Once the bootstrap's write-back of the state of play lands, and
-**before** step 8's ask, run `ListAgents` and message the live
-`launch-<day>` exactly `state of play written`, once — its cue to
-dispatch the curator with the fold's hand-off, so neither the fold
-nor the curator waits on the scheduler's question. No launcher
-live: say `launcher: not live`, tell the operator to type `launch`
-in a new tab, and dispatch no curator from here. Todo is
-dispatched by step 5, after the start trigger. The scheduler
-still keeps the inbox stocked: when it runs thin, stage more
-specs before anything else.
+The scheduler still keeps the inbox stocked: when it runs thin,
+stage more specs before anything else. Todo is dispatched by step
+5, after the start trigger.
 
-**Then read Next as the operator sees it** — their named Linear
-view, filtered by Linear rather than reconstructed:
+**Bound the Planning document.** It grows between rewrites: other
+sessions append, and an abrupt close skips the close-out. So:
 
-```sh
-python3 .claude/tools/board_batch.py view
-```
-
-**Verify Next against the holds.** Name each row this session
-would hold, with its blocker, in step 8's ask; on a yes it gets a
-blocking edge through step 3's `edges` (dry run first): a hold is
-an edge or it does not exist.
-
-**Run the audit heartbeat — every full bootstrap, unprompted.**
-The document
-carries a bounded **audit-state table**, one row per unit in
-`docs/conventions/audit-registry.md` (unit, last audited, finding
-count, outcome pointer). Act on it:
-
-- **A unit is stale**, or it *just settled*, is *about to be
-  built on*, or is *suspect* → **file an audit issue**.
-- **Nothing qualifies** → **decline, and record the reason** in
-  the document. An unrecorded non-decision is the failure this
-  step exists to catch.
-
-Staleness is judged against the **code**, not the calendar: a
-unit rewritten since its last audit is stale in the way that
-matters; one untouched because its subsystem is untouched is not
-urgent for being old.
-
-**An audit issue** is a first-class **Backlog** task naming one
-registry **target** (subsystem, interface, or a random-target
-pass for breadth), its **scope**, its **rationale** (which
-criterion fired, with evidence), and its **sequencing** as prose.
-It competes in the queue like any capacity spend — an audit that
-cannot win that argument should not run this week. The pulling
-session runs it as one scoped `audit-scope` run, which that pull
-authorizes, fan-out included; findings are ratified in its tab
-(`ratify-staged`).
-
-**Title it `[Explore/Bedrock]`** (`[Explore/Anthropic]` when the
-audit needs the web): it runs as `explore`, never `task` (operator
-rule, 2026-09-11) — a temporary worktree, no PR; see
-`docs/conventions/local-integrations.md` → "Architect and explore
-sessions: temporary worktree, no PR". An
-audit sits **In Progress** until its findings are ratified and
-folded, so an old In Progress audit is live, not stalled.
-
-**Bound the Planning document.** It grows between close-out
-rewrites: other sessions append, and an abrupt close skips the
-rewrite. So:
-
-- **If it carries foreign notes or a prior session's
-  unconsolidated notes, the bootstrap's first write is the
-  wholesale rewrite**, not another append.
+- **The bootstrap rewrite is the curator's**, and sweeps foreign
+  and unconsolidated notes; this session writes everything after
+  it — one write each, which the document's header line states.
 - **This session's incremental notes** live under one
   `In-session notes` heading, so a rewrite sweeps one section.
-- **Sessions other than the scheduler append only under**
-  `Notes for the next planning session` — stated wherever those
-  sessions are told to write here.
+- **Sessions other than the scheduler and the curator's bootstrap
+  append only under** `Notes for the next planning session` —
+  stated wherever those sessions are told to write here.
 
-**Reconcile file collisions once, here — by reading.** This is
-the only session that reconciles overlap; the automated machinery
-and the `**Touches**:` field are retired, so judge from the prose
-you already hold. Record **collision clusters** per
-`docs/conventions/linear-automation.md` → "Overlap is a cluster,
-never an ordering" — per shared area, never by connected
-component, never as an ordering — as prose in the document, never
-a `related` link. Step 2 uses them for merge proposals, step 8
-for parallel batches.
-
-**Then look for the two scheduling smells, and act on what you
-find** — an edge whose blocker is already closed, and an
-unblocked Urgent issue sitting behind one. Both are visible in
-this read, and invisible until something looks.
+**Reconcile file collisions as you dispatch — by reading.** The
+curator's bootstrap records a **first cut** of the collision
+clusters per `docs/conventions/linear-automation.md` → "Overlap is
+a cluster, never an ordering" — per shared area, never by
+connected component, never as an ordering, as prose, never a
+`related` link. The automated machinery and the `**Touches**:`
+field are retired. **Revise the cut** from the prose you hold as
+each wave is chosen; the revision lands at the next write-back.
+Step 2 uses the clusters for merge proposals, step 5 for
+file-disjoint waves.
 
 **2. Keep the Queue honest.** The Queue — the unblocked Todo,
 which the operator calls **"Next"** — is the safe-to-start set:
@@ -329,10 +249,16 @@ with no refactor-later burden a later issue will undo.
   as they stand at that moment, and the next write-back records the
   result. Message the curator every direction change, and any write
   touching an edge it placed, with the reason, in the same turn.
+- **Act on the scheduling smells the state of play records** — an
+  edge whose blocker is already closed, an unblocked Urgent issue
+  sitting behind one. The curator's read finds them; resolving each
+  (through step 3, asked as a hold change is) or recording why it
+  stands is this session's.
 - **A hold is an edge or it does not exist** (ruling 2). An issue
   held behind an in-flight surface or a sequencing reason gets a
-  blocking edge on that blocker, asked in step 8's ask at
-  bootstrap or as one question when found mid-session, so it
+  blocking edge on that blocker, proposed in the curator's first
+  ask at bootstrap or asked here as one question when found
+  mid-session, so it
   shows as Blocked, not Next; a row awaiting that answer is not
   dispatched. A completed blocker stops blocking on its own;
   removing a hold edge on a re-sequence is the operator's call
@@ -623,19 +549,20 @@ narrower echo, a hoisted survey or a removed re-read qualifies; a
 model downgrade, a skipped bootstrap read, or anything that thins
 the decision context does not — the analyst rejects those.
 
-**8. Drain the legacy findings, and ask once.** **At bootstrap,
-say each count, never a listing.** **The consolidated ask**
-carries only what needs the operator's word, **led by the start
-trigger** (skipped only when step 5's `Fleet start:` line for
-today is present and the fleet is live): "ready
-to resume the fleet (N sessions) and dispatch the first wave
-(the file-disjoint set, named)?", answered **"Start now and dispatch at
-will today (Recommended)"**, **"Start now, this wave only; ask
-before later waves"** or **"Not yet"**, the question naming the
-count of Todo `[Operator]` items
-(`ratify_staged.py list --pool operator`), which the curator
-carries one per batch until Done (step 5 runs each answer). Then the
-`Audit findings` kill list, the holds' edges and Discuss items.
+**8. Drain the legacy findings, and ask once.** The counts are
+the curator's, said in its tab and read here from the state of
+play — never re-listed. **The consolidated ask** carries only what
+needs the operator's word, **led by the start trigger** (skipped
+only when step 5's `Fleet start:` line for today is present and
+the fleet is live): "ready to resume the fleet (N sessions) and
+dispatch the first wave (the file-disjoint set, named)?", answered
+**"Start now and dispatch at will today (Recommended)"**, **"Start
+now, this wave only; ask before later waves"** or **"Not yet"**,
+the question naming the count of Todo `[Operator]` items the state
+of play records, which the curator carries one per batch until
+Done (step 5 runs each answer). Then the `Audit findings` kill
+list and Discuss items; the holds' edges are the curator's first
+ask, never this one.
 
 **`Audit findings` is a legacy pool, drained one finding at a
 time**: each bootstrap promotes what it holds, or lists it for a
@@ -658,7 +585,10 @@ session that died mid-review — offer to resume it.
   days.
 - **The board is shared with the curator alone**, under ruling
   2's coordination rule: the curator judges (promote, kill,
-  merge), the scheduler schedules and owns the document, both hold
-  priorities under the agreement rule; each messages the other
-  every priority write and any edge write touching what the other
-  placed.
+  merge), bootstraps the day and rules on rebases; the scheduler
+  schedules, keeps the live day and owns the document after the
+  bootstrap; both hold priorities under the agreement rule; each
+  messages the other every priority write and any edge write
+  touching what the other placed. A curator rebase ruling that
+  changes an in-flight issue's scope arrives as a message: re-plan
+  around it like any re-scope (step 5).

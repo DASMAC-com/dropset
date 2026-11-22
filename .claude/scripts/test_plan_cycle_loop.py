@@ -290,7 +290,7 @@ class PreLaunch(unittest.TestCase):
             "REPO": str(REPO),
             "STATE": str(self.state),
             "WORD": word,
-            "DISPATCH_OUT": "plan (free) -> /dev/a\nlaunch (free) -> /dev/b",
+            "DISPATCH_OUT": "curate (free) -> /dev/a\nlaunch (free) -> /dev/b",
             **extra,
         }
         proc = subprocess.run(
@@ -304,16 +304,24 @@ class PreLaunch(unittest.TestCase):
         calls = path.read_text().splitlines() if path.exists() else []
         return proc, calls
 
-    def test_a_fresh_day_runs_the_pass_then_opens_both_tabs_in_one_batch(self):
+    def test_a_fresh_day_runs_the_pass_then_opens_curator_and_launcher(self):
         proc, calls = self._plan()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("plan: pre-launch", proc.stderr)
-        self.assertEqual(calls, ["aws", "upkeep", "dispatch plan + launch"])
-        self.assertTrue(self.marker.exists())
+        self.assertEqual(calls, ["aws", "upkeep", "dispatch curate + launch"])
+        self.assertEqual(self.marker.read_text().strip(), "plan")
 
-    def test_the_substrate_word_rides_to_the_scheduler_tab(self):
+    def test_the_pre_launch_names_the_tab_it_waits_on(self):
+        proc, _ = self._plan()
+        day = datetime.now().strftime("%-d")
+        self.assertIn(f"waiting on curate-{day}'s state of play", proc.stderr)
+
+    def test_the_substrate_word_rides_the_marker_to_the_launcher(self):
+        # The scheduler opens last, from the launcher's tab, so its verb is
+        # recorded for the `launch` helper rather than dispatched here.
         _, calls = self._plan("anthropic")
-        self.assertIn("dispatch plan anthropic + launch", calls)
+        self.assertIn("dispatch curate + launch", calls)
+        self.assertEqual(self.marker.read_text().strip(), "plan anthropic")
 
     def test_a_refused_login_stops_before_the_pass_and_leaves_the_day_fresh(self):
         proc, calls = self._plan(AWS_RC="1")
@@ -322,48 +330,57 @@ class PreLaunch(unittest.TestCase):
         self.assertFalse(self.marker.exists())
 
     def test_a_launcher_tab_that_did_not_open_runs_here(self):
-        proc, calls = self._plan(DISPATCH_OUT="plan (free) -> /dev/a")
+        proc, calls = self._plan(DISPATCH_OUT="curate (free) -> /dev/a")
         self.assertEqual(calls[-1], "launch  []")
         self.assertIn("running it in this tab", proc.stderr)
 
-    def test_with_neither_tab_the_launcher_runs_here_and_dispatches_plan(self):
+    def test_with_neither_tab_the_launcher_runs_here_and_brings_the_curator(self):
         # A driver failure lists the tabs it DID open on stderr, indented.
         proc, calls = self._plan(
-            "anthropic",
             DISPATCH_OUT="session-dispatch: iTerm went away\n  launch",
             DISPATCH_RC="1",
         )
-        self.assertEqual(calls[-1], "launch  [plan anthropic]")
+        self.assertEqual(calls[-1], "launch  []")
         self.assertIn("neither tab opened (dispatch exit 1)", proc.stderr)
+        self.assertIn("it dispatches the curator first", proc.stderr)
 
     def test_a_partial_batch_counts_the_tabs_the_driver_did_open(self):
         _, calls = self._plan(
             DISPATCH_OUT="session-dispatch: 2 tab(s) were already opened\n"
-            "  plan -> /dev/a\n  launch -> tty unknown",
+            "  curate -> /dev/a\n  launch -> tty unknown",
             DISPATCH_RC="1",
         )
-        self.assertEqual(calls[-1], "dispatch plan + launch")
+        self.assertEqual(calls[-1], "dispatch curate + launch")
 
     def test_a_held_launcher_is_said_never_run_here(self):
         # A hold is the machine gate's refusal; a fallback must not undo it.
         proc, calls = self._plan(
-            DISPATCH_OUT="plan (free) -> /dev/a\nheld  launch (free): load 9.1"
+            DISPATCH_OUT="curate (free) -> /dev/a\nheld  launch (free): load 9.1"
         )
-        self.assertEqual(calls[-1], "dispatch plan + launch")
+        self.assertEqual(calls[-1], "dispatch curate + launch")
         self.assertIn("held the launcher", proc.stderr)
+        # No launcher runs, so nothing will open the scheduler on the curator.
+        self.assertNotIn("waiting on curate-", proc.stderr)
+
+    def test_a_held_launcher_without_its_curator_names_curate_to_type(self):
+        proc, calls = self._plan(DISPATCH_OUT="held  launch (free): load 9.1")
+        self.assertEqual(calls[-1], "dispatch curate + launch")
+        self.assertIn("type `curate` in a new tab", proc.stderr)
+        self.assertNotIn("the launcher dispatches it first", proc.stderr)
 
     def test_with_both_held_nothing_runs_here(self):
         proc, calls = self._plan(
-            DISPATCH_OUT="held  plan (free): cap 20\nheld  launch (free): same"
+            DISPATCH_OUT="held  curate (free): cap 20\nheld  launch (free): same"
         )
-        self.assertEqual(calls[-1], "dispatch plan + launch")
-        self.assertIn("held the scheduler", proc.stderr)
+        self.assertEqual(calls[-1], "dispatch curate + launch")
+        self.assertIn("held the curator", proc.stderr)
         self.assertNotIn("neither tab opened", proc.stderr)
+        self.assertNotIn("waiting on curate-", proc.stderr)
 
-    def test_a_launcher_without_its_scheduler_names_the_verb_to_type(self):
-        proc, calls = self._plan("anthropic", DISPATCH_OUT="launch (free) -> /dev/b")
-        self.assertEqual(calls[-1], "dispatch plan anthropic + launch")
-        self.assertIn("type `plan anthropic` in a new tab", proc.stderr)
+    def test_a_launcher_without_its_curator_dispatches_it_first(self):
+        proc, calls = self._plan(DISPATCH_OUT="launch (free) -> /dev/b")
+        self.assertEqual(calls[-1], "dispatch curate + launch")
+        self.assertIn("the launcher dispatches it first", proc.stderr)
 
     def test_a_stamped_day_is_warm_and_runs_the_scheduler_here(self):
         proc, calls = self._plan(RAN='{"ran_today": true}')
@@ -384,6 +401,64 @@ class PreLaunch(unittest.TestCase):
         (self.home / "projects" / "x" / f"{sid}.jsonl").write_text("")
         _, calls = self._plan()
         self.assertEqual(calls, ["seat plan schedule "])
+
+
+#: The real `launch` up to its client, which records the scheduler verb the
+#: session would dispatch on the curator's `state of play written`.
+_LAUNCH_SCRIPT = """
+source "$INIT" 2>/dev/null
+_DS_REPO="$REPO" _DS_SUBSTRATE_DIR="$STATE"
+_ds_tier() { print -r -- model; print -r -- anthropic }
+_ds_substrate_enter() { : }
+_ds_iterm_role() { : }
+_ds_session() { print -r -- "$2|$DS_LAUNCH_SCHEDULER" >> "$STATE/calls" }
+launch
+"""
+
+
+@unittest.skipUnless(ZSH, _NEEDS_ZSH)
+class LaunchHelper(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state = Path(tmp.name) / "state"
+        self.state.mkdir()
+        self.home = Path(tmp.name) / "claude"
+        self.home.mkdir()
+        day = datetime.now().strftime("%Y%m%d")
+        self.marker = self.state / f"plan-prelaunch-{day}"
+
+    def _scheduler(self, **extra: str) -> str:
+        env = hermetic_env(self.home)
+        env |= {"INIT": str(INIT), "REPO": str(REPO), "STATE": str(self.state)}
+        env |= extra
+        proc = subprocess.run(
+            [ZSH, "-c", _LAUNCH_SCRIPT],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        (call,) = (self.state / "calls").read_text().splitlines()
+        return call.split("|", 1)[1]
+
+    def test_the_pre_launch_marker_names_the_scheduler_verb(self):
+        self.marker.write_text("plan anthropic\n")
+        self.assertEqual(self._scheduler(), "plan anthropic")
+
+    def test_a_callers_verb_wins_over_the_marker(self):
+        self.marker.write_text("plan anthropic\n")
+        self.assertEqual(
+            self._scheduler(DS_LAUNCH_SCHEDULER="plan bedrock"), "plan bedrock"
+        )
+
+    def test_no_marker_or_an_empty_one_defaults_to_plan(self):
+        self.assertEqual(self._scheduler(), "plan")
+        (self.state / "calls").unlink()
+        # A pre-launch from before the marker carried the verb wrote it empty.
+        self.marker.write_text("")
+        self.assertEqual(self._scheduler(), "plan")
 
 
 #: The real `_ds_upkeep`, with `python3` and the secrets fetch stubbed: the
