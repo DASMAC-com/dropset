@@ -62,9 +62,9 @@ The lint, artifact, test and title lines are session facts for now: no tool
 emits a lint or suite verdict file yet. When one does, it replaces the fact.
 
 ``--dedup <findings.json>`` is a separate mode, run on the collected lens
-findings **before** the cross-check and the fix round: several lenses raising
-the same nit used to arrive as separate findings, each triaged on its own. It
-takes a JSON list of ``{"lens", "file", "line", "end_line"?, "severity",
+findings **before** the fix round (and the cross-check, when it runs):
+several lenses raising the same nit used to arrive as separate findings, each
+triaged on its own. It takes a JSON list of ``{"lens", "file", "line", "end_line"?, "severity",
 "claim"}`` (``end_line`` absent or null means ``line``; severity is blocking
 | warning | nit) and prints one row per group of findings on the same file,
 with overlapping line ranges and near-identical claims (token-set overlap
