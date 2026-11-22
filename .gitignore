@@ -20,9 +20,6 @@ sdk/ts/dist/
 __pycache__/
 *.pyc
 
-# Background audit-loop state (see .claude/skills/audit-loop).
-.audit-loop/
-
 # maker-bot's persisted per-market quote timestamps — the wall-clock evidence
 # its stale-quote invalidation ages a resting book against (bots/maker-bot →
 # quote_state). Machine-local runtime state, not configuration.
@@ -30,7 +27,7 @@ __pycache__/
 
 # Claude Code local config. The repo does not enforce hooks or
 # permissions — it documents how to wire them (see
-# docs/conventions/shell-commands.md → "Wiring the compound-shell
+# docs/conventions/local-integrations.md → "Wiring the compound-shell
 # guard"). settings.json (hook wiring + any baseline perms) and
 # settings.local.json (the per-machine permission allowlist) are both
 # user-local; the hook *script* under .claude/hooks/ stays committed.

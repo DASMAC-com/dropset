@@ -159,10 +159,10 @@ check-frontend:
 	@$(NODE_CHECK)
 	@$(PNPM_CHECK)
 
-# `test-parity` runs the suite under nextest to match the CI job exactly
-# (see that target). Every other test target uses plain `cargo test`, so
-# this is the one place the runner is a hard prerequisite — name it rather
-# than letting it surface as `no such command: nextest`.
+# `test-parity` and `test-postgres` run under nextest to match their CI jobs
+# exactly (see those targets). Every other test target uses plain `cargo
+# test`, so these are the two places the runner is a hard prerequisite —
+# name it rather than letting it surface as `no such command: nextest`.
 .PHONY: check-nextest
 check-nextest:
 	@command -v cargo-nextest >/dev/null \
@@ -217,11 +217,13 @@ program: check-toolchain program-keypair
 	rm -f target/deploy/dropset_ref.so
 	anchor keys sync && anchor build $(ANCHOR_OUT)
 
-# Build the program .so WITHOUT `admin-teardown` (the shape of the final
-# immutable deploy). `anchor build`'s trailing args are forwarded to
-# `cargo build-sbf`, so this rebuilds `dropset.so` feature-off. Split out
-# from `test-no-teardown` so CI can cache this .so and skip the rebuild on
-# a cache hit (see .github/workflows/test.yml).
+# Build the program .so WITHOUT either default feature (`admin-teardown` off,
+# Rust entrypoint rather than `asm-entrypoint`): the feature-off dispatcher
+# coverage for `test-no-teardown`, not the deploy shape, which is the asm
+# build. `anchor build`'s trailing args are forwarded to `cargo build-sbf`,
+# so this rebuilds `dropset.so` feature-off. Split out from
+# `test-no-teardown` so CI can cache this .so and skip the rebuild on a cache
+# hit (see .github/workflows/test.yml).
 .PHONY: program-no-teardown
 program-no-teardown: check-toolchain program-keypair
 	anchor build $(ANCHOR_OUT) -- --no-default-features
@@ -1511,10 +1513,12 @@ deps-audit:
 
 # Run every Python skill-tool's unit tests (stdlib `unittest`; PyYAML for one
 # cross-check, above). Covers the `.claude/tools/` skill helpers (tests under
-# `.claude/tools/tests/`) plus the Python under `.claude/scripts/` (the iTerm
-# tab-ordering logic). The tools tests import their modules bare (`import
-# firm_core`), so discovery runs with the tests dir as start and the tool home
-# as top-level (`-t`) to keep those imports resolving. Run in CI's lint job.
+# `.claude/tools/tests/`), the Python under `.claude/scripts/` (the iTerm
+# tab-ordering logic), the `keys/` vanity-key grinder and the
+# `programs/dropset/release/` artifact recorder. The tools tests import their
+# modules bare (`import firm_core`), so discovery runs with the tests dir as
+# start and the tool home as top-level (`-t`) to keep those imports
+# resolving. Run in CI's lint job.
 #
 # `.claude/hooks` is deliberately NOT a discovery root — the guards are hook
 # entry points, not unittest modules. Their in-file case tables (150+ cases
