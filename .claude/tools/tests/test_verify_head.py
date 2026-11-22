@@ -826,6 +826,9 @@ class DoctestRaceTest(unittest.TestCase):
         self.assertIn(vh.DOC_RETRY, h.started)
         self.assertEqual(r.recovered, "")
         self.assertNotIn("recovered=", vh.render(r, 1))
+        # Attribution rides the retry's start, so a killed retry still names
+        # the lane and key it raced under.
+        self.assertIn("race=lane:", vh.render(r, 1))
 
     def test_the_retry_keeps_the_failed_run_scope(self):
         self.assertEqual(

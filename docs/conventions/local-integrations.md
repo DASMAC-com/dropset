@@ -1524,7 +1524,7 @@ so the session — and every Bash command its agent runs — inherits the pool
   compile of the crate itself with the rlib untouched, and was not
   reproduced. It is the only form `verify_head.py` retries, by
   re-running `cargo test --doc`, and its verdict line then records the
-  lane, the key and the missing crate (`race=lane:…,key:…,crate:…`).
+  lane, the key and each missing crate (`race=lane:…,key:…,crate:…`).
   A key naming another checkout points at a shared key; one naming its
   own checkout means the writer is not yet found.
 - **`CARGO_BUILD_JOBS`** comes from the runtime config, **required**
