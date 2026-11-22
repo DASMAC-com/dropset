@@ -441,7 +441,18 @@ pub fn set_token_account_frozen(
     send_signed(svm, &[freeze_authority], &[ix]);
 }
 
-/// Create a Token-2022 token account (165 bytes) for the given mint.
+/// Owner of every [`create_token2022_token_account`] account. Read as a
+/// mint, the token account's owner field (bytes 32..64) spans the mint's
+/// supply, decimals and `is_initialized` (byte 45, the owner's byte 13).
+/// A random owner zeroes that byte one run in 256, and Token-2022's
+/// unpack then rejects with `UninitializedAccount` before the
+/// extension-layout check (`InvalidAccountData`) a token-account-as-mint
+/// test asserts on; a fixed nonzero owner makes the rejection the same
+/// every run.
+const TOKEN_2022_TOKEN_ACCOUNT_OWNER: Pubkey = Pubkey::new_from_array([0xA5; 32]);
+
+/// Create a Token-2022 token account (165 bytes) for the given mint,
+/// owned by [`TOKEN_2022_TOKEN_ACCOUNT_OWNER`] and funded by `authority`.
 /// Returns the token account address — useful for testing that the
 /// program correctly rejects a token account passed as a mint.
 #[allow(dead_code)]
@@ -470,7 +481,7 @@ pub fn create_token2022_token_account(
 
     // InitializeAccount3: [18u8, owner_pubkey(32)]
     let mut init_data = vec![18u8];
-    init_data.extend_from_slice(&authority.pubkey().to_bytes());
+    init_data.extend_from_slice(&TOKEN_2022_TOKEN_ACCOUNT_OWNER.to_bytes());
 
     let init_acct = Instruction::new_with_bytes(
         TOKEN_2022_PROGRAM_ID,

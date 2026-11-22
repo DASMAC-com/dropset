@@ -207,8 +207,14 @@ export DS_CHECKOUT := $(CURDIR)
 
 ANCHOR_OUT := --idl $(CURDIR)/target/idl --idl-ts $(CURDIR)/target/types
 
+# Build the default (asm) program .so. First deletes the parity oracle
+# `dropset_ref.so` (see `program-parity`): it was built from whatever
+# tree was checked out then, and a rebase since turns it into a false
+# asm_parity regression. Absent, the parity tests skip instead;
+# `make test-parity` rebuilds the pair.
 .PHONY: program
 program: check-toolchain program-keypair
+	rm -f target/deploy/dropset_ref.so
 	anchor keys sync && anchor build $(ANCHOR_OUT)
 
 # Build the program .so WITHOUT `admin-teardown` (the shape of the final

@@ -193,9 +193,11 @@ fn init_succeeds_with_token2022_mint() {
 
 /// A Token-2022 token account (165 bytes, not 82) passed in the mint
 /// slot. `InterfaceAccount<Mint>` deserialization is the primary
-/// rejection — `PodMint::unpack` reads the trailing `AccountType` byte
-/// and refuses the wrong discriminator, surfacing as a runtime
-/// `InvalidAccountData`.
+/// rejection — past the 82-byte mint base, Token-2022's unpack wants an
+/// `AccountType` byte at offset 165, which a 165-byte buffer is too short
+/// to hold, surfacing as a runtime `InvalidAccountData`. That check is
+/// reached only because the helper's fixed owner keeps the base's
+/// `is_initialized` byte nonzero (`TOKEN_2022_TOKEN_ACCOUNT_OWNER`).
 #[test]
 fn init_rejects_token2022_token_account_as_mint() {
     let authority = Keypair::new();
