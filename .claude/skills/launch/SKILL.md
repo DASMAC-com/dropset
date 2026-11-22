@@ -7,6 +7,9 @@ user-invocable: true
 
 # `launch`
 
+**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
+`SendMessage`.
+
 The **launcher** (to be renamed the analyst) runs the mechanical
 morning. The pre-launch (a fresh-day `plan` in the typed tab) ran
 the AWS gate and the upkeep pass, then opened two tabs in parallel:

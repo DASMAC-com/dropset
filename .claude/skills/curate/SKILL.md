@@ -6,6 +6,9 @@ user-invocable: true
 
 # `curate`
 
+**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
+`SendMessage`.
+
 The **curator** judges and bootstraps: it runs the start-of-day
 bootstrap that writes the state of play, then owns everything
 between Backlog and Todo — what to promote, kill or merge — and

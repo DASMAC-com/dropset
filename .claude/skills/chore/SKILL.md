@@ -6,6 +6,9 @@ user-invocable: true
 
 # `chore`
 
+**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
+`mcp__linear__list_comments`.
+
 The bootstrap for a **chore** — a minor job whose deliverable lands
 **outside the repo** (a key file, a local deploy, a one-off probe) or
 on the issue itself. The `chore <n>` verb launches the helper tier

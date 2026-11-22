@@ -273,7 +273,7 @@ target call it.
 
 ## MCP first for prototyping and fallback; harden settled workflows
 
-The MCP servers (`mcp__github__*`, `mcp__claude_ai_Linear__*`, …) are
+The MCP servers (`mcp__github__*`, `mcp__linear__*`, …) are
 the right tool while a workflow is still being figured out, and the
 right fallback for one-off or rarely-run operations. But once a
 workflow is **established and repeated** — same calls, same shape,
@@ -297,6 +297,23 @@ and emits the tested tool plus the skill reference that drives it.
 That closes the loop from "workflow we keep running by hand" to "tool
 we extracted"; before it existed the candidate list had no consumer
 and sat in a report.
+
+### Name a skill's deferred tools in one entry `select:`
+
+A skill that calls a **deferred** tool (`SendMessage`, the Linear and
+GitHub MCP tools) carries one line under its title naming those tools,
+comma-joined into one `ToolSearch` `select:<a>,<b>,…` query at entry
+(listed, since a joined query outgrows the strict line cap). Without it
+the session loads each schema at its first use, one round each, and a
+keyword search for one tool returns a long list of unrelated schemas.
+The line names only the tools the skill **calls**, never the ones it
+mentions to forbid, and the Linear names use the local server's
+`mcp__linear__*` prefix, the one that reaches every session. A tool a
+skill delegates through another skill (a follow-up filed through
+`linear-task`) stays on that skill's line, and a tool reached only on a
+failure fallback (`init-pr`'s `get_issue` when the spec spill failed)
+loads at that fallback. The lists differ per skill, so the line has no
+`.claude/shared/` source.
 
 ## Repeated prose gets one source and a freshness gate
 

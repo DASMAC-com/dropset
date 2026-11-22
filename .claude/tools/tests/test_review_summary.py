@@ -181,5 +181,124 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exc.exception.code, 2)
 
 
+#: Three lenses raising one nit in different words and overlapping ranges,
+#: plus a distinct claim on the same lines and the same claim in another file.
+FINDINGS = [
+    {
+        "lens": "correctness",
+        "file": "tools/x.py",
+        "line": 40,
+        "severity": "nit",
+        "claim": "The exception reason should name the missing key.",
+    },
+    {
+        "lens": "naming",
+        "file": "tools/x.py",
+        "line": 39,
+        "end_line": 41,
+        "severity": "warning",
+        "claim": "exception reason does not name the missing key",
+    },
+    {
+        "lens": "comments",
+        "file": "tools/x.py",
+        "line": 41,
+        "severity": "nit",
+        "claim": "Name the missing key in the exception reason",
+    },
+    {
+        "lens": "correctness",
+        "file": "tools/x.py",
+        "line": 40,
+        "severity": "blocking",
+        "claim": "Off-by-one: the loop skips the final record",
+    },
+    {
+        "lens": "comments",
+        "file": "tools/y.py",
+        "line": 40,
+        "severity": "nit",
+        "claim": "The exception reason should name the missing key.",
+    },
+]
+
+
+class DedupTests(unittest.TestCase):
+    def test_three_lens_duplicate_collapses_to_one_row(self):
+        groups = rs.dedup(FINDINGS)
+        self.assertEqual(len(groups), 3)
+        dup = groups[0]
+        self.assertEqual(dup["lenses"], ["correctness", "naming", "comments"])
+        self.assertEqual((dup["line"], dup["end_line"]), (39, 41))
+        self.assertEqual(dup["severity"], "warning")
+        self.assertEqual(dup["claim"], FINDINGS[0]["claim"])
+
+    def test_distinct_claim_and_other_file_stay_apart(self):
+        groups = rs.dedup(FINDINGS)
+        self.assertEqual(groups[1]["lenses"], ["correctness"])
+        self.assertEqual(groups[1]["severity"], "blocking")
+        self.assertEqual(groups[2]["file"], "tools/y.py")
+
+    def test_blocking_wins_over_alphabetical_order(self):
+        # Alphabetically "blocking" sorts lowest, so this pins the rank key.
+        mixed = [
+            {**FINDINGS[0], "severity": "warning"},
+            {**FINDINGS[1], "severity": "blocking"},
+        ]
+        (group,) = rs.dedup(mixed)
+        self.assertEqual(group["severity"], "blocking")
+
+    def test_every_distinct_claim_survives_a_merge(self):
+        (group,) = rs.dedup(FINDINGS[:3])
+        self.assertEqual(group["other_claims"], [f["claim"] for f in FINDINGS[1:3]])
+        text = rs.render_dedup([group], 3)
+        self.assertIn(f"  - also: {FINDINGS[2]['claim']}", text)
+
+    def test_exactly_half_overlap_stays_apart(self):
+        a = {**FINDINGS[0], "claim": "unused import re"}
+        b = {**FINDINGS[0], "claim": "unused import json", "lens": "naming"}
+        self.assertEqual(len(rs.dedup([a, b])), 2)
+
+    def test_filler_only_claims_never_merge(self):
+        a = {**FINDINGS[0], "claim": "It is."}
+        b = {**FINDINGS[0], "claim": "This should be.", "lens": "naming"}
+        self.assertEqual(len(rs.dedup([a, b])), 2)
+
+    def test_null_end_line_means_line(self):
+        (group,) = rs.dedup([{**FINDINGS[0], "end_line": None}])
+        self.assertEqual((group["line"], group["end_line"]), (40, 40))
+
+    def test_disjoint_ranges_stay_apart(self):
+        far = {**FINDINGS[0], "line": 90, "lens": "naming"}
+        self.assertEqual(len(rs.dedup([FINDINGS[0], far])), 2)
+
+    def test_bad_finding_is_an_error(self):
+        for bad in (
+            {**FINDINGS[0], "severity": "major"},
+            {**FINDINGS[0], "end_line": 1},
+            {k: v for k, v in FINDINGS[0].items() if k != "lens"},
+        ):
+            with self.assertRaises(rs.SummaryError):
+                rs.dedup([bad])
+
+    def test_cli_prints_one_row_per_group(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "findings.json"
+            path.write_text(json.dumps(FINDINGS))
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(rs.main(["--dedup", str(path)]), 0)
+            text = out.getvalue()
+            self.assertIn(
+                "- `tools/x.py:39-41` [warning] The exception reason should name "
+                "the missing key. — raised by correctness, naming, comments",
+                text,
+            )
+            self.assertIn("5 finding(s) → 3 after dedup", text)
+            path.write_text("{}")
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(rs.main(["--dedup", str(path)]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

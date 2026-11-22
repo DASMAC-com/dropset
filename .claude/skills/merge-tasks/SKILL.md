@@ -6,6 +6,9 @@ user-invocable: true
 
 # `merge-tasks`
 
+**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
+`mcp__linear__get_issue`, `mcp__linear__save_issue`.
+
 Consolidate several Linear issues into one — codifying the
 manual fold done by hand (e.g. rolling a cluster of
 `Claude:` agent-infra issues into a single mega-task). The
@@ -157,7 +160,7 @@ so there is no `replace` and no anchor.
 **Relations still need `get_issue`.** The tool fetches
 bodies, not relations. When the fold has to carry
 `blockedBy` / `blocks` / `relatedTo` (step 3's union below),
-call `mcp__claude_ai_Linear__get_issue` with
+call `mcp__linear__get_issue` with
 `includeRelations: true` for that — once per issue, no
 reloads. Skip it entirely when no issue in the set has
 relations worth carrying.
@@ -274,7 +277,7 @@ Offer "yes, merge" (**first**, the recommended default) and
 **5. Write the survivor, then cancel the rest.** On
 approval:
 
-- Update the survivor with `mcp__claude_ai_Linear__save_issue`
+- Update the survivor with `mcp__linear__save_issue`
   (id = survivor) — the new `title`, the body, the
   `relatedTo` union, and **only the blocking edges the user
   approved** in step 4 (these args are append-only, so

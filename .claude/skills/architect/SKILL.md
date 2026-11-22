@@ -7,6 +7,9 @@ model: fable
 
 # `architect`
 
+**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
+`SendMessage`.
+
 The **CEO hat**. Where a scheduler session keeps the board
 coherent, this one asks whether the thing on the board is the
 right thing to build — "market-making versus volatility", not
@@ -108,12 +111,25 @@ pin prevents.
 
 ## Bootstrap: minimal, deliberately
 
-Read **the Planning document** (`LINEAR_PLANNING_DOC_ID`), plus
-the committed standing decisions and rulings in
+Read **the Planning document** (`LINEAR_PLANNING_DOC_ID`) by
+section, plus the committed standing decisions and rulings in
 `.claude/skills/plan/rulings.md`. This is the non-negotiable
 read — strategy direction, settled decisions, the vocabulary the
 operator uses. Arguing architecture without it re-derives
 settled ground.
+
+```sh
+python3 .claude/tools/planning_doc.py --sections \
+  '^(Current direction|In-session notes|Notes for the next planning session)'
+```
+
+Never `get_document`, and never the whole body: the board-state
+sections the scheduler and the upkeep pass maintain —
+`Fleet state and chains`, `Collision clusters`, `Audit state`,
+`Session-metrics state` and the `Upkeep report` — are about two
+fifths of the document, and are deliberately skipped. Should
+a design question turn on one of them, read that one section
+with `--section`.
 
 That is the whole bootstrap. **No Backlog read, no parked
 counts, no audit heartbeat, no folds, no PR checks.** Those

@@ -6,8 +6,12 @@ user-invocable: true
 
 # `linear-task`
 
+**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
+`mcp__linear__get_issue`, `mcp__linear__save_issue`,
+`mcp__github__list_pull_requests`.
+
 File a deferred to-do into Linear via the
-`claude.ai Linear` MCP. The common case: while
+Linear MCP. The common case: while
 working a PR you uncover a blocker, follow-up, or
 clean-up that shouldn't hold up the current change —
 capture it as its own issue to pick up later.
@@ -222,7 +226,7 @@ what to file.
    pass `id` — that's for updates only):
 
    ```txt
-   mcp__claude_ai_Linear__save_issue(
+   mcp__linear__save_issue(
      team: "<$LINEAR_TEAM_ID>",
      project: "<$LINEAR_PROJECT_ID>",
      assignee: "<$LINEAR_ASSIGNEE_ID>",
