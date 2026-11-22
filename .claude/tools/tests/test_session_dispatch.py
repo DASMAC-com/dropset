@@ -90,7 +90,7 @@ class Readings:
         self.readings = list(readings)
         self.calls = 0
 
-    def __call__(self, _seats, _directory):
+    def __call__(self, _slots, _directory):
         self.calls += 1
         return self.readings[min(self.calls, len(self.readings)) - 1]
 
@@ -699,7 +699,7 @@ class BlockedDispatch(unittest.TestCase):
             self.assertIn(command, text.split("run these by hand")[1])
 
 
-def seat(words, **bodies):
+def slot(words, **bodies):
     return session_dispatch.classify(words, fetch=lambda n: bodies.get(f"b{n}"))
 
 
@@ -712,9 +712,9 @@ class VerbClass(unittest.TestCase):
             ["fleet", "go"],
         ):
             with self.subTest(words=words):
-                self.assertEqual(seat(words).cls, session_dispatch.FREE)
-                self.assertTrue(seat(words).shown.endswith("(free)"))
-        task = seat(["task", "anthropic", "12"])
+                self.assertEqual(slot(words).cls, session_dispatch.FREE)
+                self.assertTrue(slot(words).shown.endswith("(free)"))
+        task = slot(["task", "anthropic", "12"])
         self.assertEqual((task.cls, task.shown), ("building", "task anthropic 12"))
 
     def test_a_verb_the_table_does_not_name_builds(self):
@@ -723,10 +723,10 @@ class VerbClass(unittest.TestCase):
         self.assertEqual(unknown.cls, session_dispatch.BUILDING)
 
     def test_a_chore_naming_a_build_command_in_code_builds(self):
-        chore = seat(["chore", "2241"], b2241="Run `make demo` and check it.")
+        chore = slot(["chore", "2241"], b2241="Run `make demo` and check it.")
         self.assertEqual(chore.cls, "building")
         self.assertEqual(chore.shown, "chore 2241 (builds: make demo)")
-        fenced = seat(["chore", "7"], b7="Then:\n\n```sh\ncargo nextest run\n```\n")
+        fenced = slot(["chore", "7"], b7="Then:\n\n```sh\ncargo nextest run\n```\n")
         self.assertEqual(fenced.label, "(builds: cargo nextest)")
 
     def test_a_chore_with_only_prose_and_tools_is_free(self):
@@ -734,17 +734,17 @@ class VerbClass(unittest.TestCase):
             "Make sure the doc says so; anchor on the heading. Run "
             "`python3 .claude/tools/make_x.py` and query `anchor-v2`."
         )
-        chore = seat(["chore", "eng-2240"], b2240=body)
+        chore = slot(["chore", "eng-2240"], b2240=body)
         self.assertEqual((chore.cls, chore.shown), ("free", "chore eng-2240 (free)"))
         self.assertEqual(chore.record, "2240")
 
     def test_a_localnet_anywhere_builds(self):
         self.assertEqual(
-            seat(["chore", "3"], b3="Bring up the Localnet.").cls, "building"
+            slot(["chore", "3"], b3="Bring up the Localnet.").cls, "building"
         )
 
     def test_an_unreadable_body_builds(self):
-        chore = seat(["chore", "bedrock", "9"])
+        chore = slot(["chore", "bedrock", "9"])
         self.assertEqual(chore.shown, "chore bedrock 9 (builds: body unreadable)")
 
     def test_the_override_skips_the_fetch(self):
@@ -773,10 +773,10 @@ class VerbClass(unittest.TestCase):
 
     def test_compose_and_tilde_fences_build(self):
         self.assertEqual(
-            seat(["chore", "5"], b5="`docker-compose up`").label,
+            slot(["chore", "5"], b5="`docker-compose up`").label,
             "(builds: docker-compose up)",
         )
-        tilde = seat(["chore", "6"], b6="~~~\nanchor build\n~~~\n")
+        tilde = slot(["chore", "6"], b6="~~~\nanchor build\n~~~\n")
         self.assertEqual(tilde.label, "(builds: anchor build)")
 
 
@@ -787,8 +787,8 @@ class Records(unittest.TestCase):
         self.dir = Path(scratch.name)
 
     def test_a_chore_class_round_trips_and_others_write_nothing(self):
-        seats = [seat(["chore", "5"], b5="prose"), seat(["task", "6"])]
-        session_dispatch.write_records(seats, self.dir)
+        slots = [slot(["chore", "5"], b5="prose"), slot(["task", "6"])]
+        session_dispatch.write_records(slots, self.dir)
         self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["5.class"])
         self.assertEqual(session_dispatch.recorded_class(self.dir, "5"), "free")
 
@@ -796,7 +796,7 @@ class Records(unittest.TestCase):
         (self.dir / "5.class").write_text("free 4242\n")
         (self.dir / "6.class").write_text("free 4343\n")
         session_dispatch.write_records(
-            [seat(["chore", "5"], b5="prose"), seat(["chore", "6"], b6="`make demo`")],
+            [slot(["chore", "5"], b5="prose"), slot(["chore", "6"], b6="`make demo`")],
             self.dir,
         )
         self.assertEqual((self.dir / "5.class").read_text(), "free 4242\n")
@@ -815,10 +815,10 @@ class Records(unittest.TestCase):
             )
 
 
-def gate(seats, *readings, over_budget=False, env=None):
+def gate(slots, *readings, over_budget=False, env=None):
     probe = Readings(*readings)
     result = session_dispatch.gate(
-        seats,
+        slots,
         Path("/nonexistent"),
         over_budget=over_budget,
         env=FLEET if env is None else env,
@@ -827,8 +827,8 @@ def gate(seats, *readings, over_budget=False, env=None):
     return result, probe
 
 
-def names(seats):
-    return [s.command for s in seats]
+def names(slots):
+    return [s.command for s in slots]
 
 
 BATCH = [
@@ -841,14 +841,14 @@ BATCH = [
 
 
 def batch():
-    return [seat(words, b2240="prose", b2241="`make demo`") for words in BATCH]
+    return [slot(words, b2240="prose", b2241="`make demo`") for words in BATCH]
 
 
-class Seating(unittest.TestCase):
-    def test_a_slot_seats_the_first_builder_and_free_verbs_regardless(self):
+class Admission(unittest.TestCase):
+    def test_a_slot_admits_the_first_builder_and_free_verbs_regardless(self):
         result, _ = gate(batch(), reading(slots=1, waiting=1, longest=30))
         self.assertEqual(
-            names(result.seated), ["task 2163", "architect 2230", "chore 2240"]
+            names(result.admitted), ["task 2163", "architect 2230", "chore 2240"]
         )
         self.assertEqual(
             session_dispatch.held_lines(result),
@@ -864,7 +864,7 @@ class Seating(unittest.TestCase):
         refused = reading(slots=0, reasons=["wait"], longest=465, waiting=2)
         result, probe = gate(batch(), refused)
         self.assertEqual(probe.calls, 2)
-        self.assertEqual(names(result.seated), ["architect 2230", "chore 2240"])
+        self.assertEqual(names(result.admitted), ["architect 2230", "chore 2240"])
         lines = session_dispatch.held_lines(result)
         self.assertEqual(
             lines[0],
@@ -879,11 +879,11 @@ class Seating(unittest.TestCase):
             "would free a slot: the longest wait falling under 2m00s; any builder closing",
         )
 
-    def test_a_re_probe_that_heals_seats_the_batch(self):
+    def test_a_re_probe_that_heals_admits_the_batch(self):
         refused = reading(slots=0, reasons=["wait"], longest=130, waiting=1)
         result, probe = gate(batch(), refused, reading())
         self.assertEqual(probe.calls, 2)
-        self.assertEqual(len(result.seated), 5)
+        self.assertEqual(len(result.admitted), 5)
         self.assertEqual(result.held, [])
 
     def test_a_re_probe_with_no_reading_keeps_the_first(self):
@@ -892,7 +892,7 @@ class Seating(unittest.TestCase):
         refused = reading(slots=0, reasons=["wait"], longest=465, waiting=1)
         result, probe = gate(batch(), refused, NO_READING)
         self.assertEqual(probe.calls, 2)
-        self.assertEqual(names(result.seated), ["architect 2230", "chore 2240"])
+        self.assertEqual(names(result.admitted), ["architect 2230", "chore 2240"])
         self.assertIn("longest build wait 7m45s", result.held[0][1])
 
     def test_memory_and_pressure_refusals_name_their_numbers(self):
@@ -902,7 +902,7 @@ class Seating(unittest.TestCase):
             free_slots=0,
             free_reasons=["memory", "pressure"],
         )
-        result, _ = gate([seat(["plan"])], red)
+        result, _ = gate([slot(["plan"])], red)
         self.assertEqual(
             session_dispatch.held_lines(result),
             [
@@ -923,7 +923,7 @@ class Seating(unittest.TestCase):
 
     def test_free_verbs_spend_the_same_total(self):
         result, _ = gate(batch(), reading(total=4, building=2))
-        self.assertEqual(names(result.seated), ["task 2163", "architect 2230"])
+        self.assertEqual(names(result.admitted), ["task 2163", "architect 2230"])
         self.assertEqual(
             session_dispatch.held_lines(result),
             [
@@ -942,8 +942,8 @@ class Seating(unittest.TestCase):
             free_slots=0,
             free_reasons=["load"],
         )
-        result, _ = gate([seat(["plan"])], red)
-        self.assertEqual(result.seated, [])
+        result, _ = gate([slot(["plan"])], red)
+        self.assertEqual(result.admitted, [])
         self.assertEqual(
             session_dispatch.held_lines(result),
             [
@@ -955,9 +955,9 @@ class Seating(unittest.TestCase):
     def test_a_builder_the_total_holds_is_held_on_the_total(self):
         # No build waits, so the building slots equal the room: the third
         # builder is out of total, not out of building slots.
-        builders = [seat(["task", n]) for n in ("1", "2", "3")]
+        builders = [slot(["task", n]) for n in ("1", "2", "3")]
         result, _ = gate(builders, reading(slots=2, total=4, building=2))
-        self.assertEqual(names(result.seated), ["task 1", "task 2"])
+        self.assertEqual(names(result.admitted), ["task 1", "task 2"])
         self.assertEqual(
             session_dispatch.held_lines(result),
             [
@@ -966,34 +966,35 @@ class Seating(unittest.TestCase):
             ],
         )
 
-    def test_over_budget_seats_past_the_machine_and_says_what_it_overrode(self):
+    def test_over_budget_admits_past_the_machine_and_says_what_it_overrode(self):
         refused = reading(slots=0, reasons=["wait"], longest=465, waiting=1)
         result, probe = gate(batch(), refused, over_budget=True)
         self.assertEqual(probe.calls, 1)
-        self.assertEqual(len(result.seated), 5)
+        self.assertEqual(len(result.admitted), 5)
         lines = session_dispatch.held_lines(result)
         self.assertIn(
-            "over budget, seated anyway: task 2163: longest build wait 7m45s", lines[0]
+            "over budget, admitted anyway: task 2163: longest build wait 7m45s",
+            lines[0],
         )
         self.assertEqual(len(lines), 3)
 
     def test_over_budget_does_not_lift_the_total(self):
         full = reading(slots=0, reasons=["wait"], longest=465, building=19)
         result, _ = gate(batch(), full, over_budget=True)
-        self.assertEqual(names(result.seated), ["task 2163"])
+        self.assertEqual(names(result.admitted), ["task 2163"])
         self.assertEqual(
             session_dispatch.held_lines(result)[0],
             "held  architect 2230 (free): 19 clients of the total 20",
         )
 
-    def test_no_reading_seats_under_the_total_alone_and_says_why(self):
+    def test_no_reading_admits_under_the_total_alone_and_says_why(self):
         env = {**FLEET, "DS_FLEET_TOTAL": "1"}
         result, _ = gate(batch(), NO_READING, env=env)
-        self.assertEqual(names(result.seated), ["task 2163"])
+        self.assertEqual(names(result.admitted), ["task 2163"])
         self.assertEqual(
             result.notes,
             [
-                "no machine reading (not Darwin (Linux)); seating under the total 1 alone"
+                "no machine reading (not Darwin (Linux)); admitting under the total 1 alone"
             ],
         )
         self.assertIn("the total 1 (no reading counted", result.held[0][1])
@@ -1001,7 +1002,7 @@ class Seating(unittest.TestCase):
 
     def test_no_reading_and_an_unset_total_holds_the_batch_naming_it(self):
         result, _ = gate(batch(), NO_READING, env={})
-        self.assertEqual(result.seated, [])
+        self.assertEqual(result.admitted, [])
         self.assertEqual(len(result.held), 5)
         self.assertIn("DS_FLEET_TOTAL is unset", result.held[0][1])
 
@@ -1013,7 +1014,7 @@ class Probe(unittest.TestCase):
             stdout=stdout
         )
         self.addCleanup(setattr, session_dispatch.subprocess, "run", original)
-        return session_dispatch.probe([seat(["task", "1"])], Path("/x"))
+        return session_dispatch.probe([slot(["task", "1"])], Path("/x"))
 
     def test_the_probe_s_own_no_reading_passes_through(self):
         got = self._probe('{"status": "no-reading", "exit": 3, "error": "boom"}')
@@ -1035,7 +1036,7 @@ class Probe(unittest.TestCase):
                 with unittest.mock.patch.object(
                     session_dispatch.subprocess, "run", side_effect=exc
                 ):
-                    got = session_dispatch.probe([seat(["task", "1"])], Path("/x"))
+                    got = session_dispatch.probe([slot(["task", "1"])], Path("/x"))
                 self.assertEqual(got["exit"], 3)
                 self.assertIn(type(exc).__name__, got["error"])
 
@@ -1046,7 +1047,7 @@ class Probe(unittest.TestCase):
             return_value=unittest.mock.Mock(stdout=""),
         ) as run:
             session_dispatch.probe(
-                [seat(["task", "1"]), seat(["plan"]), seat(["task", "2"])], Path("/s")
+                [slot(["task", "1"]), slot(["plan"]), slot(["task", "2"])], Path("/s")
             )
         argv = run.call_args.args[0]
         self.assertTrue(argv[1].endswith("machine_load.py"))
@@ -1075,7 +1076,7 @@ class GatedRun(unittest.TestCase):
             rc = session_dispatch.run(list(argv))
         return rc, seen, out.getvalue(), err.getvalue(), directory
 
-    def test_only_the_seated_open_and_the_held_are_printed(self):
+    def test_only_the_admitted_open_and_the_held_are_printed(self):
         refused = reading(slots=0, reasons=["wait"], longest=465, waiting=1)
         rc, seen, out, _, directory = self._run(
             "task",

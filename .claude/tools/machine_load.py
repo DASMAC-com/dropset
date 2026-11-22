@@ -60,8 +60,8 @@ launcher writes records.
 
 **One ceiling, every class.** ``DS_FLEET_TOTAL`` bounds the live ``claude``
 processes — top-level clients, since a sub-agent runs inside its parent's
-process — so a free seat and a building one spend the same number. A building
-session is further refused on the pool-lock wait, and seated one at a time
+process — so a free slot and a building one spend the same number. A building
+session is further refused on the pool-lock wait, and admitted one at a time
 while any build waits.
 
 **Knobs** come from the environment (the operator's untracked runtime config);
@@ -577,13 +577,13 @@ def render(r: Reading, k: Knobs, cls: str, asked: int, asked_given: bool) -> str
             + f"; longest {duration(q.longest.elapsed_s)} (pid {q.longest.pid});"
             f" limit {duration(k.build_wait_s)}"
         )
-    seats = r.sessions
+    clients = r.sessions
     lines += [
-        f"  clients   {seats.live} of {k.total}"
-        f" (builders {seats.building}, free {seats.free})"
+        f"  clients   {clients.live} of {k.total}"
+        f" (builders {clients.building}, free {clients.free})"
         + (
             ""
-            if seats.records
+            if clients.records
             else " (no class records: every live claude counts as building)"
         ),
         f"  memory    {gib(m.in_use)} of {gib(m.physical)} GiB in use"

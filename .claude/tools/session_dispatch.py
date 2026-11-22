@@ -44,13 +44,13 @@ stdlib-only while still reaching a library that is not.
 
 **THE MACHINE GATE.** Before any tab opens, every verb is classed — `free`
 (no cargo, no Docker, no PR) or `building` — and the machine-load probe
-(`machine_load.py`) is read once for the batch. What fits is seated; the rest
+(`machine_load.py`) is read once for the batch. What fits is admitted; the rest
 is printed as `held` with the number that refused it, and a scheduler session
-re-dispatches it when a slot opens. Every seat, free or building, spends one
+re-dispatches it when a slot opens. Every slot, free or building, spends one
 of `DS_FLEET_TOTAL`, the ceiling on live top-level clients the probe applies
-and nothing here overrides. `--over-budget` seats past every other check, as
+and nothing here overrides. `--over-budget` admits past every other check, as
 the operator's word in their own tab. A probe with no reading (exit 3) never
-halts the fleet: the batch is seated under the total alone, and the dispatch
+halts the fleet: the batch is admitted under the total alone, and the dispatch
 says why — unless the total itself is unset, which holds the whole batch and
 names the variable. `fleet_resume.py` runs the same gate over its resume list,
 which is why the gate is public here rather than inlined in `run`.
@@ -323,7 +323,7 @@ def fetch_body(number: str) -> str | None:
 
 
 @dataclass
-class Seat:
+class Slot:
     """One verb as the gate sees it."""
 
     command: str
@@ -339,13 +339,13 @@ class Seat:
         return f"{self.command} {self.label}" if self.label else self.command
 
 
-def classify(words: list[str], override: str | None = None, fetch=None) -> Seat:
+def classify(words: list[str], override: str | None = None, fetch=None) -> Slot:
     """Class one validated verb. ``override`` is `--class`, which binds chores."""
     fetch = fetch or fetch_body
     command = command_line(words)
     if words[0] != "chore":
         cls = VERB_CLASS.get(words[0], BUILDING)
-        return Seat(command, cls, "(free)" if cls == FREE else "")
+        return Slot(command, cls, "(free)" if cls == FREE else "")
     number = issue_number(words[-1])
     if override:
         reason = "--class"
@@ -358,7 +358,7 @@ def classify(words: list[str], override: str | None = None, fetch=None) -> Seat:
         if override == BUILDING
         else ("(free, --class)" if reason == "--class" else "(free)")
     )
-    return Seat(command, override, label, record=number)
+    return Slot(command, override, label, record=number)
 
 
 def state_dir() -> Path:
@@ -366,8 +366,8 @@ def state_dir() -> Path:
     return machine_load.default_state_dir()
 
 
-def write_records(seats: list[Seat], directory: Path) -> None:
-    """Record each seated chore's class beside its substrate marker.
+def write_records(slots: list[Slot], directory: Path) -> None:
+    """Record each admitted chore's class beside its substrate marker.
 
     The class alone, no pid: the launcher stamps `<class> <pid>` when its
     `claude` starts, reading the class from here, and a resume reads it back
@@ -376,18 +376,18 @@ def write_records(seats: list[Seat], directory: Path) -> None:
     rather than dropping it from the probe's count. Best effort — a lost
     record costs a chore counted as building, never a dispatch.
     """
-    for seat in seats:
-        if seat.record is None:
+    for slot in slots:
+        if slot.record is None:
             continue
-        path = directory / f"{seat.record}.class"
+        path = directory / f"{slot.record}.class"
         try:
-            if path.read_text().split()[:1] == [seat.cls]:
+            if path.read_text().split()[:1] == [slot.cls]:
                 continue
         except OSError:
             pass
         try:
             directory.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"{seat.cls}\n")
+            path.write_text(f"{slot.cls}\n")
         except OSError:
             continue
 
@@ -404,14 +404,14 @@ def recorded_class(directory: Path, number: str) -> str:
     return BUILDING
 
 
-def probe(seats: list[Seat], directory: Path) -> dict:
+def probe(slots: list[Slot], directory: Path) -> dict:
     """One machine-load reading as the probe's JSON.
 
     Anything that is not a reading — exit 3, a crash, a timeout, output that is
     not the JSON shape — comes back as the probe's own no-reading shape, so the
     caller has one test (`"verdict" in reading`) rather than three.
     """
-    building = sum(seat.cls == BUILDING for seat in seats)
+    building = sum(slot.cls == BUILDING for slot in slots)
     try:
         proc = subprocess.run(
             [
@@ -487,23 +487,23 @@ def _remedy(key: str, reading: dict) -> str:
 
 @dataclass
 class Gate:
-    """What the reading admits: the seats to open, and the held with why."""
+    """What the reading admits: the slots to open, and the held with why."""
 
-    seated: list[Seat]
-    held: list[tuple[Seat, str]]
+    admitted: list[Slot]
+    held: list[tuple[Slot, str]]
     remedies: list[str]
     notes: list[str]
     #: Under `--over-budget`, what the reading alone would have held.
-    overridden: list[tuple[Seat, str]]
-    #: `clients N of T (builders B, free F)` once the seated are counted, or
+    overridden: list[tuple[Slot, str]]
+    #: `clients N of T (builders B, free F)` once the admitted are counted, or
     #: empty when no reading counted the live clients.
     clients: str = ""
 
 
 def _admit(
-    seats: list[Seat], reading: dict, total: int, over_budget: bool
-) -> tuple[list[Seat], list[tuple[Seat, list[str]]]]:
-    """Seat in order, every seat spending one of the total: free verbs on the
+    slots: list[Slot], reading: dict, total: int, over_budget: bool
+) -> tuple[list[Slot], list[tuple[Slot, list[str]]]]:
+    """Admit in order, every slot spending one of the total: free verbs on the
     machine checks, building ones also up to the reading's building slots.
     Under `over_budget` only the total binds."""
     verdict = reading.get("verdict")
@@ -520,41 +520,41 @@ def _admit(
         # The free verdict is the total's room whenever the machine admits.
         f_slots, f_reasons = verdict["free"]["slots"], verdict["free"]["reasons"]
         spent = "slots"
-    seated, held, taken, built = [], [], 0, 0
-    for seat in seats:
+    admitted, held, taken, built = [], [], 0, 0
+    for slot in slots:
         # The total first: a builder it holds is held on the total, not on
         # the building slots, and so is freed by any session closing. A
         # builder's own reasons are a superset of free's (they add the wait).
         if taken >= f_slots:
-            why = b_reasons if seat.cls == BUILDING else f_reasons
-            held.append((seat, why or ["total"]))
-        elif seat.cls == BUILDING and built >= b_slots:
-            held.append((seat, b_reasons or [spent]))
+            why = b_reasons if slot.cls == BUILDING else f_reasons
+            held.append((slot, why or ["total"]))
+        elif slot.cls == BUILDING and built >= b_slots:
+            held.append((slot, b_reasons or [spent]))
         else:
             taken += 1
-            built += seat.cls == BUILDING
-            seated.append(seat)
-    return seated, held
+            built += slot.cls == BUILDING
+            admitted.append(slot)
+    return admitted, held
 
 
-def _clients(reading: dict, total: int, seated: list[Seat]) -> str:
+def _clients(reading: dict, total: int, admitted: list[Slot]) -> str:
     sessions = reading.get("sessions")
     if not sessions:
         return ""
-    building = sessions["building"] + sum(s.cls == BUILDING for s in seated)
-    free = sessions["free"] + sum(s.cls == FREE for s in seated)
+    building = sessions["building"] + sum(s.cls == BUILDING for s in admitted)
+    free = sessions["free"] + sum(s.cls == FREE for s in admitted)
     return f"clients {building + free} of {total} (builders {building}, free {free})"
 
 
 def gate(
-    seats: list[Seat],
+    slots: list[Slot],
     directory: Path,
     *,
     over_budget: bool = False,
     env: dict[str, str] | None = None,
     reader=None,
 ) -> Gate:
-    """Read the probe once and seat what fits.
+    """Read the probe once and admit what fits.
 
     A hold on the pool-lock wait is re-probed once before it stands: the probe
     takes one snapshot, and a build caught between two children reads as a
@@ -562,7 +562,7 @@ def gate(
     """
     reader = reader or probe
     env = os.environ if env is None else env
-    reading = reader(seats, directory)
+    reading = reader(slots, directory)
     has_reading = "verdict" in reading
     if has_reading:
         total = int(reading["knobs"]["total"])
@@ -573,10 +573,10 @@ def gate(
         try:
             knobs = machine_load.read_knobs(env, 0)
         except machine_load.NoReading as exc:
-            # No total to seat under: hold the batch, naming the variable.
+            # No total to admit under: hold the batch, naming the variable.
             return Gate(
-                seated=[],
-                held=[(seat, str(exc)) for seat in seats],
+                admitted=[],
+                held=[(slot, str(exc)) for slot in slots],
                 remedies=["the knob set in the runtime config"],
                 notes=[f"no machine reading ({reading.get('error', 'unknown')})"],
                 overridden=[],
@@ -585,24 +585,24 @@ def gate(
         notes = list(knobs.notes)
         notes.append(
             f"no machine reading ({reading.get('error', 'unknown')}); "
-            f"seating under the total {total} alone"
+            f"admitting under the total {total} alone"
         )
-    seated, held = _admit(seats, reading, total, over_budget)
+    admitted, held = _admit(slots, reading, total, over_budget)
     if has_reading and not over_budget and any("wait" in why for _, why in held):
         # The first reading stands unless the second is one: its holds are
         # rendered from whichever reading produced them.
-        second = reader(seats, directory)
+        second = reader(slots, directory)
         if "verdict" in second:
             reading = second
-            seated, held = _admit(seats, reading, total, over_budget)
-    overridden: list[tuple[Seat, str]] = []
+            admitted, held = _admit(slots, reading, total, over_budget)
+    overridden: list[tuple[Slot, str]] = []
     if over_budget and has_reading:
-        _, would = _admit(seats, reading, total, False)
-        kept = {id(seat) for seat, _ in held}
+        _, would = _admit(slots, reading, total, False)
+        kept = {id(slot) for slot, _ in held}
         overridden = [
-            (seat, "; ".join(_reason(k, reading, total) for k in why))
-            for seat, why in would
-            if id(seat) not in kept
+            (slot, "; ".join(_reason(k, reading, total) for k in why))
+            for slot, why in would
+            if id(slot) not in kept
         ]
     remedies: list[str] = []
     for _, why in held:
@@ -610,19 +610,19 @@ def gate(
             text = _remedy(key, reading)
             if text and text not in remedies:
                 remedies.append(text)
-    held_building = any(seat.cls == BUILDING for seat, _ in held)
+    held_building = any(slot.cls == BUILDING for slot, _ in held)
     if held_building and "any session closing" not in remedies:
         remedies.append("any builder closing")
     return Gate(
-        seated=seated,
+        admitted=admitted,
         held=[
-            (seat, "; ".join(_reason(k, reading, total) for k in why))
-            for seat, why in held
+            (slot, "; ".join(_reason(k, reading, total) for k in why))
+            for slot, why in held
         ],
         remedies=remedies,
         notes=notes,
         overridden=overridden,
-        clients=_clients(reading, total, seated),
+        clients=_clients(reading, total, admitted),
     )
 
 
@@ -630,14 +630,14 @@ def held_lines(result: Gate) -> list[str]:
     """The `held` lines, a repeated reason shortened to `same`, then what would
     free a slot."""
     lines, previous = [], None
-    for seat, why in result.held:
-        lines.append(f"held  {seat.shown}: {'same' if why == previous else why}")
+    for slot, why in result.held:
+        lines.append(f"held  {slot.shown}: {'same' if why == previous else why}")
         previous = why
     if result.held and result.remedies:
         lines.append(f"would free a slot: {'; '.join(result.remedies)}")
     lines += [
-        f"over budget, seated anyway: {seat.shown}: {why}"
-        for seat, why in result.overridden
+        f"over budget, admitted anyway: {slot.shown}: {why}"
+        for slot, why in result.overridden
     ]
     return lines
 
@@ -665,7 +665,7 @@ def run(argv: list[str]) -> int:
     parser.add_argument(
         "--over-budget",
         action="store_true",
-        help="seat the whole batch past the machine checks (the total still binds)",
+        help="admit the whole batch past the machine checks (the total still binds)",
     )
     parser.add_argument("--state-dir", type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument(
@@ -713,19 +713,19 @@ def run(argv: list[str]) -> int:
 
     # The machine gate, still before any tab. Unlike a malformed verb, a held
     # one is valid, so a partial batch is correct HERE: the held lines say
-    # which, and re-dispatching them later cannot double a seated one.
+    # which, and re-dispatching them later cannot double an admitted one.
     directory = args.state_dir or state_dir()
-    seats = [classify(words, args.cls) for words in groups]
-    admitted = gate(seats, directory, over_budget=args.over_budget)
-    for note in admitted.notes:
+    slots = [classify(words, args.cls) for words in groups]
+    gated = gate(slots, directory, over_budget=args.over_budget)
+    for note in gated.notes:
         print(f"session-dispatch: {note}", file=sys.stderr)
-    held = held_lines(admitted)
-    if not admitted.seated:
+    held = held_lines(gated)
+    if not gated.admitted:
         print("\n".join(held))
         return 0
-    write_records(admitted.seated, directory)
-    commands = [seat.command for seat in admitted.seated]
-    shown = {seat.command: seat.shown for seat in admitted.seated}
+    write_records(gated.admitted, directory)
+    commands = [slot.command for slot in gated.admitted]
+    shown = {slot.command: slot.shown for slot in gated.admitted}
     roles = [SEAT_VERBS.get(command.split()[0]) for command in commands]
 
     try:
@@ -801,8 +801,8 @@ def run(argv: list[str]) -> int:
         print(f"sessions now open: {', '.join(iterm_api.session_names())}")
     except iterm_api.ItermUnavailable as exc:
         print(f"session-dispatch: tabs opened; roll-call unavailable ({exc})")
-    if admitted.clients:
-        print(admitted.clients)
+    if gated.clients:
+        print(gated.clients)
     return 0
 
 
