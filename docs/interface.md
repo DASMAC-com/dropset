@@ -453,9 +453,9 @@ before assuming a shared trait.
 The SDK adapter is built for a named **deployment** (the router traits carry
 no cluster) and takes the market account's **owner** with its bytes: an owner
 other than that deployment's program id is refused before anything is quoted.
-A lookalike market owned by a program at the localnet id, whose key is public,
-would otherwise price a mainnet route from attacker data, even though the swap
-itself still targets the right program.
+A lookalike market owned by a program at the localnet id, whose secret is
+committed, would otherwise price a mainnet route from attacker data, even
+though the swap itself still targets the right program.
 
 ### MCP servers — orthogonal to listing
 

@@ -510,7 +510,7 @@ mod tests {
 
     /// A well-formed book owned by any program but the deployment's is
     /// refused: on mainnet, a lookalike owned by the localnet-id program
-    /// (whose key is public) must never be quoted from.
+    /// (whose secret is committed) must never be quoted from.
     #[test]
     fn a_lookalike_owner_is_refused() {
         let data = one_ask_market(500_000);
