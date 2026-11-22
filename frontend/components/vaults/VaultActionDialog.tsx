@@ -93,7 +93,7 @@ function TxStatusLine({ tx }: { tx: UseVaultTx }) {
     tx.status === "signing"
       ? "Approve the transaction in your wallet…"
       : tx.status === "confirming"
-        ? "Confirming on-chain…"
+        ? "Confirming onchain…"
         : tx.status === "success"
           ? tx.sharesAfter === null
             ? "Confirmed."
@@ -767,7 +767,7 @@ export function VaultActionDialog({
   const depositUsd = baseUsdValue + quoteUsdValue;
   // The largest deposit the vault can take before the new shares would dilute
   // the leader below their min_leader_share floor; null when the floor can't
-  // bind. A basket past the cap would be rejected on-chain, so we block it and
+  // bind. A basket past the cap would be rejected onchain, so we block it and
   // warn rather than let the user submit a doomed deposit.
   const depositCap = maxOutsideDepositValue(vault);
   const floorBreached =
