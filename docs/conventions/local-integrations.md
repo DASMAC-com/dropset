@@ -1510,8 +1510,8 @@ so the session — and every Bash command its agent runs — inherits the pool
   keep a sibling's build out of them, but anything that deletes or
   rewrites a slot a doctest links fails it with `E0463` or
   `extern location … does not exist` (a sibling's `cargo clean -p`
-  does, measured), which is the doctest failure `verify_head.py`
-  recovers with `cargo test --doc`.
+  does, measured). Only the `E0463` form is the race `verify_head.py`
+  recovers by re-running `cargo test --doc`.
 - **`CARGO_BUILD_JOBS`** comes from the runtime config, **required**
   like the lane count (see "Lanes" below): the hook no longer derives
   it. Exported, it also bounds any cargo outside the lock.
