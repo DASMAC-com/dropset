@@ -160,6 +160,9 @@ resolves its own conflicts and the operator is never asked to rebase
   opt-down is the operator's to take), when it exceeds the scope band
   (more than 1,000 changed lines, the split threshold in
   `docs/conventions/context-economy.md`), when a design question is
-  still open, or when the signer is locked at the enqueue. Each
-  unasked step is announced in one line, not asked. The post-merge
-  Done ratification stays the operator's, always asked.
+  still open, when the implement phase has carried the prefix past
+  ~250k (the handoff then recommends running `review-pr` in a fresh
+  session on the same worktree, since cost is quadratic in length), or
+  when the signer is locked at the enqueue. Each unasked step is
+  announced in one line, not asked. The post-merge Done ratification
+  stays the operator's, always asked.

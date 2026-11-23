@@ -120,6 +120,11 @@ from the diff:
   copies the committed keypair; the failing tests' own
   `anchor keys sync && anchor build` suggestion is wrong for this
   repo).
+- **A cold worktree's first cargo build or test goes in the
+  background** (`run_in_background: true`). With no warm `target/`
+  it can outrun the 600 s foreground cap, which blocks the session
+  for the full ten minutes before the harness moves it anyway
+  ([`history.md`](history.md) → "Cold first build").
 
 The tool fetches from inside this worktree and never runs
 `git -C <base_repo> pull` — the harness's worktree isolation refuses
@@ -271,7 +276,29 @@ The reminders neither states:
 - **Don't re-derive a diff.** Read a `review_diff.py --split` diff
   from its slices; reach for `git diff` only for a change you have not
   read (a rebase, a hook autofix, a sibling session), and take
-  `--stat` first when the question is which files moved.
+  `--stat` first when the question is which files moved. **A
+  generated artifact gets `--stat` and nothing more** — the families
+  `review_diff.py`'s `DIFF_EXCLUDES` names (lock files,
+  `sdk/*/src/generated`, the IDL, `sdk/conformance`, the Grafana SQL
+  mirror); their content is the generator's, gated by its
+  regeneration check (`docs/conventions/context-economy.md` → "The
+  levers").
+
+- **Probe in-flight overlap before building on a shared surface.**
+  When the work reaches past the issue's own surface — the SDK, a
+  generated artifact, a shared type — commit the first edit there as
+  a checkpoint, then run the probe (it reads committed changes only)
+  and read `overlapping_prs`:
+
+  ```sh
+  python3 .claude/tools/review_diff.py --base main \
+    --out <scratchpad>/overlap.txt --overlap
+  ```
+
+  When
+  an open PR already shapes the same surface, build on its shape and
+  tell the live scheduler, rather than learning it at `review-pr`
+  step 5 ([`history.md`](history.md) → "Late overlap").
 
 - **Size a file at another ref without printing it.**
   `git show <ref>:<path>` prints the whole blob — `--stat` and
@@ -438,7 +465,9 @@ The reminders neither states:
    issue from `[Todo]`, the diff is over the reduced-tier threshold
    below and at most 1,000 changed lines, and no design question is
    open. That ratification is the pre-approval, so say one line ("in
-   band, entering `/review-pr`") and route straight in.
+   band, entering `/review-pr`") and route straight in — **unless the
+   implement phase has carried the prefix past ~250k**, which asks
+   below with the fresh session first.
 
    Otherwise ask via `AskUserQuestion` whether to run `/review-pr`
    now. **This question is `review-pr`'s entry gate** — a yes is the
@@ -446,14 +475,25 @@ The reminders neither states:
    reduced-tier option is its abridged-tier opt-down (see its "The
    entry gate" section):
 
-   - **"Yes — full adversarial suite"** — first, recommended.
+   - **"Yes — in a fresh session"** — first, recommended, *only* past
+     the ~250k prefix. Commit and push everything, then stop: the
+     operator opens a new session in this worktree and invokes
+     `/review-pr` there. Its step 1 locates the PR cold and step 3
+     reads the issue body cold, so it needs only the diff, the issue
+     and the facts `review_diff.py` rebuilds from disk, not the
+     implement phase's reads, which every lens hand-off, CI wait and
+     rebase turn would otherwise replay ([`history.md`](history.md) →
+     "Review on a long prefix").
+   - **"Yes — full adversarial suite"** — first, recommended, below
+     the ~250k prefix.
    - **"Yes — reduced tier"** — *only* under `review-pr`'s small-diff
      threshold (≤ 5 files, ≤ 60 changed lines, no program / SDK /
      migration / generation-input path, single crate), naming the
      actual signals in the option.
    - **"Not yet"** — stop and leave the PR as it is.
 
-   On either yes, route straight into `/review-pr` with the tier.
+   On an in-session yes, route straight into `/review-pr` with the
+   tier.
    **Write no "delivered" narrative onto the Linear issue here** — the
    adversarial pass has not run and may invalidate it; the disposition
    is `review-pr`'s to record. Don't surface `/pr-title-description`
