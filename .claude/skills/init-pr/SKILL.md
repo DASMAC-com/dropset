@@ -156,7 +156,7 @@ is driving. The rules live in `docs/conventions/context-economy.md` →
 them there; what follows is only what is specific to this phase or not
 stated there.
 
-The three rules specific to `init-pr`:
+The four rules specific to `init-pr`:
 
 1. **Confirm a disposition another session owns before mapping
    anything.** The tell is a spec whose headline item is phrased as a
@@ -192,6 +192,15 @@ The three rules specific to `init-pr`:
    `--no-facts` is required when you hold no verified facts (the tool
    exits 2 with none of `--fact`, `--facts-file`, `--no-facts`); pass
    facts instead when you have them.
+
+1. **An exemplar you imitate once is a slice, not a whole read.**
+   Grep for the declaration first, then `Read` with `offset` /
+   `limit`. Learning a sibling's *shape* — its trait seam, its
+   constructor, a test helper — holds none of the four whole-read
+   licenses (`docs/conventions/context-economy.md` → "The levers").
+   An early whole read is replayed on every later turn: five read in
+   the first ~20 turns of a 201-turn session cost about 8M
+   token-turns ([`history.md`](history.md) → "Exemplar whole reads").
 
 1. **Ask a live scheduler before reading the Planning
    document.** `ListAgents` is the liveness check. The document getter
@@ -307,6 +316,24 @@ The reminders neither states:
   4.3, macOS's 3.81 included, a bare `#` inside `$(shell …)` starts a
   comment); only the recipes that expand it fail
   ([`history.md`](history.md) → "Makefile dry-run").
+
+- **Run a rename or retirement sweep as one census, then one context
+  pass per tree.** Take
+  `python3 .claude/tools/search_source.py '<term>' --all-text --files-only`
+  once, then one `--all-text --context 2 --dir <tree>` pass per tree
+  the census reported, as a repo-root path (`.claude/tools`,
+  `.claude/skills`, `docs`), and batch the `Edit` calls per file. A
+  re-census or a per-file context grep buys the same lines again
+  ([`history.md`](history.md) → "Retirement sweep").
+
+- **Map a session verb's marker sharers and re-entry paths before
+  editing it** in `.claude/shell/init.zsh`: every verb writing the
+  same substrate marker key, and every path that re-enters its
+  sessions (`task resume`, `fleet`, `session_dispatch.py`'s grammar).
+  Its tests are `.claude/scripts/test_ds_substrate.py`, outside the
+  `.claude/tools/tests` tree a scoped search reaches
+  (`docs/conventions/local-integrations.md` → "Substrate
+  stickiness"; [`history.md`](history.md) → "Verb edits").
 
 ## Steps
 

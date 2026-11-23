@@ -295,6 +295,9 @@ Both stages are **mandatory**, file or no file.
    issue's body — **ending with the task list it will file**.
    Say where it is, in plain text, the moment it exists: in
    this tab **and** in a message to the live scheduler, if one is running.
+   A task that adds or changes a model rate carries its verified list
+   prices and their source (`docs/conventions/linear-automation.md` →
+   "A rate-change task carries its verified prices").
 1. **The operator edits it directly**, in a real editor or as
    comments on the issue, between turns.
 1. **Read it back exactly once** per round and fold their edits

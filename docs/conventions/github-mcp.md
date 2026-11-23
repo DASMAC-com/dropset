@@ -126,6 +126,15 @@ which drifted behind it twice:
   `review_diff.py --overlap`, which exist so the per-PR file lists never
   reach a transcript at all.)
 
+  When the MCP list is the right call anyway, select **scalar fields
+  only** (`number`, `title`, `merged_at`, `closed_at`) and leave out
+  `head` and `base` unless the branch name is the question: each one
+  embeds the full repository object (name, description, URL templates)
+  again per PR. Measured: the four scalars plus `head`, over 40 PRs,
+  returned ≈4.1k, a session's largest main-loop result, for one datum
+  from `head`, with the repository description repeated 40 times;
+  without `head` it is about a quarter of that.
+
 - **The queue-exit notification dismissal** (`review-pr`) — done
   **inside** `wait_for_checks.py --queue`, which on every exit but
   `probe_failed` calls `pr_notifications.py`'s `--pr` path in its own

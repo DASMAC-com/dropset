@@ -118,6 +118,16 @@ what to file.
      is filing overhead. See `CLAUDE.md` →
      "Structured filing fields".
 
+     **A rate-change task carries its prices.** When
+     the to-do adds or changes a model rate, put the
+     verified first-party list figures in the body and
+     name their source, so the worker checks them
+     against `HEAD` instead of loading the bundled
+     `claude-api` skill (≈40.7k tokens, resident for the
+     rest of its session). Per
+     `docs/conventions/linear-automation.md` → "A
+     rate-change task carries its verified prices".
+
      **Two shapes Linear's writer mangles**, so keep them
      out of the body:
 

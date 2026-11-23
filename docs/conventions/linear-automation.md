@@ -285,6 +285,20 @@ stable: the filing skills emit it and the dedup probes match on it.
 
 That is the whole field set. `**Fingerprint**:` is the only one.
 
+### A rate-change task carries its verified prices
+
+When a filing skill (`linear-task`, `plan`, `architect`) files a task
+that adds or changes a model rate, the body states the verified
+first-party list figures and names their source. The worker then
+checks the spec's figures against `HEAD` (`init-pr`'s
+verify-against-`HEAD` rule) instead of loading the bundled
+`claude-api` skill, whose entry is ≈107.6k bytes (≈40.7k tokens) and
+stays resident for the rest of the session. Measured once: a rate-table
+task invoked it at turn ~12 to confirm two price rows, and it sat
+resident for 78 turns, ≈3.2M token-turns and about a tenth of the
+session's cost, for one table and one sentence. This is a body
+convention, not a machine-read field.
+
 ### Retired: `**Touches**:`
 
 A filed issue used to carry `**Touches**: <glob>[, <glob>…]`, the path

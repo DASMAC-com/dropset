@@ -2564,6 +2564,18 @@ diagnosing a launch.
 All of it is covered by `.claude/scripts/test_ds_substrate.py`, which
 drives the real zsh functions.
 
+**Before editing a verb, map its states once.** A change to one verb's
+launch is half the change: list every verb that writes a marker keyed
+the same way, by tag (`task`, `architect`, `explore` and `chore`), and
+every path that re-enters its sessions without running the launch —
+`task resume`, `fleet`, and `session_dispatch.py`'s grammar. Each
+needs the new export or pin too. Search for the verb's tests in
+`.claude/scripts/test_ds_substrate.py`, which sits outside the
+`.claude/tools/tests` tree a scoped search reaches, and run the full
+`make tools-tests` before review. Skipping the map once cost three
+review fix cycles, all four lenses finding the same two gaps: the
+marker sharers and the re-entry paths.
+
 #### The exit estimate
 
 **Every launch prints its session's cost estimate when `claude`
