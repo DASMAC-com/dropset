@@ -199,8 +199,8 @@ The four rules specific to `init-pr`:
    constructor, a test helper — holds none of the four whole-read
    licenses (`docs/conventions/context-economy.md` → "The levers").
    An early whole read is replayed on every later turn: five read in
-   the first 20 turns of a 200-turn session cost about 8M token-turns
-   ([`history.md`](history.md) → "Exemplar whole reads").
+   the first ~20 turns of a 201-turn session cost about 8M
+   token-turns ([`history.md`](history.md) → "Exemplar whole reads").
 
 1. **Ask a live scheduler before reading the Planning
    document.** `ListAgents` is the liveness check. The document getter
@@ -319,11 +319,12 @@ The reminders neither states:
 
 - **Run a rename or retirement sweep as one census, then one context
   pass per tree.** Take
-  `search_source.py '<term>' --all-text --files-only` once, then one
-  `--context 2 --dir <tree>` pass per tree (tools, skills, docs), and
-  batch the `Edit` calls per file. A re-census or a per-file context
-  grep buys the same lines again ([`history.md`](history.md) →
-  "Retirement sweep").
+  `python3 .claude/tools/search_source.py '<term>' --all-text --files-only`
+  once, then one `--all-text --context 2 --dir <tree>` pass per tree
+  the census reported, as a repo-root path (`.claude/tools`,
+  `.claude/skills`, `docs`), and batch the `Edit` calls per file. A
+  re-census or a per-file context grep buys the same lines again
+  ([`history.md`](history.md) → "Retirement sweep").
 
 - **Map a session verb's marker sharers and re-entry paths before
   editing it** in `.claude/shell/init.zsh`: every verb writing the

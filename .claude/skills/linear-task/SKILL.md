@@ -123,10 +123,10 @@ what to file.
      verified first-party list figures in the body and
      name their source, so the worker checks them
      against `HEAD` instead of loading the bundled
-     `claude-api` skill (≈40k tokens, resident for the
+     `claude-api` skill (≈40.7k tokens, resident for the
      rest of its session). Per
-     `docs/conventions/linear-automation.md` →
-     "Structured filing fields".
+     `docs/conventions/linear-automation.md` → "A
+     rate-change task carries its verified prices".
 
      **Two shapes Linear's writer mangles**, so keep them
      out of the body:
