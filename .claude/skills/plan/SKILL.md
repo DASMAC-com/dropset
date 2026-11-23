@@ -507,8 +507,10 @@ sections that changed**, never the whole body: put each changed
 top-level section in one file and run
 `planning_doc.py replace-sections --file <path>` (`--drop '# <heading>'`
 deletes one; `--dry-run` first). A section owns its
-subsections: re-supply each one kept (the machine-written upkeep
-report included) or `--drop` it, else the write is refused.
+subsections: re-supply each one changed, `--keep` one carried
+unchanged (always the machine-written upkeep report, so the live
+copy is written, never a stale paste), or `--drop` it, else the
+write is refused.
 Unchanged sections are carried byte for byte, any heading not
 matching exactly once refuses the whole write, and the tool
 reads the document back itself — exit 1 names the first

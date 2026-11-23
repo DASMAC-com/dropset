@@ -181,6 +181,39 @@ class ReplaceSections(unittest.TestCase):
         self.assertIn("| seam | 09-01 | 8 |", got)
         self.assertEqual(count, 1)  # the acknowledged child is inside the splice
 
+    def test_keep_carries_the_live_subsection_not_a_stale_copy(self):
+        # The race a pasted copy loses: the upkeep pass rewrote its report
+        # after the caller read it. --keep takes the text from the fetch.
+        live = DOC.replace("no-level-price-bound rule", "UPDATED by upkeep")
+        new = "# Standing decisions\n\nnew\n"
+        got, count = pd.replace_sections(
+            live, pd._file_blocks(new), [], ["## Program and timing"]
+        )
+        self.assertTrue(
+            got.endswith(
+                "new\n\n## Program and timing\n\nthe UPDATED by upkeep is ratified"
+            )
+        )
+        self.assertEqual(count, 1)
+
+    def test_keep_is_byte_identical_to_re_supplying_the_same_text(self):
+        stored = DOC + "\n"
+        child = stored[stored.index("## Program and timing") :]
+        new = "# Standing decisions\n\nnew\n"
+        by_keep, _ = pd.replace_sections(
+            stored, pd._file_blocks(new), [], ["## Program and timing"]
+        )
+        by_hand, _ = pd.replace_sections(
+            stored, pd._file_blocks(new + "\n" + child), []
+        )
+        self.assertEqual(by_keep, by_hand)
+
+    def test_keep_outside_a_replaced_section_is_refused(self):
+        with self.assertRaises(pd.PlanningDocError):
+            pd.replace_sections(
+                DOC, pd._file_blocks(AUDIT_NEW), [], ["## Program and timing"]
+            )
+
     def test_a_re_supplied_subsection_is_carried_in(self):
         new = "# Standing decisions\n\nnew\n\n## Program and timing\n\nkept\n"
         got, _ = pd.replace_sections(DOC, pd._file_blocks(new), [])

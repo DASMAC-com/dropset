@@ -39,7 +39,8 @@ afterwards rather than re-fetching.
 One write mode, the scheduler's close-out::
 
     python3 .claude/tools/planning_doc.py replace-sections \
-        --file <scratchpad>/changed.md [--drop '## Old addendum'] [--dry-run]
+        --file <scratchpad>/changed.md [--drop '## Old addendum'] \
+        [--keep '## Upkeep report …'] [--dry-run]
 
 Each top-depth section in the file replaces the stored section with the same
 heading text and depth (exactly one match, else nothing is written); every
@@ -156,7 +157,19 @@ def _stored_range(plain: list[str], depth: int, heading: str) -> tuple[int, int]
     return start, end
 
 
-def replace_sections(content: str, blocks: list, drops: list[str]) -> tuple[str, int]:
+def _heading_arg(flag: str, heading: str) -> tuple[int, str]:
+    """``(depth, title)`` from a ``--drop`` / ``--keep`` full heading line."""
+    hashes, _, title = heading.partition(" ")
+    if not hashes or set(hashes) != {"#"} or not title.strip():
+        raise PlanningDocError(
+            f"{flag} {heading!r} must be a full heading line, e.g. '## Notes'"
+        )
+    return len(hashes), title.strip()
+
+
+def replace_sections(
+    content: str, blocks: list, drops: list[str], keeps: list[str] = ()
+) -> tuple[str, int]:
     """``content`` with each named section replaced (or dropped); and the count.
 
     Every unnamed section is carried byte for byte, so the result equals the
@@ -167,37 +180,49 @@ def replace_sections(content: str, blocks: list, drops: list[str]) -> tuple[str,
     A section owns its subsections, so a stored subsection the replacement
     does not re-supply would vanish — the machine-written ``## Upkeep report``
     under the notes heading is the live case. That is refused unless the
-    subsection is also named in ``drops``, which makes the loss deliberate.
+    subsection is named in ``drops`` (the loss made deliberate) or ``keeps``.
+    A kept subsection is carried forward from ``content`` itself — the live
+    fetch, not a copy the caller read earlier, which a later upkeep run may
+    have superseded — and lands after the block's own text, in stored order.
     """
     plain = content.splitlines()
     kept = content.splitlines(keepends=True)
     heads = list(read_result.iter_headings(plain))
-    dropped: list[tuple[int, int, str]] = []
-    for heading in drops:
-        hashes, _, title = heading.partition(" ")
-        if not hashes or set(hashes) != {"#"} or not title.strip():
-            raise PlanningDocError(
-                f"--drop {heading!r} must be a full heading line, e.g. '## Notes'"
-            )
-        title = title.strip()
-        dropped.append((*_stored_range(plain, len(hashes), title), f"{hashes} {title}"))
+    dropped: list[tuple[int, int]] = [
+        _stored_range(plain, *_heading_arg("--drop", h)) for h in drops
+    ]
+    carried = [_stored_range(plain, *_heading_arg("--keep", h)) for h in keeps]
     edits = []
     for depth, heading, text in blocks:
         start, end = _stored_range(plain, depth, heading)
         supplied = {(d, t) for _, d, t in read_result.iter_headings(text.splitlines())}
+        mine = sorted(r for r in carried if start < r[0] < end)
         for i, d, t in heads:
-            if start < i < end and (d, t) not in supplied:
-                line = f"{'#' * d} {t}"
-                named_drop = [x for x in dropped if x[0] == i]
-                if not named_drop:
-                    raise PlanningDocError(
-                        f"replacing {'#' * depth} {heading!r} would delete its "
-                        f"stored subsection {line!r} — re-supply it in the file, "
-                        f"or --drop {line!r} to delete it on purpose"
-                    )
-                dropped.remove(named_drop[0])  # inside this splice; not its own edit
+            if not start < i < end or (d, t) in supplied:
+                continue
+            if any(ks <= i < ke for ks, ke in mine):
+                continue  # carried forward whole, its own children included
+            line = f"{'#' * d} {t}"
+            named_drop = [x for x in dropped if x[0] == i]
+            if not named_drop:
+                raise PlanningDocError(
+                    f"replacing {'#' * depth} {heading!r} would delete its "
+                    f"stored subsection {line!r} — re-supply it in the file, "
+                    f"--keep {line!r} to carry the live copy forward, or "
+                    f"--drop {line!r} to delete it on purpose"
+                )
+            dropped.remove(named_drop[0])  # inside this splice; not its own edit
+        if mine:
+            text = text.rstrip("\n") + "\n\n"
+            text += "".join("".join(kept[ks:ke]) for ks, ke in mine)
+        for r in mine:
+            carried.remove(r)
         edits.append((start, end, text))
-    edits += [(start, end, "") for start, end, _ in dropped]
+    if carried:
+        raise PlanningDocError(
+            "--keep names a section that is not a subsection of a replaced one"
+        )
+    edits += [(start, end, "") for start, end in dropped]
     edits.sort()
     for (_, prev_end, _), (start, _, _) in zip(edits, edits[1:]):
         if start < prev_end:
@@ -244,6 +269,14 @@ def run_replace(argv: list[str]) -> int:
         metavar="HEADING",
         help="a stored section to delete, as its heading line (repeatable)",
     )
+    parser.add_argument(
+        "--keep",
+        action="append",
+        default=[],
+        metavar="HEADING",
+        help="a stored subsection of a replaced section to carry forward from "
+        "the live document, as its heading line (repeatable)",
+    )
     parser.add_argument("--id", default=None, help="default $LINEAR_PLANNING_DOC_ID")
     parser.add_argument("--dry-run", action="store_true", help="write nothing")
     args = parser.parse_args(argv)
@@ -258,7 +291,7 @@ def run_replace(argv: list[str]) -> int:
     )
     api_key = linear_api.env_var("LINEAR_API_KEY", error=PlanningDocError)
     title, stored = fetch(api_key, doc_id)
-    composed, count = replace_sections(stored, blocks, args.drop)
+    composed, count = replace_sections(stored, blocks, args.drop, args.keep)
     if composed == stored:
         raise PlanningDocError("the sections match what is stored — nothing to write")
     summary = f"{title} | {count} section(s), {len(stored)} -> {len(composed)} chars"
@@ -272,7 +305,7 @@ def run_replace(argv: list[str]) -> int:
     # trip; a second change in that window refuses rather than guesses.
     _, fresh = fetch(api_key, doc_id)
     if fresh != stored:
-        composed, count = replace_sections(fresh, blocks, args.drop)
+        composed, count = replace_sections(fresh, blocks, args.drop, args.keep)
         _, again = fetch(api_key, doc_id)
         if again != fresh:
             raise PlanningDocError(
