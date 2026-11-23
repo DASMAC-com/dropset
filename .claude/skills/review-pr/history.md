@@ -211,6 +211,19 @@ the resident-size gate (`docs/conventions/context-economy.md` →
 
 ## Step 5: slicing the review diff
 
+- **Slice retirement.** The `--split` source / tests / docs slices and
+  their routing table are retired (an operator decision on the same
+  spec): every lens and the cross-check read the one captured diff, so
+  coverage only went up. What the slices provided stays as verdict
+  fields — `test_shape` (judged on each hunk's whole post-image span,
+  which also fixed a new file's trailing `#[cfg(test)]` module landing
+  in the source slice), `generated_share`, and `subdivide`, whose
+  1,500-diff-line threshold replaced the 500-line per-slice ceiling.
+  It was measured: of the 120 most recent merged PRs (2026-11-21) the
+  changed-line median was about 420 and 13 exceeded 1,000, and a review
+  diff runs about 1.4× its changed lines. The entries below record why
+  the slices existed; their figures still argue for scoping the
+  material, not for slices.
 - **Generated output dominating the diff.** A conformance-vectors PR,
   before `sdk/conformance` joined `DIFF_EXCLUDES`: a 5783-line diff of
   which ~3460 lines were vector JSON, so even the tests slice came out
@@ -719,6 +732,14 @@ to move and by how much.
 
 ## Step 6: the cross-check
 
+- **Cross-check at every tier.** The reduced tiers used to drop the
+  cross-check on a trivial or small-single-crate diff. That rule is
+  reversed (the review-pr fan-out spec, ratified 2026-10-19, an
+  operator decision): the cross-check is in every tier's lens list,
+  required, and only the trivial tier marks it `ask_to_skip`, offered
+  through one `AskUserQuestion`, never dropped silently. The lens
+  agents are not a lever; the only direction of change was the
+  cross-check becoming unconditional.
 - **Drift during the fan-out.** In one measured run the freshness gate
   did catch drift, but only after four lenses had already adjudicated
   the pre-drift diff, forcing a full re-run. One bare command and ~200

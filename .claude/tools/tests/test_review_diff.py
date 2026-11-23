@@ -959,7 +959,9 @@ class GateTests(unittest.TestCase):
         self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
         v = rd.gate("main", self.out, fetch=False)
         first = self.out.read_text(encoding="utf-8").splitlines()[0]
-        self.assertEqual(first, f"# review-diff fingerprint={v['fingerprint']} head={v['head']}")
+        self.assertEqual(
+            first, f"# review-diff fingerprint={v['fingerprint']} head={v['head']}"
+        )
         self.assertEqual(rd.read_diff_fingerprint(self.out), v["fingerprint"])
         # The header is not counted: diff_lines is the diff's own body.
         self.assertEqual(v["diff_lines"], rd.count_lines(self.out) - 1)
@@ -984,9 +986,9 @@ class GateTests(unittest.TestCase):
         self.assertEqual(v["integrity"]["count"], 0)
 
     def test_a_new_top_level_tree_fires_the_freshness_lenses(self):
-        self.commit("newtree/src/lib.rs", "pub fn f() {}\n", "New tree")
+        self.commit("vault/src/lib.rs", "pub fn f() {}\n", "New tree")
         v = rd.gate("main", self.out, fetch=False)
-        self.assertEqual(v["gates"]["new_tree"]["path"], "newtree/src/lib.rs")
+        self.assertEqual(v["gates"]["new_tree"]["path"], "vault/src/lib.rs")
         names = [entry["lens"] for entry in v["lenses"]]
         self.assertIn("doc-freshness", names)
 

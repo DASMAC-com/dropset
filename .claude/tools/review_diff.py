@@ -171,7 +171,8 @@ from pathlib import Path
 
 import review_tier
 from review_tier import diff_header_path as _diff_header_path
-from review_tier import matches, matches_any
+from review_tier import matches as matches  # re-exported for callers
+from review_tier import matches_any
 
 # Generated families excluded from the review diff: machine-authored, reviewed
 # by their regeneration gate (step 9) rather than by eye, and large enough to
@@ -2105,7 +2106,9 @@ def project(verdict: dict, fields) -> dict:
     return {k: verdict[k] for k in fields if k in verdict}
 
 
-def spawn_check(verdict: dict, diff: Path, briefs: list[str], facts: str | None) -> dict:
+def spawn_check(
+    verdict: dict, diff: Path, briefs: list[str], facts: str | None
+) -> dict:
     """The spawn gate in one answer: is every input to the fan-out in place?
 
     Ready verdict; the captured diff present, non-empty and carrying the

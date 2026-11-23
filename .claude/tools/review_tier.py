@@ -466,12 +466,11 @@ def classify_tier(
                 "reason": f"{len(files)} file(s), {changes} changed lines, {nature}",
             }
 
-    if (
-        code
-        and not meta_only
-        and all(matches_any(p, INFRA_SURFACE) for p in code)
-    ):
-        return {"name": "reduced-infra", "reason": "every code path is build / CI / deploy"}
+    if code and not meta_only and all(matches_any(p, INFRA_SURFACE) for p in code):
+        return {
+            "name": "reduced-infra",
+            "reason": "every code path is build / CI / deploy",
+        }
     if is_reformat(diffs, kinds):
         return {
             "name": "reduced-reformat",
@@ -657,12 +656,16 @@ def integrity_hits(diffs: list[FileDiff], kinds: dict) -> list[dict]:
     hits: list[dict] = []
     changed_tests = any(
         kinds.get(fd.path) == "tests" and fd.hunks for fd in diffs
-    ) or any(_TEST_MARKER_RE.search(t) for fd in diffs for h in fd.hunks for _, t in h.added)
+    ) or any(
+        _TEST_MARKER_RE.search(t) for fd in diffs for h in fd.hunks for _, t in h.added
+    )
     for fd in diffs:
         kind = kinds.get(fd.path, "source")
         if matches_any(fd.path, _SNAPSHOT_PATTERNS) and not changed_tests:
             hits.append(_hit("snapshot-without-test", fd.path, None, fd.path))
-        removed_tests = [t for h in fd.hunks for t in h.removed if _TEST_MARKER_RE.search(t)]
+        removed_tests = [
+            t for h in fd.hunks for t in h.removed if _TEST_MARKER_RE.search(t)
+        ]
         added_tests = sum(
             1 for h in fd.hunks for _, t in h.added if _TEST_MARKER_RE.search(t)
         )
@@ -697,7 +700,11 @@ def _relaxations(path: str, hunk: Hunk) -> list[dict]:
     for line_no, text in hunk.added:
         skeleton = _NUMBER_RE.sub("#", text.strip())
         old = removed_skeletons.get(skeleton)
-        if old is not None and old.strip() != text.strip() and _BOUND_WORD_RE.search(text):
+        if (
+            old is not None
+            and old.strip() != text.strip()
+            and _BOUND_WORD_RE.search(text)
+        ):
             out.append(_hit("relaxed-bound", path, line_no, text))
         elif exact_removed and _RANGE_ASSERT_RE.search(text):
             out.append(_hit("relaxed-assertion", path, line_no, text))

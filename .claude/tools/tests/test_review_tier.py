@@ -68,13 +68,17 @@ class TestShapeTests(unittest.TestCase):
         # The folded lever: one hunk from line 1 whose tail is #[cfg(test)].
         text = diff("tui/src/keys.rs", ["fn a() {}"] * 12, new_file=True)
         shape = rt.test_shape(
-            rt.parse_diff(text), {"tui/src/keys.rs": "source"}, {"tui/src/keys.rs": [(8, 12)]}
+            rt.parse_diff(text),
+            {"tui/src/keys.rs": "source"},
+            {"tui/src/keys.rs": [(8, 12)]},
         )
         self.assertEqual(shape["hunks"], 1)
 
     def test_a_source_hunk_outside_the_test_range_is_not(self):
         text = diff("src/lib.rs", ["fn a() {}"], start=2)
-        shape = rt.test_shape(rt.parse_diff(text), {"src/lib.rs": "source"}, {"src/lib.rs": [(8, 12)]})
+        shape = rt.test_shape(
+            rt.parse_diff(text), {"src/lib.rs": "source"}, {"src/lib.rs": [(8, 12)]}
+        )
         self.assertEqual(shape, {"hunks": 0, "lines": 0})
 
     def test_a_test_file_counts_whole(self):
@@ -95,7 +99,9 @@ class TierTests(unittest.TestCase):
 
     def test_a_program_path_is_never_trivial(self):
         fl = files(("programs/dropset/src/a.rs", 2))
-        text = diff("programs/dropset/src/a.rs", ["const X: u8 = 2;"], ["const X: u8 = 1;"])
+        text = diff(
+            "programs/dropset/src/a.rs", ["const X: u8 = 2;"], ["const X: u8 = 1;"]
+        )
         self.assertNotEqual(tier_of(fl, text), "trivial")
 
     def test_a_ci_and_docker_diff_is_reduced_infra(self):
@@ -118,17 +124,21 @@ class TierTests(unittest.TestCase):
         )
         self.assertEqual(tier_of(fl, text), "reduced-move")
 
-    def test_reindented_code_is_reduced_reformat(self):
+    def test_indented_code_is_reduced_reformat(self):
         old = [f"let v{i} = {i};" for i in range(40)]
         new = [f"    let v{i} = {i};" for i in range(40)]
         fl = files(("tui/src/a.rs", 80))
-        self.assertEqual(tier_of(fl, diff("tui/src/a.rs", new, old)), "reduced-reformat")
+        self.assertEqual(
+            tier_of(fl, diff("tui/src/a.rs", new, old)), "reduced-reformat"
+        )
 
     def test_value_swaps_are_reduced_rewiring(self):
         old = [f"const C{i}: u64 = {i};" for i in range(40)]
         new = [f"const C{i}: u64 = {i * 2 + 100};" for i in range(40)]
         fl = files(("tui/src/a.rs", 80))
-        self.assertEqual(tier_of(fl, diff("tui/src/a.rs", new, old)), "reduced-rewiring")
+        self.assertEqual(
+            tier_of(fl, diff("tui/src/a.rs", new, old)), "reduced-rewiring"
+        )
 
     def test_inline_test_hunks_only_is_reduced_test_only(self):
         added = [f"    if x {{ assert!(y{i}); }}" for i in range(40)]
@@ -165,7 +175,9 @@ class GateTests(unittest.TestCase):
 
     def test_a_program_handler_fires_security(self):
         g = self.gates("tui/src/ui.rs", "programs/dropset/src/swap.rs")
-        self.assertEqual(g["security"], {"fires": True, "path": "programs/dropset/src/swap.rs"})
+        self.assertEqual(
+            g["security"], {"fires": True, "path": "programs/dropset/src/swap.rs"}
+        )
 
     def test_a_hooks_guard_fires_security(self):
         self.assertTrue(self.gates(".claude/hooks/guard.py")["security"]["fires"])
@@ -175,7 +187,12 @@ class GateTests(unittest.TestCase):
         self.assertFalse(g["security"]["fires"])
 
     def test_the_freshness_surface(self):
-        for path in ("CLAUDE.md", "docs/conventions/x.md", ".github/x.yml", ".claude/skills/a/SKILL.md"):
+        for path in (
+            "CLAUDE.md",
+            "docs/conventions/x.md",
+            ".github/x.yml",
+            ".claude/skills/a/SKILL.md",
+        ):
             self.assertTrue(self.gates(path)["freshness"]["fires"], path)
         self.assertFalse(self.gates("docs/architecture.md")["freshness"]["fires"])
 
@@ -204,7 +221,9 @@ class LensTests(unittest.TestCase):
 
     def test_only_the_trivial_tier_may_ask_to_skip_it(self):
         for tier in rt.TIER_LENSES:
-            skip = [e["lens"] for e in rt.lenses_for(tier, self.fired()) if e["ask_to_skip"]]
+            skip = [
+                e["lens"] for e in rt.lenses_for(tier, self.fired()) if e["ask_to_skip"]
+            ]
             self.assertEqual(skip, ["cross-check"] if tier == "trivial" else [], tier)
 
     def test_a_gate_only_adds(self):
@@ -226,7 +245,9 @@ class LensTests(unittest.TestCase):
     def test_every_lens_named_has_a_brief_file(self):
         from pathlib import Path
 
-        lens_dir = Path(__file__).resolve().parents[2] / "skills" / "review-pr" / "lenses"
+        lens_dir = (
+            Path(__file__).resolve().parents[2] / "skills" / "review-pr" / "lenses"
+        )
         for name in rt.LENS_ORDER:
             self.assertTrue((lens_dir / f"{name}.md").is_file(), name)
 
@@ -235,7 +256,9 @@ class AbridgedAndSubdivisionTests(unittest.TestCase):
     def test_the_entry_gate_threshold(self):
         self.assertTrue(rt.abridged_eligible(files(("tui/a.rs", 60)), 1))
         self.assertFalse(rt.abridged_eligible(files(("tui/a.rs", 61)), 1))
-        self.assertFalse(rt.abridged_eligible(files(*[(f"t/{i}", 1) for i in range(6)]), 1))
+        self.assertFalse(
+            rt.abridged_eligible(files(*[(f"t/{i}", 1) for i in range(6)]), 1)
+        )
         self.assertFalse(rt.abridged_eligible(files(("sdk/ts/a.ts", 1)), 1))
         self.assertFalse(rt.abridged_eligible(files(("a/x", 1), ("b/y", 1)), 2))
 
@@ -274,7 +297,9 @@ class IntegrityTests(unittest.TestCase):
         self.assertEqual(self.kinds(text), ["test-removed"])
 
     def test_a_renamed_test_is_not_removed(self):
-        text = diff("tui/tests/a.rs", ["#[test]", "fn u() {}"], ["#[test]", "fn t() {}"])
+        text = diff(
+            "tui/tests/a.rs", ["#[test]", "fn u() {}"], ["#[test]", "fn t() {}"]
+        )
         self.assertEqual(self.kinds(text), [])
 
     def test_each_added_line_kind(self):
@@ -292,12 +317,16 @@ class IntegrityTests(unittest.TestCase):
         self.assertEqual(self.kinds(diff("docs/a.md", ["never pass --no-verify"])), [])
 
     def test_a_relaxed_timeout(self):
-        text = diff("tui/src/a.rs", ["let timeout_ms = 5000;"], ["let timeout_ms = 500;"])
+        text = diff(
+            "tui/src/a.rs", ["let timeout_ms = 5000;"], ["let timeout_ms = 500;"]
+        )
         self.assertEqual(self.kinds(text), ["relaxed-bound"])
 
     def test_an_exact_count_turned_into_a_range(self):
         text = diff(
-            "tui/src/a.rs", ["assert!(rows.len() >= 3);"], ["assert_eq!(rows.len(), 3);"]
+            "tui/src/a.rs",
+            ["assert!(rows.len() >= 3);"],
+            ["assert_eq!(rows.len(), 3);"],
         )
         self.assertEqual(self.kinds(text), ["relaxed-assertion"])
 
