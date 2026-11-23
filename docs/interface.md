@@ -547,11 +547,16 @@ of them, the pure-TS market view, the TUI, and the frontend book viz —
 take `(now_slot, now_unix)`, the second in unix seconds. Passing one
 where the other belongs is a **silent** wrong answer: the book renders
 depth the engine will not fill, or hides depth it would. Off-chain
-consumers read `now_unix` from their own host clock rather than the
-chain — the sysvar is itself a stake-weighted median accurate only to a
-few seconds, so an NTP-synced host is well inside the noise and the
-maker's re-quote path pays no RPC for it. `now_slot` comes from the
-chain, since nothing off-chain can derive it. The
+consumers on a trusted, NTP-synced host (the maker, the TUI) read
+`now_unix` from that host's clock rather than the chain — the sysvar is
+itself a stake-weighted median accurate only to a few seconds, so such a
+host is well inside the noise and the maker's re-quote path pays no RPC
+for it. The browser frontend cannot trust the visitor's clock, so it
+checks the device clock against `getBlockTime` and corrects it past a
+tolerance (`frontend/lib/eclob/chainClock.ts`); removing that correction
+would let a skewed device show levels the engine has already dropped.
+`now_slot` comes from the chain, since nothing off-chain can derive it.
+The
 `simulate_swap_vectors.json` fixture covers each domain independently
 (slot-dead/wall-live, wall-dead/slot-live, and the boundary in each), so
 a mirror that drops a conjunct fails rather than merely drifting.
@@ -569,8 +574,10 @@ wire-encoding conformance until (f) lands.
 Three vector sets are checked in and replayed by both forks:
 `price_vectors.json` (the `Price` codec), `quoting_vectors.json` (the
 native↔relative book translation), and `share_vectors.json` (all six
-share/NAV/PnL kernels above, so the frontend's NAV/PnL fallback reuses the
-engine math instead of re-deriving it). The `Price` vectors also pin the
+share/NAV/PnL kernels above, so the frontend's deposit and withdraw sizing
+in `frontend/lib/eclob/vaultTx.ts` runs the engine kernels through WASM;
+its display-only PnL breakdown in `frontend/lib/data/pnl.ts` is a float
+re-derivation that no vector pins). The `Price` vectors also pin the
 **reject contract** via an `encode_reject` set: both forks reject non-finite
 and negative inputs (Rust `from_value` → `None`, TS `encodePrice` →
 `RangeError`), and also any finite value so large that `value * 1e7`
