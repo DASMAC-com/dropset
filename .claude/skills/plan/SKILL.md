@@ -305,7 +305,10 @@ an unsure edge costs more than a missing one).
 **4. File and amend to house convention.** Every rule binding a
 filing skill binds this session:
 
-- **Dedup first** — search the open Backlog.
+- **Dedup first** — search the open Backlog by title with
+  `linear_issue.py find <words>` (zero echo). The parked listing
+  (`board_batch.py list --include-milestoned`, ≈6k for 186 issues)
+  is the daily meta review's, never a one-issue dedup check.
 
 - **Amend with `patch` ops**, never by re-sending a body; anchor
   on plain prose, never on a line carrying an `ENG-###` (stored

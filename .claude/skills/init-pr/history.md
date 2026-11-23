@@ -62,6 +62,23 @@ is not repeated here.
   ~120 turns) where `planning_doc.py --out` prints only a heading map.
 - **Whole reads.** Router modules read whole after a map (≈8.6k, 62%
   of a session's Read cost).
+- **Exemplar whole reads.** Five sibling files read whole in a
+  session's first ~20 turns, to learn a seam trait, a test table, two
+  parsers and a module list (≈45k together, ≈13.3k the largest), were
+  replayed for ~180 more: ≈8M token-turns, ≈\$1.8 at the cache-read
+  rate and the session's largest avoidable sink (\$25, 201 turns). The
+  needed regions were 20–90 lines each, about a tenth of the reads.
+- **Retirement sweep.** A ~50-file retirement located its sites through
+  four census passes plus per-file `grep -B3 -A3` calls (≈5.9k for one
+  shape, three more results of 3.3–5.0k), then issued 166 `Edit` calls
+  over 179 turns (\$19): census, re-census and per-file context bought
+  the same lines several times.
+- **Verb edits.** A shell-verb change handled the verb's own launch but
+  not the substrate marker other verbs write on the same tag, nor the
+  `task resume` / `fleet` re-entry; all four lenses found it, and three
+  review fix cycles cost ~60 turns at a 250k–350k prefix (≈\$6–8 of
+  \$17). A scoped search missed the verb tests under `.claude/scripts/`,
+  and the first full `make tools-tests` caught two stale assertions.
 - **Section maps.** `^///` over `schema_fence.rs` cost ≈1.8k.
 - **Quiet runner.** Unwrapped cspell cascade (≈2.5k); 7 bare
   collector-stack runs (3.5k); a cold `pnpm install` full of registry
