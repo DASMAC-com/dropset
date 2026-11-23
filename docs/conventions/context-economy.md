@@ -1077,8 +1077,10 @@ Two rules keep the cap from turning into deletion:
     `DIFF_EXCLUDES` names (the lock files, `sdk/*/src/generated`, the
     IDL, `sdk/conformance`, the Grafana SQL mirror) the only question
     is "did it change, and by how much": take `git diff --stat` and
-    stop. Content is gated by the regeneration checks
-    (`make check-conformance-vectors`, `sdk.yml`).
+    stop. Where the content has a gate, the gate owns it
+    (`make check-conformance-vectors` and `sdk.yml` for the vectors and
+    clients, `make dashboard-sql-check` for the SQL mirror); a lock
+    file has none and wants only the stat.
   - **`git ls-files '*.json' -- sdk idl target`** returned ~2.2k to
     locate one known file. `git ls-files sdk/idl` was the question.
   - **`gh cache list --limit 30`** cost ~1.1k and answered nothing;

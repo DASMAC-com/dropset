@@ -154,7 +154,7 @@ is not repeated here.
   adversarial pass, forcing a second corrections append.
 - **Review on a long prefix (step 3).** A Bedrock session (\$20, 169
   turns) grew its prefix 49.3k → 411.0k, and the review ran on top of
-  the whole implement phase: main moved four times, forcing three
+  the whole implement phase. Main moved four times, forcing three
   rebases (one re-running both full Rust suites), and every lens
   hand-off, CI wait and rebase turn replayed ≈66k of implement-phase
   file slices a fresh session would not have carried.

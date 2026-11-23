@@ -280,24 +280,23 @@ The reminders neither states:
   generated artifact gets `--stat` and nothing more** — the families
   `review_diff.py`'s `DIFF_EXCLUDES` names (lock files,
   `sdk/*/src/generated`, the IDL, `sdk/conformance`, the Grafana SQL
-  mirror); their content is the generator's, gated by its
-  regeneration check (`docs/conventions/context-economy.md` → "The
-  levers").
+  mirror); their content is the generator's, owned by its gate where
+  it has one (`docs/conventions/context-economy.md` → "The levers").
 
 - **Probe in-flight overlap before building on a shared surface.**
   When the work reaches past the issue's own surface — the SDK, a
   generated artifact, a shared type — commit the first edit there as
-  a checkpoint, then run the probe (it reads committed changes only)
-  and read `overlapping_prs`:
+  a checkpoint (`commit-changes`, so it carries the skip trailer),
+  then run the probe (it reads committed changes only) and read
+  `overlapping_prs`:
 
   ```sh
   python3 .claude/tools/review_diff.py --base main \
     --out <scratchpad>/overlap.txt --overlap
   ```
 
-  When
-  an open PR already shapes the same surface, build on its shape and
-  tell the live scheduler, rather than learning it at `review-pr`
+  When an open PR already shapes the same surface, build on its shape
+  and tell the live scheduler, rather than learning it at `review-pr`
   step 5 ([`history.md`](history.md) → "Late overlap").
 
 - **Size a file at another ref without printing it.**
@@ -475,10 +474,12 @@ The reminders neither states:
    reduced-tier option is its abridged-tier opt-down (see its "The
    entry gate" section):
 
-   - **"Yes — in a fresh session"** — first, recommended, *only* past
-     the ~250k prefix. Commit and push everything, then stop: the
-     operator opens a new session in this worktree and invokes
-     `/review-pr` there. Its step 1 locates the PR cold and step 3
+   - **"Yes — in a fresh session"** — offered only past the ~250k
+     prefix, and then first and recommended. Commit and push
+     everything, run `/session-metrics` (the successor records only
+     its own cost), print the worktree path and the `/review-pr` line
+     to type there, then stop. The new session's entry gate re-asks
+     the tier; its step 1 locates the PR cold and step 3
      reads the issue body cold, so it needs only the diff, the issue
      and the facts `review_diff.py` rebuilds from disk, not the
      implement phase's reads, which every lens hand-off, CI wait and
