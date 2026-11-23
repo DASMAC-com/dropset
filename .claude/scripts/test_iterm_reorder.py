@@ -199,7 +199,7 @@ class CuratorTab(unittest.TestCase):
         self.seq, self.last_group, self.counter = {}, {}, 0
 
     def step(self, tabs, plan_group="neutral", curate_group="neutral"):
-        # The seat tabs are listed first, scheduler before curator, so every
+        # The daily-role tabs are listed first, scheduler before curator, so every
         # placement below is the reorderer's doing, not the input order.
         entries = [
             ("P", ir.effective_group(plan_group, ir.PLAN_ROLE)),
@@ -210,7 +210,7 @@ class CuratorTab(unittest.TestCase):
         )
         return [entries[i][0] for i in order]
 
-    def test_both_seat_tabs_rest_at_the_right_scheduler_outermost(self):
+    def test_both_daily_role_tabs_rest_at_the_right_scheduler_outermost(self):
         ids = self.step([("A", "neutral"), ("B", "yellow")])
         self.assertEqual(ids, ["B", "A", "Q", "P"])
 
@@ -226,9 +226,9 @@ class CuratorTab(unittest.TestCase):
         order, _ = ir.plan_order(entries, {}, {}, 0)
         self.assertEqual([entries[i][0] for i in order], ["A", "Q"])
 
-    def test_a_resting_launcher_sorts_left_of_the_curator(self):
+    def test_a_resting_analyst_sorts_left_of_the_curator(self):
         ids = self.step(
-            [("L", ir.effective_group("neutral", ir.LAUNCH_ROLE)), ("A", "neutral")]
+            [("L", ir.effective_group("neutral", ir.ANALYZE_ROLE)), ("A", "neutral")]
         )
         self.assertEqual(ids, ["A", "L", "Q", "P"])
 

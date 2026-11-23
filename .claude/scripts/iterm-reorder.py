@@ -4,13 +4,13 @@
 A single app-level daemon that keeps each iTerm2 window's tabs sorted into
 attention groups so you can park at position 1 and sweep right:
 
-    [ yellow … ] [ green … ] [ the rest … ] [ launch ] [ curate ] [ plan ]
+    [ yellow … ] [ green … ] [ the rest … ] [ analyze ] [ curate ] [ plan ]
 
-The seat tabs, once attended, sort LAST — the launcher's, then the curator's,
+The daily-role tabs, once attended, sort LAST — the analyst's, then the curator's,
 then the scheduler's, which stays outermost so Command-9 always lands on it;
 while one needs attention it queues in its yellow or green group like any other
 tab. Each is identified by the `user.ds_role` variable its launcher sets
-(`plan` / `curate` / `launch`, see `.claude/shell/init.zsh`), never by its
+(`plan` / `curate` / `analyze`, see `.claude/shell/init.zsh`), never by its
 title.
 
 Within each attention group the order is **FIFO** — the oldest tab to enter
@@ -72,26 +72,26 @@ _PALETTE_KEYS = {
 _STATE_ASSIGNMENT = re.compile(r'^(STATE_[A-Z]+)="([0-9a-fA-F]{6})"', re.MULTILINE)
 
 # Group ordering: yellow first, then green, then everything else, then a
-# resting launcher tab, a resting curator tab, and a resting scheduler tab at
+# resting analyst tab, a resting curator tab, and a resting scheduler tab at
 # the far right.
 _PRIORITY = {
     "yellow": 0,
     "green": 1,
     "neutral": 2,
-    "launch": 3,
+    "analyze": 3,
     "curate": 4,
     "plan": 5,
 }
 
-# The iTerm user variable the seat launchers set on their session, and the
-# values that mark them. A seat verb launched with the switch off carries no
+# The iTerm user variable the daily-role launchers set on their session, and the
+# values that mark them. A daily-role verb launched with the switch off carries no
 # marker, so it sorts as an ordinary tab.
 ROLE_VARIABLE = "user.ds_role"
 PLAN_ROLE = "plan"
 CURATE_ROLE = "curate"
-LAUNCH_ROLE = "launch"
-#: The seat roles, outermost first: a tab carrying two reads as the first.
-SEAT_ROLES = (PLAN_ROLE, CURATE_ROLE, LAUNCH_ROLE)
+ANALYZE_ROLE = "analyze"
+#: The daily roles, outermost first: a tab carrying two reads as the first.
+DAILY_ROLES = (PLAN_ROLE, CURATE_ROLE, ANALYZE_ROLE)
 
 POLL_SECONDS = 0.3
 
@@ -171,27 +171,27 @@ def _read_group(tty: str) -> str:
 
 def effective_group(group: str, role: str | None) -> str:
     """The sort group of a tab: its attention group, except that a RESTING
-    seat tab (the scheduler's or the curator's) gets a group of its own at the
-    far right. A seat tab that needs attention keeps its yellow or green group,
+    daily-role tab (the scheduler's, the curator's or the analyst's) gets a group of its own at the
+    far right. A daily-role tab that needs attention keeps its yellow or green group,
     so it still surfaces at position 1 in FIFO order.
     """
-    if role in SEAT_ROLES and group == "neutral":
+    if role in DAILY_ROLES and group == "neutral":
         return role
     return group
 
 
 async def _tab_role(tab) -> str | None:
-    """The seat role if ANY pane of ``tab`` carries one, else None — the
-    outermost (`SEAT_ROLES` order) when panes carry both.
+    """The daily role if ANY pane of ``tab`` carries one, else None — the
+    outermost (`DAILY_ROLES` order) when panes carry both.
 
     Every pane, not just the focused one, to match the dispatcher's lookup in
-    `iterm_api._tab_role`: focusing a sibling pane of a split seat
+    `iterm_api._tab_role`: focusing a sibling pane of a split daily-role
     tab must not drop it out of its resting slot.
     """
     found = set()
     for session in tab.sessions:
         found.add(await session.async_get_variable(ROLE_VARIABLE))
-    return next((role for role in SEAT_ROLES if role in found), None)
+    return next((role for role in DAILY_ROLES if role in found), None)
 
 
 def plan_order(entries, seq: dict, last_group: dict, counter: int):

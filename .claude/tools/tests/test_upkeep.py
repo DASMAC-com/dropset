@@ -730,8 +730,8 @@ class PassTests(unittest.TestCase):
                 "billed": billed_dollars,
                 "metered": 90.0,
                 "sessions": 4,
-                "seat": 10.0,
-                "seat_sessions": 1,
+                "subscription": 10.0,
+                "subscription_sessions": 1,
             }
 
         on = billed == "ok"
@@ -747,7 +747,7 @@ class PassTests(unittest.TestCase):
                 "week": {
                     "billed": 560.0 if on else None,
                     "metered": 630.0,
-                    "seat": 70.0,
+                    "subscription": 70.0,
                 },
                 "unreadable_transcripts": unreadable,
             }
@@ -774,7 +774,7 @@ class PassTests(unittest.TestCase):
     def test_the_cost_step_reports_each_day_on_both_substrates(self):
         def day(flagged, provisional, drift):
             return {
-                "substrates": {"seat": {"dollars": 41.5, "sessions": 3}},
+                "substrates": {"subscription": {"dollars": 41.5, "sessions": 3}},
                 "provisional": provisional,
                 "reconcile": {
                     "metered": 110.0,
@@ -800,10 +800,10 @@ class PassTests(unittest.TestCase):
             cost["days"],
             [
                 "2026-10-06: Bedrock $110.00 metered ($120.00 with the classifier) "
-                "vs $100.00 billed, drift +20.0% FLAGGED; seat $41.50 at Bedrock "
+                "vs $100.00 billed, drift +20.0% FLAGGED; subscription $41.50 at Bedrock "
                 "rates over 3 session(s), no bill line",
                 "2026-10-07: Bedrock $110.00 metered ($120.00 with the classifier) "
-                "vs $100.00 billed, drift n/a (provisional); seat $41.50 at "
+                "vs $100.00 billed, drift n/a (provisional); subscription $41.50 at "
                 "Bedrock rates over 3 session(s), no bill line",
             ],
         )
@@ -813,17 +813,17 @@ class PassTests(unittest.TestCase):
         self.assertTrue(local["ok"])
         self.assertEqual(
             local["line"],
-            "by local day (PDT), billed through 2026-10-08 09:00; metered and seat "
-            "at Bedrock rates (sessions), the seat not billed",
+            "by local day (PDT), billed through 2026-10-08 09:00; metered and subscription "
+            "at Bedrock rates (sessions), the subscription not billed",
         )
         self.assertEqual(
             local["days"][-2],
-            "2026-10-08 today so far: billed $5.00 | metered $90.00 (4) | seat "
+            "2026-10-08 today so far: billed $5.00 | metered $90.00 (4) | subscription "
             "$10.00 (1)",
         )
         self.assertEqual(
             local["days"][-1],
-            "last 7 days: billed $560.00 | metered $630.00 | seat $70.00",
+            "last 7 days: billed $560.00 | metered $630.00 | subscription $70.00",
         )
         # Seven days, today and the week: none cut by the cap.
         self.assertGreater(len(local["days"]), upkeep.LIST_CAP)
@@ -1206,7 +1206,7 @@ class PassTests(unittest.TestCase):
             "sessions": 3,
             "dollars": 42.5,
             "bedrock": 30.0,
-            "seat": 12.5,
+            "subscription": 12.5,
             "flagged": 1,
             "path": f"{BASE}/.claude/session-metrics/digest-2026-10-08.md",
         }
@@ -1258,7 +1258,7 @@ class PassTests(unittest.TestCase):
         self.assertTrue(step["ok"])
         self.assertEqual(
             step["line"],
-            "3 session(s), Bedrock $30.00, seat $12.50 at Bedrock rates, not billed, "
+            "3 session(s), Bedrock $30.00, subscription $12.50 at Bedrock rates, not billed, "
             "1 flagged line(s); "
             ".claude/session-metrics/digest-2026-10-08.md",
         )

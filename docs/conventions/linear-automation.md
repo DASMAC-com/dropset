@@ -71,10 +71,10 @@ does not accumulate similar trim tasks. The rest file as **small
 themed** propose-only `Claude:` batches — roughly 4–5 parts each, one
 `**Fingerprint**:` per part, composed by `trim_levers.py compose` —
 **straight into Backlog with no milestone**: the fold runs in the
-**launcher**'s own tab each morning (`.claude/skills/launch/SKILL.md`,
+**analyst**'s own tab each morning (`.claude/skills/analyze/SKILL.md`,
 or a by-hand run of the same method) and its output is already
 folded, so the park-then-promote hop executor filings take does not
-apply. The launcher hands the new batches, with the kill and merge
+apply. The analyst hands the new batches, with the kill and merge
 candidates it gathered, to the curator as its first message, and
 writes a fold stamp the scheduler's bootstrap says
 (`upkeep.py fold-today`); the batches are reviewed from the
@@ -555,7 +555,7 @@ The state and the milestone together say where an issue sits:
 | ---------------------------- | ----------------- | -------------------------------------------------------------------------- |
 | Backlog                      | none              | a spec awaiting the operator's review — the inbox                          |
 | Backlog or Todo              | other parking     | **parked**: hidden from the operator's project view, bar `Curator pending` |
-| Backlog                      | `Session pending` | a seat session's filed tasks, under its in-tab review; short-lived         |
+| Backlog                      | `Session pending` | an advisor session's filed tasks, under its in-tab review; short-lived     |
 | Backlog                      | `Curator pending` | the curator's current batch, still in its pool; short-lived                |
 | Todo                         | none              | reviewed and dispatchable; the body is frozen                              |
 | In Progress, In Review, Done | —                 | the session state machine, unchanged (see above)                           |
@@ -563,7 +563,7 @@ The state and the milestone together say where an issue sits:
 **The operator's move from Backlog to Todo is the approval.** The
 scheduler never makes that move, nor does any session on its own
 judgment: the curator's one-at-a-time move executes the operator's
-tick in its tab (see "The curator owns review" below), and a seat
+tick in its tab (see "The curator owns review" below), and an advisor
 session's `ratify-staged` batch executes the operator's final answer in
 its own. That single-writer rule is why "state is Todo" proves
 approval with no reaction read. **Withdrawal** is the reverse move. A
@@ -586,7 +586,7 @@ unblocked Todo; it is Linear's server-side blocker filter, which is why a
 scheduler hold is expressed as an edge (see "Blocking relations").
 
 An issue stamped with a parking milestone — `Session pending` for a
-seat session's tasks under review, and the legacy `Audit findings` —
+advisor session's tasks under review, and the legacy `Audit findings` —
 is **parked**: filed so it is not lost,
 deliberately *not* in the inbox or the queue. A filing skill sets
 **state `Backlog` plus the milestone, in the creating call** (per
@@ -621,7 +621,7 @@ set once empty.
 
 **`Session pending` is never promoted by the scheduler or the
 curator.** It is the unified
-staging lane for every seat session's filed tasks — architect,
+staging lane for every advisor session's filed tasks — architect,
 explore and audit findings — so the
 operator reviews them in one place, in the
 filing session's own tab, through the shared `ratify-staged` skill:
@@ -632,7 +632,7 @@ bootstrap is a session that died mid-review, and the count-and-offer
 line is the backstop — offer to resume that session, never promote its
 tasks around it.
 
-**Where a seat session's spec lands, and the record of what it filed.**
+**Where an advisor session's spec lands, and the record of what it filed.**
 At the filing yes, before the first create, the session posts the agreed
 spec verbatim, task list included, as **one comment on its governing
 issue** (`linear_patch.py comment`); a design written into the governing
@@ -707,7 +707,7 @@ labour, cut for load (2026-10-30):
   wind-down, and the Planning document after the bootstrap. A question
   in the curator's tab never blocks a dispatch.
 - **Both hold priorities** — under the agreement rule below.
-- **The launcher runs the mechanical morning** beside the curator — it
+- **The analyst runs the mechanical morning** beside the curator — it
   runs the lever fold, then sends the curator one hand-off message
   carrying the batches filed and the kill and merge candidates with
   their evidence, and opens the scheduler's tab on the curator's
@@ -715,7 +715,7 @@ labour, cut for load (2026-10-30):
   candidates as checkboxes beside the inbox's first batch; a ticked kill
   cancels the issue with its reason, a ticked merge runs `merge-tasks`.
 - **Every review ask runs in ascending issue number** — the ratify
-  tool sorts, for the curator's inbox and the seat sessions' staged
+  tool sorts, for the curator's inbox and the advisor sessions' staged
   sets alike — so the operator opens a batch as tabs left to right and
   reads the dialog top to bottom.
 
@@ -745,7 +745,7 @@ The curator's own `Curator pending` mark keeps a task in the pool (see
 four tasks at a time, one checkbox per task with the `ratify-staged`
 ask text, and moves each ticked task with no open thread to Todo **one
 at a time**, as the tick lands. That is the curator's carve-out beside
-ruling 12's batch: a seat session reviews a fixed set it filed and
+ruling 12's batch: an advisor session reviews a fixed set it filed and
 moves it whole at the end, while the curator's pool is open-ended, so
 waiting for the whole pool would hold every approval behind the
 slowest comment. Either way the move executes the operator's answer,
@@ -855,7 +855,7 @@ because the two behave oppositely. The distinction is by **name**, not
 by any field Linear exposes, so it lives here rather than being
 derivable — and the parking names are the closed set.
 `Audit findings` takes no new filings — audit findings stage under
-`Session pending` like any other seat session's output — and it retires
+`Session pending` like any other advisor session's output — and it retires
 when its legacy contents drain.
 `Trim levers` retired with the per-session lever filing and is in
 neither kind: upkeep no longer counts it, so its residue of open
@@ -1015,7 +1015,7 @@ table it reads against, with each verb's default substrate, is in
 token-less title launches as `task <n>`, full stop. At filing, the
 filer writes the verb's **default substrate** from the verb table
 unless the issue states a reason to differ — web research (Bedrock has
-no web search or fetch) or seat budget — so the substrate judgment is
+no web search or fetch) or subscription budget — so the substrate judgment is
 made once, in the table, rather than re-argued per issue.
 
 **Who writes it.** `linear-task` asks for the verb and substrate and
@@ -1686,7 +1686,7 @@ That is the whole of the exception: not "a skill that is allowed to",
 but "the place a human does it". **Two other such places** carry the
 same human-placed form:
 
-- **A seat session's filing ask** (`ratify-staged`): the operator's
+- **An advisor session's filing ask** (`ratify-staged`): the operator's
   in-tab yes to a named chain of proposed edges, each with its reason,
   ratifies them with the tasks, and the session places exactly those —
   an edge the answer strikes is not placed.
@@ -1765,7 +1765,7 @@ is a spurious edge dropping an issue out of the available set.
 
 So this section now has **no** exception to state: a human still places
 every edge — in the scheduler, through the curator's tick, or through
-a seat session's filing ask — and **no automated
+an advisor session's filing ask — and **no automated
 writer places one at all**. A filing skill that notices a new meta issue
 neither chains it nor queues it. Treat every edge,
 semantic ones included, under the one-at-a-time rule above.
