@@ -272,6 +272,16 @@ class Run(unittest.TestCase):
         self.assertIn("ERROR: test_b", out)
         self.assertNotIn("test_c", out)
 
+    def test_a_bare_error_line_is_not_indexed_as_a_test(self):
+        # pip and hooks print `ERROR: …` lines with no `<name> (` shape.
+        code, out, _ = self._run(
+            rq.DEFAULT_TAIL,
+            "lint",
+            [PY, "-c", "print('ERROR: could not install'); import sys; sys.exit(1)"],
+        )
+        self.assertEqual(code, 1)
+        self.assertNotIn("--- failing tests", out)
+
     def test_a_green_unittest_run_prints_one_line(self):
         script = (
             "import unittest\n"

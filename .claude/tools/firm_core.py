@@ -601,7 +601,10 @@ def settings_lock(path: Path):
     critical section is a JSON load and write, milliseconds long.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_name(path.name + ".lock")
+    # Resolved, so two spellings of one file (a symlinked or relative
+    # `--settings`) take the same sidecar and actually exclude each other.
+    real = path.resolve()
+    lock_path = real.with_name(real.name + ".lock")
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)

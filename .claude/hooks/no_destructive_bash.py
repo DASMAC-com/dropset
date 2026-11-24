@@ -3,6 +3,8 @@
 # cspell:word fgrep
 # cspell:word spoofable
 # cspell:word ionice
+# cspell:word nenv
+# cspell:word Senv
 """PreToolUse guard: stop catastrophic and hard-to-reverse Bash commands.
 
 The other committed guards cover shell **form** (compounds, `git grep`), edit
@@ -1299,17 +1301,24 @@ _ENV_DUMP_MAX_DEPTH = 4
 
 
 def _env_wrapper_rest(args):
-    """``args`` after `env`'s own flags and assignments, or None for `-S`.
+    """``args`` after `env`'s own flags and assignments, or a `-S` string.
 
-    `env -S <string>` runs the string as a command, which the nested scan
-    reads; it lists nothing itself.
+    `env -S <string>` runs the string as a command and lists nothing itself.
+    The separated form reaches the nested scan through `sh.unwrap`, so it
+    returns None; the attached (`-S<string>`) and `=` (`--split-string=…`)
+    forms, which `unwrap` does not split out, come back as ``("-S", string)``
+    for the caller to scan.
     """
     value_flags = sh.WRAPPERS["env"]
     j = 0
     while j < len(args):
         tok = args[j]
-        if tok in ("-S", "--split-string") or tok.startswith("-S"):
+        if tok in ("-S", "--split-string"):
             return None
+        if tok.startswith("--split-string="):
+            return ("-S", tok.split("=", 1)[1])
+        if tok.startswith("-S"):
+            return ("-S", tok[2:])
         if tok == "--":
             return args[j + 1 :]
         if tok in value_flags:
@@ -1322,12 +1331,21 @@ def _env_wrapper_rest(args):
     return args[j:]
 
 
-def _dump_reason(seg):
+def _dump_reason(seg, _depth=0):
     """Why one command segment dumps the environment, or None."""
+    redirects = sh.REDIRECTS | sh.INPUTS | {sh.HERE_STRING}
     words = []
     i = 0
     while i < len(seg):
-        if seg[i] in sh.REDIRECTS or seg[i] in sh.INPUTS or seg[i] == sh.HERE_STRING:
+        # The tokenizer splits an fd-prefixed redirect (`2>&1`, `2>/dev/null`)
+        # into `2`, `>&`, `1`, so the digit must go with its operator. Left as
+        # a word, it read as the command `env` runs or the variable `printenv`
+        # names, and `env 2>&1 | grep KEY` — the commonest suffix there is —
+        # classified clean.
+        if seg[i].isdigit() and i + 1 < len(seg) and seg[i + 1] in redirects:
+            i += 3
+            continue
+        if seg[i] in redirects:
             i += 2
             continue
         words.append(seg[i])
@@ -1341,6 +1359,8 @@ def _dump_reason(seg):
             rest = _env_wrapper_rest(args)
             if rest is None:
                 return None
+            if isinstance(rest, tuple):
+                return env_dump_reason(rest[1], _depth + 1)
             if not rest:
                 return "`env` with no command"
             words = rest
@@ -1412,7 +1432,7 @@ def env_dump_reason(command, _depth=0):
     rewritten, bodies, _uncertain = sh.raw_pass(joined)
     nested = list(bodies)
     for seg, _separator in sh.segments(sh.tokenize(rewritten)):
-        reason = _dump_reason(seg)
+        reason = _dump_reason(seg, _depth)
         if reason:
             return reason
         nested.extend(sh.unwrap(seg)[1])
@@ -1466,11 +1486,15 @@ def evaluate(payload):
     if not isinstance(cmd, str) or not cmd.strip():
         return 0, ""
 
-    # The environment dump first, on the RAW command: the tokenizer drops
-    # comments itself, and no marker is consulted, so `env #destructive-ok`
-    # is denied like `env`. Any parse failure allows (fail open).
+    # The environment dump first, on the command with its PROSE heredoc
+    # bodies removed: the tokenizer scans a heredoc body as shell, so a
+    # `git commit -m "$(cat <<'EOF'` message with a body line reading `env`
+    # was an un-overridable deny. A heredoc fed to a shell keeps its body
+    # (`_scan_lines`). The tokenizer drops comments itself, and no marker is
+    # consulted, so `env #destructive-ok` is denied like `env`. Any parse
+    # failure allows (fail open).
     try:
-        dump = env_dump_reason(cmd)
+        dump = env_dump_reason(without_heredoc_bodies(cmd))
     except Exception:
         dump = None
     if dump:
@@ -2026,6 +2050,22 @@ def _self_test():
         ("sudo -u root printenv", True),
         ("timeout 5 env", True),
         ("nohup env > /tmp/x", True),
+        ("env 2>&1 | grep KEY", True),
+        ("printenv 2>/dev/null", True),
+        ("export -p 2>&1", True),
+        ("env >/tmp/x 2>&1", True),
+        ("\\env", True),
+        ("'env'", True),
+        ("printenv HOME 2>&1", False),
+        ("env FOO=1 make lint 2>&1", False),
+        ("env -Senv", True),
+        ("env -S'printenv'", True),
+        ("env --split-string=env", True),
+        ("env --split-string='make lint'", False),
+        ("bash <<EOF\nenv\nEOF", True),
+        ("cat <<EOF\nenv\nEOF", False),
+        ("git commit -m \"$(cat <<'EOF'\nSubject\n\nenv\nEOF\n)\"", False),
+        ("git commit -F - <<'EOF'\nSubject\n\ndeclare -p\nEOF", False),
         ("command env", True),
         ("ls; env", True),
         ("ls && printenv | head", True),

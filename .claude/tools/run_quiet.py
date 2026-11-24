@@ -402,7 +402,9 @@ LogSummary = collections.namedtuple(
 # `make tools-tests` run interleaves several suites, so the headers scroll off
 # above the tail that shows only the last traceback; indexing them names every
 # failing test regardless of where it sits, as the failed-hook index does.
-UNITTEST_FAILED_RE = re.compile(r"^(?:FAIL|ERROR): \S")
+# Anchored on unittest's `<name> (` shape: pip, hooks and scripts print bare
+# `ERROR: …` lines too, which a looser pattern listed as failing tests.
+UNITTEST_FAILED_RE = re.compile(r"^(?:FAIL|ERROR): \S+ \(")
 
 
 def add_test_counts(line, counts):
@@ -519,8 +521,10 @@ def read_tail_and_count(path, tail):
                     failure_started = False
                     failure_done = True
                     failure_closed = True
-            if UNITTEST_FAILED_RE.match(line) and len(failing_tests) < MAX_FAILED_LINES:
-                failing_tests.append(line.rstrip("\n"))
+            if UNITTEST_FAILED_RE.match(line):
+                # One past the cap marks truncation; the writer drops it.
+                if len(failing_tests) <= MAX_FAILED_LINES:
+                    failing_tests.append(line.rstrip("\n"))
             if is_failed_hook_line(line):
                 if len(failed) < MAX_FAILED_LINES:
                     failed.append(line.rstrip("\n"))
@@ -557,8 +561,14 @@ def read_tail_and_count(path, tail):
 def write_failing_tests(summary):
     """Print the unittest failure-header index, when the log has one."""
     if summary.failing_tests:
-        sys.stdout.write("--- failing tests (%d) ---\n" % len(summary.failing_tests))
-        for line in summary.failing_tests:
+        shown = summary.failing_tests[:MAX_FAILED_LINES]
+        more = (
+            " (truncated, more omitted)"
+            if len(summary.failing_tests) > MAX_FAILED_LINES
+            else ""
+        )
+        sys.stdout.write("--- failing tests (%d)%s ---\n" % (len(shown), more))
+        for line in shown:
             sys.stdout.write(line + "\n")
 
 
