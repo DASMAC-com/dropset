@@ -272,8 +272,8 @@ The reminders neither states:
   call, never a hand fix of the single line
   (`docs/conventions/docs-and-style.md` → "Line length").
 
-- **Don't re-derive a diff.** Read a `review_diff.py --split` diff
-  from its slices; reach for `git diff` only for a change you have not
+- **Don't re-derive a diff.** Read a diff `review_diff.py` captured
+  from that file; reach for `git diff` only for a change you have not
   read (a rebase, a hook autofix, a sibling session), and take
   `--stat` first when the question is which files moved. **A
   generated artifact gets `--stat` and nothing more** — the families

@@ -37,20 +37,35 @@ a hand-kept list cannot learn what changed under it:
 
 Usage::
 
-    python3 .claude/tools/review_diff.py --base main --out /tmp/review-diff.txt --split
+    python3 .claude/tools/review_diff.py --base main --out /tmp/review-diff.txt
+    python3 .claude/tools/review_diff.py --base main --out /tmp/review-diff.txt \
+        --spawn-check --brief /tmp/brief-correctness.md --facts /tmp/facts.md
     python3 .claude/tools/review_diff.py --print-grep-excludes
 
 Options: ``--base`` (default ``main``), ``--out`` (where the diff is written —
 required except with ``--gate-only`` or ``--print-grep-excludes``),
-``--no-fetch`` (skip the network fetch and read the local ref), ``--split``
-(also write per-lens ``source`` / ``tests`` / ``docs`` slices beside the diff,
-reported under ``slices``), ``--gate-only`` (emit just the verdict fields and
-write no diff — for a mid-review re-check), ``--print-grep-excludes`` (print
-the exclude flags a hoisted repo-wide grep should reuse, and exit).
+``--no-fetch`` (skip the network fetch and read the local ref), ``--gate-only``
+(emit just the verdict fields and write no diff — for a mid-review re-check),
+``--paths-only`` (print just ``diff_path``, ``diff_lines``, ``fingerprint``,
+``ready`` and ``blockers`` — for a run made only to land a diff file),
+``--spawn-check`` with ``--brief`` (repeatable) and ``--facts`` (the spawn
+gate, see :func:`spawn_check`; writes nothing), ``--print-grep-excludes``
+(print the exclude flags a hoisted repo-wide grep should reuse, and exit).
 
-An ``--only`` run (a lens sub-slice) prints just ``diff_path``, ``diff_lines``,
-``files``, ``slices``, ``ready`` and ``blockers`` — the full verdict was read
-on the first run — unless ``--full`` is passed. ``--gate-only`` wins over both.
+An ``--only`` run (a ``subdivide`` group) prints just ``diff_path``,
+``diff_lines``, ``files``, ``ready`` and ``blockers`` — the full verdict was
+read on the first run — unless ``--full`` is passed. A **stale** verdict (a
+rebase is due) prints the ``--gate-only`` projection whatever was asked, since
+its inventory would list the base's own commits. ``--gate-only`` wins over all,
+then ``--paths-only``, then the ``--only`` projection. ``--spawn-check`` takes
+the same ``--only`` globs to check a subdivision diff's scope.
+
+The captured diff's first line records the fingerprint it was taken at
+(``# review-diff fingerprint=<sha256> head=<sha>``, not counted in
+``diff_lines``), so the spawn check can refuse a stale or foreign file.
+
+The tier, lens, gate and gate-integrity fields are computed by
+``review_tier.py`` (see its docstring for the rules they enforce).
 
 The diff and the file inventory are taken from the **merge base**
 (``origin/<base>...HEAD``), so a base that moved after the rebase cannot put
@@ -75,6 +90,16 @@ Prints JSON::
       "crates": {"sdk": {"source": 12, "docs": 0, "tests": 0,
                          "has_source": true}},
       "code_crates": 1,           // trees with an actual source change
+      "tier": {"name": "meta", "reason": "…"},  // a proposal; echo or override
+      "lenses": [{"lens": "correctness", "why": "tier", "required": true,
+                  "ask_to_skip": false}, …, {"lens": "cross-check", …}],
+      "gates": {"security": {"fires": false, "path": null}, "freshness": …,
+                "new_tree": …, "prose_heavy": …},
+      "abridged_eligible": false,  // the entry gate may offer the opt-down
+      "test_shape": {"hunks": 3, "lines": 40},  // inline #[cfg(test)] included
+      "generated_share": 0.0,      // excluded generated families / all changes
+      "subdivide": null,           // [{"only": "sdk/**", "changes": n}] when huge
+      "integrity": {"count": 0, "by_kind": {}, "hits": []},
       "runs_rust_suites": false,   // any path outside the CI code filter?
       "rust_reachable": false,     // any path a cargo build actually consumes?
       "rust_fixture_hits": [],     // …including via a fixture a test reads
@@ -87,7 +112,9 @@ Prints JSON::
       "added_shape": {"added": 412, "comment": 250, "ratio": 0.607},
       "prose_heavy": true,         // added lines are mostly comment prose
       "ready": true,               // exactly `not blockers`
-      "blockers": []               // why ready is false, if it is
+      "blockers": [],              // why ready is false, if it is
+      "stale": false               // a rebase is due; the CLI then prints
+                                   //   only the --gate-only projection
     }
 
 ``ready: false`` means **do not fan out**. It is defined as ``not blockers``, so
@@ -114,8 +141,9 @@ freshness check passes rather than trusted to be read in order.
 ``--gate-only`` keeps the verdict fields — including the skip predicates
 (``runs_rust_suites`` / ``rust_reachable`` / ``rust_fixture_hits`` /
 ``runs_artifact_gates``), ``prose_heavy`` and ``targets``, which together answer
-"what may I skip?" — and drops the unbounded inventory (``commits``, ``files``, ``slices``,
-``diff_path``, ``diff_lines``). ``added_shape`` is dropped too, but for a
+"what may I skip?" — and drops the unbounded inventory (``commits``, ``files``,
+``diff_path``, ``diff_lines``) and every fan-out field (``tier`` through
+``integrity`` in the shape above). ``GATE_ONLY_FIELDS`` is the allowlist. ``added_shape`` is dropped too, but for a
 different reason: three integers are bounded by construction, so it is not
 inventory — it merely *justifies* a fan-out choice, and a fan-out reads the full
 verdict anyway. The full payload is what a
@@ -135,7 +163,6 @@ tooling"). Tests live in ``tests/test_review_diff.py``, run via
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import hashlib
 import json
 import os
@@ -145,6 +172,11 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+import review_tier
+from review_tier import diff_header_path as _diff_header_path
+from review_tier import matches as matches  # re-exported for callers
+from review_tier import matches_any
 
 # Generated families excluded from the review diff: machine-authored, reviewed
 # by their regeneration gate (step 9) rather than by eye, and large enough to
@@ -211,7 +243,7 @@ SEARCH_EXCLUDE_DIRS = (
     "worktrees",
 )
 
-# Which per-lens slice a changed path belongs to, for ``--split``. Ordered
+# Which kind a changed path is (``slice_for``) — docs, tests or source. Ordered
 # most-specific-first: a path is classified by the first list it matches, so
 # `docs/x.md` is docs and `sdk/rs/tests/y.rs` is tests even though both would
 # also match a broader rule below them.
@@ -233,10 +265,8 @@ DOCS_PATTERNS = (
 )
 
 # File-level test patterns only. Rust's convention puts unit tests *inline* in
-# the source file under `#[cfg(test)]`, so those hunks necessarily land in the
-# source slice — the split is by file, not by region. The tests slice therefore
-# means "files that exist only to test", which is what a completeness lens wants
-# to read end-to-end.
+# the source file under `#[cfg(test)]`, so those are found by region instead
+# (`rust_test_ranges`), and a hunk reaching one counts toward `test_shape`.
 TESTS_PATTERNS = (
     "**/tests/**",
     "**/test_*.py",
@@ -246,8 +276,6 @@ TESTS_PATTERNS = (
     "**/*.spec.ts",
     "sdk/conformance/**",
 )
-
-SLICE_NAMES = ("source", "tests", "docs")
 
 # A mirror of the ``code`` filter in .github/workflows/test.yml, which runs with
 # ``predicate-quantifier: every`` — so a diff whose every path matches one of
@@ -721,36 +749,14 @@ def fixture_hits(paths, fixtures: dict[str, list[str]]) -> list[str]:
     )
 
 
-def matches(path: str, pattern: str) -> bool:
-    """Whether ``path`` matches one path-filter pattern.
-
-    Supports the four shapes the lists above use:
-
-    * ``**/seg/**`` — that directory segment at any depth (``**/tests/**``).
-      Checked **first**, because it also ends in ``/**`` and would otherwise be
-      read as the literal subtree ``**/tests``.
-    * ``dir/**`` — a subtree rooted at ``dir``.
-    * ``**/*.ext`` — a suffix match at any depth.
-    * anything else — a literal path.
-    """
-    if pattern.startswith("**/") and pattern.endswith("/**"):
-        middle = pattern[3:-3]
-        return f"/{middle}/" in f"/{path}/"
-    if pattern.endswith("/**"):
-        prefix = pattern[:-3]
-        return path == prefix or path.startswith(prefix + "/")
-    if pattern.startswith("**/"):
-        return fnmatch.fnmatch(path, pattern[3:]) or fnmatch.fnmatch(path, pattern)
-    return path == pattern
-
-
 def slice_for(path: str) -> str:
-    """Which ``--split`` slice a changed path belongs to.
+    """The kind of a changed path: ``docs``, ``tests`` or ``source``.
 
     Docs is checked before tests so a markdown file under a ``tests/`` tree reads
     as docs, and everything unmatched is source — the default a reviewer wants,
     since a misfiled source file is a missed review while a misfiled doc is only
-    noise.
+    noise. The tier, the gates, the crate rollup and step 9's artifact gate all
+    read it.
     """
     if matches_any(path, DOCS_PATTERNS):
         return "docs"
@@ -759,9 +765,9 @@ def slice_for(path: str) -> str:
     return "source"
 
 
-def matches_any(path: str, patterns) -> bool:
-    """Whether ``path`` matches at least one of ``patterns``."""
-    return any(matches(path, p) for p in patterns)
+def is_generated(path: str) -> bool:
+    """Whether ``path`` lies in an excluded generated family."""
+    return any(path == e or path.startswith(e + "/") for e in DIFF_EXCLUDES)
 
 
 # The single bucket every repository-root file shares. Angle brackets keep it
@@ -937,11 +943,20 @@ def parse_numstat_z(text: str) -> list[dict]:
     return files
 
 
-def write_diff(base_ref: str, out_path: Path, only: list[str] | None = None) -> int:
+def write_diff(
+    base_ref: str,
+    out_path: Path,
+    only: list[str] | None = None,
+    header: str | None = None,
+) -> int:
     """Write the excluded review diff to ``out_path``; return its line count.
 
-    The diff is streamed straight to the file — it never passes through this
-    process's memory, and never through the model's context.
+    ``header`` (see :func:`diff_header`) is written first and not counted; a
+    diff with no body is left an empty file.
+
+    The diff is streamed straight to the file, never through the model's
+    context. (``review_shape`` later reads it back whole to classify it; a
+    review diff is megabytes at most.)
 
     ``only`` restricts the diff to the given path globs. That is how an oversized
     slice gets subdivided: the review step asks for slices past ~1k lines to be
@@ -980,6 +995,9 @@ def write_diff(base_ref: str, out_path: Path, only: list[str] | None = None) -> 
     try:
         fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
+            if header:
+                fh.write(header)
+                fh.flush()
             completed = subprocess.run(
                 ["git", "diff", f"{base_ref}...HEAD", "--", *pathspec],
                 stdout=fh,
@@ -993,7 +1011,57 @@ def write_diff(base_ref: str, out_path: Path, only: list[str] | None = None) -> 
     if completed.returncode != 0:
         detail = (completed.stderr or "").strip() or f"exit {completed.returncode}"
         raise ReviewDiffError(f"git diff failed: {detail}")
-    return count_lines(out_path)
+    body = count_lines(out_path) - (header.count("\n") if header else 0)
+    if body == 0:
+        # An empty diff stays an empty FILE: a lone header would read as content.
+        os.truncate(out_path, 0)
+    return body
+
+
+# The captured diff's first line: the fingerprint it was taken at, so the
+# spawn check can prove the file on disk is the diff the verdict describes.
+DIFF_HEADER_PREFIX = "# review-diff fingerprint="
+
+
+def diff_header(
+    fingerprint: str | None, head: str, only: list[str] | None = None
+) -> str | None:
+    """The header line for a captured diff, or ``None`` with no fingerprint.
+
+    An ``--only`` diff records its globs as ``only=…``, so a scoped diff that
+    lands on the shared ``--out`` path cannot pass the spawn check as the
+    whole diff: the fingerprint is always the whole branch's.
+    """
+    if fingerprint is None:
+        return None
+    scope = f" only={','.join(only)}" if only else ""
+    return f"{DIFF_HEADER_PREFIX}{fingerprint} head={head}{scope}\n"
+
+
+def read_diff_header(path: Path) -> dict | None:
+    """``{"fingerprint", "head", "only"}`` from a captured diff's header, or ``None``."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            first = fh.readline()
+    except OSError:
+        return None
+    if not first.startswith(DIFF_HEADER_PREFIX):
+        return None
+    fields = first[len(DIFF_HEADER_PREFIX) :].split()
+    if not fields:
+        return None
+    rest = dict(f.split("=", 1) for f in fields[1:] if "=" in f)
+    return {
+        "fingerprint": fields[0],
+        "head": rest.get("head"),
+        "only": rest["only"].split(",") if "only" in rest else [],
+    }
+
+
+def read_diff_fingerprint(path: Path) -> str | None:
+    """The fingerprint a captured diff's header records, or ``None``."""
+    header = read_diff_header(path)
+    return header["fingerprint"] if header else None
 
 
 # The fingerprint's diff form, pinned against user config: one context line
@@ -1069,34 +1137,6 @@ def count_lines(path: Path) -> int:
             total += 1
     return total
 
-
-def _diff_header_path(line: str) -> str | None:
-    """The destination path from a ``diff --git a/X b/Y`` header, or ``None``.
-
-    Takes the ``b/`` side because that is what the change produced — for a rename
-    the ``a/`` side no longer exists.
-
-    Note git keeps a **real path on both sides even for a deletion** (``/dev/null``
-    appears on the following ``---``/``+++`` lines, which this never inspects), so
-    there is no ``/dev/null`` case to handle here.
-
-    Paths may contain spaces, so the pair is split on the ``" b/"`` separator
-    rather than on whitespace. That takes the **first** occurrence, so a path that
-    itself contains the literal sequence ``" b/"`` mis-splits and the hunk lands in
-    the default ``source`` slice. Accepted: the consequence is that one hunk goes
-    to the wrong slice on a pathological filename, and ``source`` is the safe side
-    to land on.
-    """
-    if not line.startswith("diff --git "):
-        return None
-    rest = line[len("diff --git ") :].rstrip("\n")
-    marker = rest.find(" b/")
-    if marker == -1:
-        return None
-    return rest[marker + 3 :] or None
-
-
-_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 # The attribute that marks an inline Rust test module.
 _CFG_TEST_RE = re.compile(r"^\s*#\[cfg\(test\)\]")
@@ -1253,10 +1293,6 @@ def _scan_braces(line: str, depth: int) -> tuple[int, bool]:
             depth -= 1
         i += 1
     return depth, opened
-
-
-def _in_any_range(line_no: int, ranges: list[tuple[int, int]]) -> bool:
-    return any(start <= line_no <= end for start, end in ranges)
 
 
 def _read_post_image(path: str) -> str | None:
@@ -1447,156 +1483,6 @@ def is_prose_heavy(shape: dict) -> bool:
         return False
     added = shape["added"]
     return bool(added) and shape["comment"] / added >= PROSE_HEAVY_RATIO
-
-
-def split_diff(diff_path: Path, out_dir: Path) -> dict:
-    """Partition a review diff into per-lens slices; return ``{name: {path, lines}}``.
-
-    Five lenses each ``Read`` the *same whole* diff today, which is the structural
-    residual after prompt tightening has saturated: a diff carrying a couple of
-    hundred lines of reflowed prose makes every lens pay for it, when only the
-    freshness lens needs the docs hunks and only completeness needs the tests.
-    Slicing by file lets step 5 hand each lens the part it reads.
-
-    Streamed line by line and written straight through, so a large diff never
-    enters this process's memory (nor, being a file handoff, the model's context).
-    Slices are ``0o600`` for the same reason the full diff is. A slice with no
-    hunks is still **written, empty** — a missing file would be ambiguous between
-    "nothing in this category" and "the split didn't run".
-    """
-    out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    # Namespaced off the `--out` STEM, not a fixed prefix. Fixed names made two
-    # runs in one scratchpad silently destroy each other's slices: a
-    # `--only '.claude/tools/**' --split` run has no docs hunks, so it wrote an
-    # empty `review-diff-docs.txt` over the full run's 1684-line one — and the
-    # skill's own instruction ("run it once per sub-slice, and hand each lens its
-    # own `--out` path") reads as protection against exactly that while providing
-    # none, because `--out` did not reach these names. The failure is silent and
-    # total for the affected lens: it receives a 0-line slice and correctly
-    # reports nothing to review.
-    #
-    # Deriving from the stem also makes the old `--out`-collides-with-a-slice
-    # case structurally impossible (`<stem>-<name>.txt` can never equal
-    # `<stem>.txt`), so the guard that used to sit here is gone rather than left
-    # as a second, unreachable source of truth.
-    stem = diff_path.stem
-    paths = {name: out_dir / f"{stem}-{name}.txt" for name in SLICE_NAMES}
-    # One hazard the stem derivation does NOT close: an `--out` that is itself
-    # spelled like a slice (`--out review-diff-docs.txt`) writes the whole diff
-    # over a previous run's docs slice. The old guard refused that filename as a
-    # side effect; keep refusing it deliberately, since it is the same
-    # silent-overwrite failure by a different route.
-    if any(stem.endswith(f"-{name}") for name in SLICE_NAMES):
-        raise ReviewDiffError(
-            f"--out {diff_path.name} is spelled like a --split slice, so it "
-            f"would overwrite one; choose a name not ending in "
-            f"-{'/-'.join(SLICE_NAMES)}"
-        )
-    handles = {}
-    counts = dict.fromkeys(SLICE_NAMES, 0)
-    try:
-        for name, path in paths.items():
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            handles[name] = os.fdopen(fd, "w", encoding="utf-8", errors="replace")
-
-        # Anything before the first `diff --git` header (there is normally
-        # nothing) goes to source, the default slice.
-        current = "source"
-        # State for the inline-Rust-tests split. `header` buffers a file's whole
-        # preamble so it can be replayed into whichever slice first receives one
-        # of that file's hunks — a hunk without its file header is not readable
-        # as a diff.
-        #
-        # Everything before the first `@@` is buffered, rather than only the
-        # line shapes a whitelist happened to name. The whitelist form missed
-        # `new file mode`, `rename from`/`rename to` and `copy from`/`copy to`,
-        # which fell through and were emitted early — so an ADDED .rs file with
-        # inline tests produced a tests slice whose header was `diff --git`
-        # immediately followed by `@@`, with no `---`/`+++` at all. It also
-        # dropped a header-only diff (a mode change) from every slice.
-        test_ranges: list[tuple[int, int]] = []
-        header: list[str] = []
-        header_written: set[str] = set()
-        in_preamble = False
-        file_slice = "source"
-
-        def emit(name: str, text: str) -> None:
-            handles[name].write(text)
-            counts[name] += 1
-
-        def flush_header(name: str) -> None:
-            """Replay the buffered preamble into ``name`` at most once."""
-            if name in header_written:
-                return
-            for head_line in header:
-                emit(name, head_line)
-            header_written.add(name)
-
-        with open(diff_path, "r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                header_path = _diff_header_path(line)
-                if header_path is not None:
-                    # A preceding file whose diff was header-only (a mode change,
-                    # a pure rename) never reached a hunk, so flush it now rather
-                    # than dropping it.
-                    if header and not header_written:
-                        flush_header(file_slice)
-                    file_slice = slice_for(header_path)
-                    current = file_slice
-                    header = [line]
-                    header_written = set()
-                    in_preamble = True
-                    # Only a Rust file landing in `source` can hide test hunks.
-                    test_ranges = []
-                    if file_slice == "source" and header_path.endswith(".rs"):
-                        text = _read_post_image(header_path)
-                        if text is not None:
-                            test_ranges = rust_test_ranges(text)
-                    continue
-
-                match = _HUNK_RE.match(line)
-                if match:
-                    in_preamble = False
-                    if test_ranges:
-                        start = int(match.group(1))
-                        # A hunk counts as tests when its post-image lines fall
-                        # inside a cfg(test) region. Judged on the START line:
-                        # a hunk straddling the boundary is rare, and putting it
-                        # with its opening context is the readable choice.
-                        current = (
-                            "tests" if _in_any_range(start, test_ranges) else file_slice
-                        )
-                    else:
-                        current = file_slice
-                    flush_header(current)
-                    emit(current, line)
-                    continue
-
-                if in_preamble:
-                    header.append(line)
-                    continue
-
-                # `current`, NOT `file_slice`. A body line belongs to whichever
-                # slice its hunk went to, and flushing to `file_slice` here
-                # wrote the whole preamble into `source` for a Rust file whose
-                # hunks were ALL test hunks — a phantom "file changed" entry
-                # with no hunks after it, and a non-zero source count that a
-                # caller reads as "spawn a source lens".
-                flush_header(current)
-                emit(current, line)
-
-            # And the same flush for the LAST file in the diff.
-            if header and not header_written:
-                flush_header(file_slice)
-    except OSError as exc:
-        raise ReviewDiffError(f"cannot write diff slices: {exc}") from exc
-    finally:
-        for handle in handles.values():
-            handle.close()
-
-    return {
-        name: {"path": str(paths[name]), "lines": counts[name]} for name in SLICE_NAMES
-    }
 
 
 def overlapping_prs(paths: list[str], limit: int = 30) -> dict:
@@ -1836,11 +1722,70 @@ def measure_drift(base_ref: str) -> dict:
     )
 
 
+def base_trees(base_ref: str) -> set[str] | None:
+    """The base's top-level directories, for the new-tree gate; ``None`` on error."""
+    try:
+        listing = _git(["ls-tree", "-d", "--name-only", base_ref])
+    except ReviewDiffError:
+        return None
+    return {line for line in listing.splitlines() if line}
+
+
+def review_shape(
+    diff_path: Path,
+    files: list[dict],
+    code_crates: int,
+    prose_heavy: bool,
+    diff_lines: int,
+    trees: set[str] | None,
+) -> dict:
+    """The verdict's tier, lens, gate, test, generated and integrity fields.
+
+    ``files`` is the inventory (generated families included); the tier and
+    gates read the REVIEWED set, without them, while ``generated_share`` reads
+    what they dropped. On an ``--only`` run every field describes the narrowed
+    diff — which is why that run's projection omits them.
+    """
+    reviewed = [f for f in files if not is_generated(f["path"])]
+    total = sum(f["changes"] for f in files)
+    generated = total - sum(f["changes"] for f in reviewed)
+    kinds = {f["path"]: slice_for(f["path"]) for f in reviewed}
+    try:
+        text = diff_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    diffs = review_tier.parse_diff(text)
+    test_ranges = {}
+    for fd in diffs:
+        if fd.path.endswith(".rs") and kinds.get(fd.path) == "source":
+            post = _read_post_image(fd.path)
+            if post is not None:
+                test_ranges[fd.path] = rust_test_ranges(post)
+    added = {fd.path for fd in diffs if fd.new_file}
+    gate_set = review_tier.gates(reviewed, kinds, trees, prose_heavy, added)
+    tier = review_tier.classify_tier(
+        reviewed, kinds, diffs, test_ranges, code_crates, inventory=files
+    )
+    return {
+        "tier": tier,
+        "lenses": review_tier.lenses_for(tier["name"], gate_set),
+        "gates": gate_set,
+        # The inventory, lock files included: the entry gate's threshold is
+        # about the whole change.
+        "abridged_eligible": review_tier.abridged_eligible(files, code_crates),
+        "test_shape": review_tier.test_shape(diffs, kinds, test_ranges),
+        "generated_share": round(generated / total, 3) if total else 0.0,
+        "subdivide": review_tier.subdivision(reviewed, diff_lines),
+        "integrity": review_tier.integrity_summary(
+            review_tier.integrity_hits(diffs, kinds, test_ranges)
+        ),
+    }
+
+
 def gate(
     base: str,
     out: Path,
     fetch: bool = True,
-    split: bool = False,
     only: list[str] | None = None,
     overlap: bool = False,
 ) -> dict:
@@ -1868,7 +1813,16 @@ def gate(
 
     base_ahead = oneline_log(f"HEAD..{base_ref}")
     commits = oneline_log(f"{base_ref}..HEAD")
-    diff_lines = write_diff(base_ref, out, only=only)
+    # Advisory here: a failed fingerprint must not block a fan-out, and the
+    # enqueue that consumes it recomputes and fails closed on its own.
+    try:
+        fingerprint = diff_fingerprint(base_ref)
+    except ReviewDiffError:
+        fingerprint = None
+    head = _git(["rev-parse", "HEAD"]).strip()
+    diff_lines = write_diff(
+        base_ref, out, only=only, header=diff_header(fingerprint, head, only)
+    )
     # `--only` narrows the INVENTORY as well as the diff. Letting git apply the
     # same limiters keeps one owner for the glob semantics — a second matcher
     # here would drift from the pathspec `write_diff` uses, and a single-segment
@@ -2005,14 +1959,11 @@ def gate(
         )
 
     crates = crate_rollup(files)
-
-    # Advisory here: a failed fingerprint must not block a fan-out, and the
-    # enqueue that consumes it recomputes and fails closed on its own.
-    try:
-        fingerprint = diff_fingerprint(base_ref)
-    except ReviewDiffError:
-        fingerprint = None
-    head = _git(["rev-parse", "HEAD"]).strip()
+    code_crates = sum(1 for b in crates.values() if b["has_source"])
+    prose_heavy = is_prose_heavy(added_shape)
+    shape = review_shape(
+        out, files, code_crates, prose_heavy, diff_lines, base_trees(base_ref)
+    )
 
     ignored_hits = ignored_test_files(gate_paths)
     tools_hits = [p for p in gate_paths if matches_any(p, TOOLS_TESTS_INPUTS)]
@@ -2063,7 +2014,12 @@ def gate(
         # second crate no longer escalates a diff to the full fan-out on
         # presence alone.
         "crates": crates,
-        "code_crates": sum(1 for b in crates.values() if b["has_source"]),
+        "code_crates": code_crates,
+        # The proposed tier and the lenses it implies, the lens gates, the
+        # retired slices' measures, and the gate-integrity hits (see
+        # `review_shape`). The session echoes the tier or overrides it with a
+        # stated reason.
+        **shape,
         "runs_rust_suites": runs_rust_suites,
         "rust_reachable": rust_reachable,
         # The diff paths a Rust file reads as a fixture, whether or
@@ -2081,13 +2037,14 @@ def gate(
         # The added-line prose classification behind `prose_heavy`, reported so the
         # lens decision can be justified rather than merely asserted.
         "added_shape": added_shape,
-        "prose_heavy": is_prose_heavy(added_shape),
+        "prose_heavy": prose_heavy,
         "ready": not blockers,
         "blockers": blockers,
+        # True when a rebase is due (an interacting drift, or an unverified
+        # base): the inventory then describes a tree that will not merge, so
+        # the CLI prints only the gate fields.
+        "stale": stale,
     }
-    if split:
-        # Slices live beside the full diff, so one --out choice places everything.
-        verdict["slices"] = split_diff(out, out.parent)
     if overlap:
         # Deliberately NOT a blocker: in-flight overlap is a decision for the
         # caller (wait, or proceed with a documented re-run cost), not a gate.
@@ -2115,6 +2072,7 @@ GATE_ONLY_FIELDS = (
     "head",
     "ready",
     "blockers",
+    "stale",
     "runs_rust_suites",
     "rust_reachable",
     # Both are decisions rather than inventory, and both are bounded — the hits
@@ -2160,15 +2118,79 @@ def gate_only(verdict: dict) -> dict:
     return {k: verdict[k] for k in GATE_ONLY_FIELDS if k in verdict}
 
 
-# What a lens sub-slice handoff consumes. The run that produced the full
-# verdict has already been read, so repeating `targets`, `crates` and
-# `added_shape` on each `--only` slice only adds resident payload.
-SLICE_FIELDS = ("diff_path", "diff_lines", "files", "slices", "ready", "blockers")
+# What an `--only` subdivision run consumes. The run that produced the full
+# verdict has already been read, so repeating `targets`, `crates` and the tier
+# on each scoped diff only adds resident payload — and the tier of a narrowed
+# diff is not the review's tier.
+ONLY_FIELDS = ("diff_path", "diff_lines", "files", "ready", "blockers")
+
+# What a run made only to land a diff file consumes (`--paths-only`): one
+# measured pre-wait run printed an 11-file verdict at a ~430k prefix for these.
+PATHS_FIELDS = ("diff_path", "diff_lines", "fingerprint", "ready", "blockers")
 
 
-def slice_only(verdict: dict) -> dict:
-    """``verdict`` reduced to what an ``--only`` sub-slice run is read for."""
-    return {k: verdict[k] for k in SLICE_FIELDS if k in verdict}
+def project(verdict: dict, fields) -> dict:
+    """``verdict`` reduced to ``fields``, skipping any it lacks."""
+    return {k: verdict[k] for k in fields if k in verdict}
+
+
+def spawn_check(
+    verdict: dict,
+    diff: Path,
+    briefs: list[str],
+    facts: str | None,
+    only: list[str] | None = None,
+) -> dict:
+    """The spawn gate in one answer: is every input to the fan-out in place?
+
+    Ready verdict; the captured diff present, non-empty and carrying the
+    fingerprint the live branch has (a stale or foreign diff is the failure a
+    shared scratchpad invites); every brief and the facts file present and
+    non-empty. ``missing`` names each failure.
+
+    Fails CLOSED on the fingerprint: an unreadable branch fingerprint, or a
+    diff with no header, can prove nothing, and two ``None`` values matching
+    would pass any file. The header's ``--only`` scope must equal ``only``
+    (pass the same ``--only`` globs to check a subdivision diff), so a scoped
+    diff never passes as the whole one, nor the reverse.
+    """
+    missing = []
+    if not verdict["ready"]:
+        missing.append("verdict not ready: " + "; ".join(verdict["blockers"]))
+    for label, path in (
+        [("diff", str(diff))]
+        + [("brief", b) for b in briefs]
+        + ([("facts", facts)] if facts else [])
+    ):
+        p = Path(path)
+        if not p.is_file() or p.stat().st_size == 0:
+            missing.append(f"{label} {path} is missing or empty")
+    if not facts:
+        missing.append("no --facts file named")
+    if not briefs:
+        missing.append("no --brief file named")
+    header = read_diff_header(diff)
+    live = verdict["fingerprint"]
+    if live is None:
+        missing.append(
+            "the branch fingerprint could not be computed, so the captured diff "
+            "cannot be proven current"
+        )
+    elif diff.is_file() and header is None:
+        missing.append(
+            f"diff {diff} has no review-diff header — re-run review_diff.py --out"
+        )
+    elif header is not None and header["fingerprint"] != live:
+        missing.append(
+            f"diff {diff} was captured at fingerprint {header['fingerprint']}, the "
+            f"branch is at {live} — re-run review_diff.py --out"
+        )
+    expected = list(only or [])
+    if header is not None and header["only"] != expected:
+        got = ",".join(header["only"]) or "the whole diff"
+        want = ",".join(expected) or "the whole diff"
+        missing.append(f"diff {diff} is scoped to {got}, expected {want}")
+    return {"spawn_ok": not missing, "missing": missing}
 
 
 def run(argv: list[str]) -> int:
@@ -2183,17 +2205,38 @@ def run(argv: list[str]) -> int:
         help="skip the network fetch and read the local ref",
     )
     parser.add_argument(
-        "--split",
-        action="store_true",
-        help="also write per-lens source/tests/docs slices beside the diff",
-    )
-    parser.add_argument(
         "--only",
         action="append",
         default=None,
         metavar="GLOB",
-        help="restrict the diff to these path globs; repeatable. Use it to "
-        "subdivide an oversized slice instead of handing a lens the whole thing",
+        help="restrict the diff to these path globs; repeatable. Use it for "
+        "the `subdivide` groups an oversized diff proposes",
+    )
+    parser.add_argument(
+        "--paths-only",
+        action="store_true",
+        help="print just diff_path, diff_lines, fingerprint, ready and "
+        "blockers — for a run made only to land a diff file",
+    )
+    parser.add_argument(
+        "--spawn-check",
+        action="store_true",
+        help="check the spawn gate: the verdict is ready, and the --out diff "
+        "(at the live fingerprint), every --brief and the --facts file exist "
+        "and are non-empty. Writes nothing; exits 1 naming what is missing",
+    )
+    parser.add_argument(
+        "--brief",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="with --spawn-check, a lens brief to check; repeatable",
+    )
+    parser.add_argument(
+        "--facts",
+        default=None,
+        metavar="PATH",
+        help="with --spawn-check, the facts file to check",
     )
     parser.add_argument(
         "--overlap",
@@ -2226,18 +2269,28 @@ def run(argv: list[str]) -> int:
         sys.stdout.write("\n")
         return 0
 
-    if args.gate_only and args.split:
-        raise ReviewDiffError("--gate-only writes no diff, so it takes no --split")
-
     def run_gate(out: Path) -> dict:
         return gate(
             args.base,
             out,
             fetch=not args.no_fetch,
-            split=args.split,
             only=args.only,
             overlap=args.overlap,
         )
+
+    if args.spawn_check:
+        if args.out is None:
+            raise ReviewDiffError("--spawn-check needs --out, the diff to check")
+        # Gated on a private diff, like --gate-only, so the check can never
+        # rewrite the file it is checking.
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict = run_gate(Path(tmp) / "spawn-probe.diff")
+        result = spawn_check(
+            verdict, Path(args.out), args.brief, args.facts, only=args.only
+        )
+        json.dump(result, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0 if result["spawn_ok"] else 1
 
     if args.gate_only:
         # A probe writes NO diff where a reader would look, whatever `--out`
@@ -2257,10 +2310,17 @@ def run(argv: list[str]) -> int:
     # Narrow AFTER gating, never instead of it: the exit status below and the
     # blockers both have to reflect the full computation, so --gate-only is a
     # projection of the answer and not a cheaper way of reaching one.
-    if args.gate_only:
+    #
+    # A stale base prints the gate fields only, whatever else was asked: its
+    # inventory lists the base's own commits as phantom hunks, and the next
+    # step is always "rebase and re-run". One such call printed 60 files, 52 of
+    # them the base's, plus an 8-PR overlap block.
+    if args.gate_only or verdict["stale"]:
         shown = gate_only(verdict)
+    elif args.paths_only:
+        shown = project(verdict, PATHS_FIELDS)
     elif args.only and not args.full:
-        shown = slice_only(verdict)
+        shown = project(verdict, ONLY_FIELDS)
     else:
         shown = verdict
     json.dump(shown, sys.stdout, indent=2)

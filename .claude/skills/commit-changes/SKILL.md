@@ -132,8 +132,8 @@ changes here belong to this session.
    does not.
 
    **Don't re-derive the diff you already have.**
-   If `review_diff.py` has already written slices
-   for this range, self-review reads those files —
+   If `review_diff.py` has already captured a diff
+   for this range, self-review reads that file —
    re-running a bare `git diff` buys the same bytes
    twice, and did so in two measured sessions
    (≈3.4k and ≈3.1k, the second-largest single
