@@ -897,7 +897,8 @@ def digest_calibration(ctx: Ctx) -> dict:
         "tolerance": report.get("tolerance", fleet_cost.DEFAULT_TOLERANCE),
         "reconcile": days[day].get("reconcile") or {},
         # The settled day's friction, which left the reconcile line for the
-        # digest the fold reads.
+        # digest the fold reads. Only this day's: on a by-hand multi-day
+        # catch-up the other days' friction is not carried.
         "friction": days[day].get("friction"),
     }
     # Exit 1 is a row that misses its bill: a finding the digest flags.

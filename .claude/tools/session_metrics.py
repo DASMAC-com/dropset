@@ -466,8 +466,9 @@ class ColdReloads:
     """The main loop's cold reloads: requests after an idle gap past
     :data:`CACHE_TTL_SECONDS` that re-wrote at least
     :data:`COLD_WRITE_SHARE` of their prefix. ``by_model`` holds those
-    requests' cache writes, the price of the gaps; ``cost`` is them priced, or
-    ``None`` when a model has no rate."""
+    requests' cache writes; ``cost`` is the whole re-write at the write rate
+    (a warm turn would still have paid the cheaper read on the same prefix),
+    or ``None`` when a model has no rate."""
 
     count: int = 0
     by_model: dict[str, Tokens] = field(default_factory=dict)

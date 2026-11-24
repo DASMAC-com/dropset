@@ -87,11 +87,11 @@ The line is `**Cost actual**: $<usd> estimate` on Bedrock (or
 `N turns · cache-hit Y% · Z cold reloads ($W)` and the day; the
 withheld and subscription forms leave the cold reloads unpriced
 (`docs/conventions/context-economy.md` → "Cost bands"). The brief leads
-with the dollar figure and the same turns, cache-hit and cold-reload
-figures. A cold reload is a turn after a gap past the one-hour cache
-TTL that re-wrote at least half its prefix. Peak prefix is the full
-report's. An id that resolves to no transcript skips the line and says
-so.
+with the dollar figure (or the withheld note) and the same turns,
+cache-hit and cold-reload figures. A cold reload is a turn after a gap
+past the one-hour cache TTL that re-wrote at least half its prefix.
+Peak prefix is the full report's. An id that resolves to no transcript
+skips the line and says so.
 
 ## Notes
 
