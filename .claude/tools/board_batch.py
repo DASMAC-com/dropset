@@ -25,7 +25,9 @@ ids, never a committed token):
   parent, milestone, labels, assignee. Takes an explicit map of issue number
   to field values and prints one line per issue. A ``title`` write keeps the
   leading ``[Verb/Substrate]`` / ``[Operator]`` / ``Claude:`` token run;
-  changing it needs ``--retoken``.
+  changing it needs ``--retoken``. A ``reason`` beside ``state`` is appended
+  to the body (zero echo, through ``linear_issue.py``'s append path) once the
+  state write lands, so N cancels with their reasons are one call, not 2N.
 * ``priorities --updates FILE`` — a thin alias of ``fields`` for the
   priority-only case, kept because a priority sweep is the common shape.
 * ``state --id ENG-### --state NAME`` — a thin alias of ``fields`` for the
@@ -113,6 +115,7 @@ import sys
 from datetime import datetime
 
 import linear_api
+import linear_issue
 
 ENDPOINT = linear_api.ENDPOINT
 
@@ -829,15 +832,18 @@ def apply_fields(
     state_cache: dict = {}
     for raw_number, fields in updates.items():
         issue = resolve_issue(raw_number, by_number)
+        fields, reason = split_reason(fields, issue)
         update = build_update_input(fields)
         if "title" in update and not retoken:
             refuse_retoken(issue, update["title"])
         _resolve_field_values(api_key, issue, update, by_number, state_cache)
         summary = ", ".join(f"{k}={fields[k]!r}" for k in sorted(fields))
-        planned.append((issue, update, summary))
+        if reason is not None:
+            summary += f", +reason ({len(reason)} char(s))"
+        planned.append((issue, update, summary, reason))
 
     lines = []
-    for issue, update, summary in planned:
+    for issue, update, summary, reason in planned:
         if dry_run:
             line = f"WOULD SET {issue['identifier']} | {summary}"
         else:
@@ -849,9 +855,53 @@ def apply_fields(
                     f"{issue['identifier']}: issueUpdate reported failure"
                 )
             line = f"SET {issue['identifier']} | {summary}"
+            if reason is not None:
+                # After the state write, never before: a reason appended to an
+                # issue whose cancel then failed would record a kill that did
+                # not happen. A failed append after a landed state write is
+                # reported on this issue's line and stops the batch, so the
+                # caller knows exactly which reason to re-append. The append
+                # does not dedup, so a re-run of the WHOLE file would append
+                # every earlier entry's reason a second time — the error says
+                # so rather than leaving the natural recovery to double them.
+                try:
+                    linear_issue.append_body(
+                        api_key, issue["identifier"], reason, dry_run=False
+                    )
+                except linear_issue.LinearIssueError as exc:
+                    emit(f"{line} — but the reason append failed: {exc}")
+                    raise BoardBatchError(
+                        f"{issue['identifier']}: state set, reason not appended "
+                        "— re-append it with linear_issue.py append; every entry "
+                        "printed SET above is done, so re-run only the entries "
+                        "after this one, never the whole file (it would append "
+                        "their reasons twice)"
+                    ) from exc
+                line += " | reason appended"
         emit(line)
         lines.append(line)
     return lines
+
+
+def split_reason(fields, issue: dict) -> tuple[object, str | None]:
+    """``fields`` without its ``reason``, and the reason (or ``None``).
+
+    A reason rides only with a ``state`` write — it is the why of a cancel or
+    a hold, and appended alone it would be a body edit this field-only tool
+    otherwise refuses. Blank text is refused rather than appended.
+    """
+    if not isinstance(fields, dict) or "reason" not in fields:
+        return fields, None
+    rest = {k: v for k, v in fields.items() if k != "reason"}
+    reason = fields["reason"]
+    if "state" not in rest:
+        raise BoardBatchError(
+            f"{issue['identifier']}: 'reason' rides only beside 'state' — "
+            "append a note alone with linear_issue.py append"
+        )
+    if not isinstance(reason, str) or not reason.strip():
+        raise BoardBatchError(f"{issue['identifier']}: 'reason' must be non-empty text")
+    return rest, reason
 
 
 def _as_ref(raw) -> tuple[str | None, int]:

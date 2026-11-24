@@ -1088,6 +1088,92 @@ class CliTests(unittest.TestCase):
         self.assertEqual(posted, [])
 
 
+class CancelWithReasonTests(unittest.TestCase):
+    """``reason`` beside ``state``: N cancels and their reasons in one call."""
+
+    STATE_ID = "11111111-2222-3333-4444-555555555555"
+
+    def setUp(self):
+        self.by_number = index_by_number([_issue(10), _issue(11)])
+        self.order = []
+
+        self.inputs = []
+
+        def fake_post(api_key, query, variables):
+            self.order.append(("state", variables["id"]))
+            self.inputs.append(variables["input"])
+            return {"issueUpdate": {"success": True}}
+
+        def fake_append(api_key, identifier, text, *, dry_run):
+            self.order.append(("append", identifier, text))
+            return "APPENDED"
+
+        self.post = fake_post
+        self.append = fake_append
+
+    def _apply(self, updates, **kw):
+        lines = []
+        with mock.patch.object(bb, "_post", side_effect=self.post):
+            with mock.patch.object(
+                bb.linear_issue, "append_body", side_effect=self.append
+            ):
+                apply_fields("k", updates, self.by_number, emit=lines.append, **kw)
+        return lines
+
+    def test_each_reason_is_appended_after_its_own_state_write(self):
+        lines = self._apply(
+            {
+                "10": {"state": self.STATE_ID, "reason": "dup of a sibling"},
+                "11": {"state": self.STATE_ID, "reason": "superseded"},
+            }
+        )
+        kinds = [entry[0] for entry in self.order]
+        self.assertEqual(kinds, ["state", "append", "state", "append"])
+        self.assertEqual(self.order[1][2], "dup of a sibling")
+        self.assertTrue(all(line.endswith("reason appended") for line in lines))
+        # The reason never reaches the issueUpdate input.
+        self.assertEqual(self.inputs, [{"stateId": self.STATE_ID}] * 2)
+
+    def test_dry_run_names_the_reason_per_issue_and_writes_nothing(self):
+        lines = self._apply(
+            {"10": {"state": self.STATE_ID, "reason": "dup"}}, dry_run=True
+        )
+        self.assertEqual(self.order, [])
+        self.assertIn("WOULD SET ENG-10", lines[0])
+        self.assertIn("+reason (3 char(s))", lines[0])
+
+    def test_a_reason_without_a_state_is_refused_before_any_write(self):
+        with self.assertRaises(BoardBatchError):
+            self._apply(
+                {
+                    "10": {"state": self.STATE_ID},
+                    "11": {"priority": 2, "reason": "why"},
+                }
+            )
+        self.assertEqual(self.order, [])
+
+    def test_a_blank_reason_is_refused(self):
+        with self.assertRaises(BoardBatchError):
+            self._apply({"10": {"state": self.STATE_ID, "reason": "  "}})
+        self.assertEqual(self.order, [])
+
+    def test_a_failed_append_names_the_issue_and_stops_the_batch(self):
+        def failing(api_key, identifier, text, *, dry_run):
+            raise bb.linear_issue.LinearIssueError("write reported failure")
+
+        self.append = failing
+        with self.assertRaises(BoardBatchError) as ctx:
+            self._apply(
+                {
+                    "10": {"state": self.STATE_ID, "reason": "a"},
+                    "11": {"state": self.STATE_ID, "reason": "b"},
+                }
+            )
+        self.assertIn("ENG-10", str(ctx.exception))
+        self.assertIn("never the whole file", str(ctx.exception))
+        self.assertEqual(self.order, [("state", _issue(10)["id"])])
+
+
 class FieldValueResolutionTests(unittest.TestCase):
     """A state NAME must become a UUID before it reaches Linear.
 

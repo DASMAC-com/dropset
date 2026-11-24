@@ -1183,5 +1183,122 @@ class OperatorRunTests(unittest.TestCase):
             self._run(FakeLinear([]), ["gate", "--pool", "operator", "--ids", "ENG-1"])
 
 
+class FakeThreads:
+    """Answers the ``resolve`` queries: comment reads, replies, resolves."""
+
+    def __init__(self, threads, resolve_ok=True, reply_ok=True):
+        # Thread id -> {"parentId", "resolvedAt"}; every thread is on ENG-7.
+        self.threads = threads
+        self.resolve_ok = resolve_ok
+        self.reply_ok = reply_ok
+        self.calls = []
+
+    def __call__(self, api_key, query, variables):
+        if query == rs._THREAD_QUERY:
+            node = self.threads.get(variables["id"])
+            if node is None:
+                return {"comment": None}
+            issue = {"id": "uuid-7", "identifier": "ENG-7"}
+            return {"comment": {"id": variables["id"], "issue": issue, **node}}
+        if query == rs._REPLY_MUTATION:
+            self.calls.append(("reply", variables["parentId"], variables["body"]))
+            if not self.reply_ok:
+                return {"commentCreate": {"success": False, "comment": None}}
+            reply = f"r-{variables['parentId']}"
+            return {"commentCreate": {"success": True, "comment": {"id": reply}}}
+        if query == rs._RESOLVE_MUTATION:
+            self.calls.append(
+                ("resolve", variables["id"], variables["resolvingCommentId"])
+            )
+            return {"commentResolve": {"success": self.resolve_ok}}
+        raise AssertionError(f"unexpected query: {query}")
+
+
+class ResolveThreadsTests(_RunBase):
+    OPEN = {"parentId": None, "resolvedAt": None}
+    PAIRS = [
+        {"thread": "c-1", "reply": "Folded: the scope now names the seam."},
+        {"thread": "c-2", "reply": "Folded: priority dropped to Low."},
+    ]
+
+    def _resolve(self, fake, pairs=None, *extra):
+        payload = json.dumps(self.PAIRS if pairs is None else pairs)
+        return self._run(fake, ["resolve", "--pairs", payload, *extra])
+
+    def test_each_thread_gets_its_reply_then_resolves_by_it(self):
+        fake = FakeThreads({"c-1": self.OPEN, "c-2": self.OPEN})
+        code, out = self._resolve(fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.calls,
+            [
+                ("reply", "c-1", self.PAIRS[0]["reply"]),
+                ("resolve", "c-1", "r-c-1"),
+                ("reply", "c-2", self.PAIRS[1]["reply"]),
+                ("resolve", "c-2", "r-c-2"),
+            ],
+        )
+        self.assertEqual(out.count("RESOLVED ENG-7"), 2)
+        # One line per thread; the reply text is never echoed.
+        self.assertNotIn("Folded", out)
+
+    def test_a_bad_thread_anywhere_refuses_before_any_write(self):
+        fake = FakeThreads({"c-1": self.OPEN})
+        with self.assertRaisesRegex(RatifyError, "c-2 did not resolve"):
+            self._resolve(fake)
+        self.assertEqual(fake.calls, [])
+
+    def test_a_reply_is_refused_as_a_thread(self):
+        fake = FakeThreads(
+            {"c-1": self.OPEN, "c-2": {"parentId": "c-1", "resolvedAt": None}}
+        )
+        with self.assertRaisesRegex(RatifyError, "is a reply, not a thread"):
+            self._resolve(fake)
+        self.assertEqual(fake.calls, [])
+
+    def test_an_already_resolved_thread_is_skipped_so_a_re_run_is_clean(self):
+        done = {"parentId": None, "resolvedAt": "2026-11-22T10:00:00Z"}
+        fake = FakeThreads({"c-1": done, "c-2": self.OPEN})
+        code, out = self._resolve(fake)
+        self.assertEqual(code, 0)
+        self.assertIn("ALREADY ENG-7 thread c-1", out)
+        self.assertEqual([c[1] for c in fake.calls], ["c-2", "c-2"])
+
+    def test_dry_run_reads_and_writes_nothing(self):
+        fake = FakeThreads({"c-1": self.OPEN, "c-2": self.OPEN})
+        code, out = self._resolve(fake, None, "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(out.count("WOULD RESOLVE"), 2)
+
+    def test_a_failed_resolve_names_the_finishing_command(self):
+        fake = FakeThreads({"c-1": self.OPEN, "c-2": self.OPEN}, resolve_ok=False)
+        with self.assertRaisesRegex(RatifyError, "linear_gate.py resolve c-1 r-c-1"):
+            self._resolve(fake)
+
+    def test_a_failed_reply_stops_before_its_resolve(self):
+        fake = FakeThreads({"c-1": self.OPEN, "c-2": self.OPEN}, reply_ok=False)
+        with self.assertRaisesRegex(RatifyError, "the reply into c-1 failed"):
+            self._resolve(fake)
+        self.assertEqual([c[0] for c in fake.calls], ["reply"])
+
+    def test_a_padded_duplicate_thread_is_still_a_duplicate(self):
+        pairs = [{"thread": "c-1", "reply": "a"}, {"thread": " c-1 ", "reply": "b"}]
+        fake = FakeThreads({"c-1": self.OPEN})
+        with self.assertRaisesRegex(RatifyError, "named twice"):
+            self._resolve(fake, pairs)
+        self.assertEqual(fake.calls, [])
+
+    def test_the_pairs_file_is_validated_whole(self):
+        for bad in (
+            [],
+            [{"thread": "c-1"}],
+            [{"thread": "c-1", "reply": " "}],
+            [{"thread": "c-1", "reply": "a"}, {"thread": "c-1", "reply": "b"}],
+        ):
+            with self.subTest(bad=bad), self.assertRaises(RatifyError):
+                self._resolve(FakeThreads({}), bad)
+
+
 if __name__ == "__main__":
     unittest.main()

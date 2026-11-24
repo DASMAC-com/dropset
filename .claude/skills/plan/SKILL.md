@@ -481,12 +481,30 @@ an item the operator executes by hand `[Operator]`.
   implementing issue's body, then delete the file.** One still in
   its read-back is live work.
 
-**6. Write back — incrementally, then section-patched at the gate.**
-Write after each major decision: scheduler sessions are often
-closed abruptly, and an unwritten decision is lost. A session
-that decides without writing back has dropped its main
-deliverable — the board shows *what*, only the document carries
-*why*.
+**6. Write back — at checkpoints, then section-patched at the
+gate.** Scheduler sessions are often closed abruptly, and an
+unwritten decision is lost. A session that decides without
+writing back has dropped its main deliverable — the board shows
+*what*, only the document carries *why*. But write at
+**checkpoints**, not once per incoming peer message: a dispatch
+wave, a hold placed or lifted, and the close-out. Buffer the
+decisions in between and land them in one patch at the next
+checkpoint (at the close-out, folded into the sections it
+rewrites), as terse lines rather than prose paragraphs the
+close-out will delete. One measured day wrote about 25 patches,
+one per peer message, each a turn at a 200k-plus prefix. A
+decision another seat must see **at once** (a curator ruling
+it depends on, a hold that stops a dispatch) is still written
+immediately.
+
+**An in-session write is
+`planning_doc.py patch --ops <path>`**, never the MCP
+`save_document` `patch`: the ops are `linear_patch.py`'s, the
+tool reads the write back itself, and it prints only the body's
+hash and the changed headings. Never re-read the document to
+confirm a patch landed — `planning_doc.py patch --verify <hash>`
+answers that without the body, and a `MISMATCH` means another
+writer landed since.
 
 **Gate the close-out; don't wait to be told.** When the operator
 signals wrap-up, or the conversation lulls after significant
@@ -589,7 +607,12 @@ ask, never this one.
 time**: each bootstrap promotes what it holds, or lists it for a
 kill by ruling 3's necessity test, closing each `Canceled` with
 its reason on the operator's yes; the milestone leaves the parking
-set once empty. List
+set once empty. **Every kill, and every relayed cancel, is one
+`board_batch.py fields --updates <file>` call** whose entries carry
+`{"state": "Canceled", "reason": "<why>"}`: it writes each state,
+then appends each reason zero-echo, never a state write and an
+append per issue (`--dry-run` first names the reason per issue).
+List
 it **field-selected** (title, priority); promote by **clearing
 the milestone** in one `board_batch.py fields` write, never by
 closing and refiling. **Do not re-adjudicate a finding** —
