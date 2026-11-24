@@ -1,3 +1,4 @@
+# cspell:word RDWR
 """Permission-rule generalization and coverage — the source of truth.
 
 Pure-stdlib helpers behind ``allowlist.py`` (the firming and upkeep reader)
@@ -31,11 +32,14 @@ more verb than the approval did.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import re
 import shlex
 import subprocess
+import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -537,8 +541,13 @@ def write_settings(path: Path, settings: dict, allow: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     body = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
 
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # A UNIQUE temp name per write: a fixed `<name>.tmp` was shared by every
+    # concurrent writer, so one could rename another's half-written file into
+    # place. `mkstemp` creates it 0o600 already.
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".tmp", dir=path.parent
+    )
+    tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(body)
@@ -562,13 +571,40 @@ def firm_into(path: Path, rule: str) -> bool:
     whole point: an ``Edit`` requires a prior ``Read``, and reading a
     several-hundred-entry ``settings.local.json`` into context to append one line
     is exactly the cost this tool family exists to avoid.
+
+    The read-modify-write runs under :func:`settings_lock`, so parallel adds —
+    from one session or from several worktrees sharing the one file — cannot
+    lose each other's rules.
     """
-    settings, allow = load_settings(path)
-    if is_covered(rule, allow):
-        return False
-    # Drop any existing entry the new (broader) rule now subsumes, so firming a
-    # generalized rule doesn't leave the redundant narrower ones behind.
-    allow = [r for r in allow if not is_covered(r, [rule])]
-    allow.append(rule)
-    write_settings(path, settings, allow)
-    return True
+    with settings_lock(path):
+        settings, allow = load_settings(path)
+        if is_covered(rule, allow):
+            return False
+        # Drop any existing entry the new (broader) rule now subsumes, so firming a
+        # generalized rule doesn't leave the redundant narrower ones behind.
+        allow = [r for r in allow if not is_covered(r, [rule])]
+        allow.append(rule)
+        write_settings(path, settings, allow)
+        return True
+
+
+@contextlib.contextmanager
+def settings_lock(path: Path):
+    """Hold an exclusive ``flock`` on ``path``'s sidecar ``<name>.lock``.
+
+    Every load-mutate-write of the settings file takes it. The atomic rename
+    alone stops a torn file, not a lost update: two writers that both read the
+    old array each write back their own one-rule addition, and the second
+    rename silently drops the first rule. The lock lives on a sidecar, never on
+    the settings file itself, because the rename replaces that file's inode and
+    a lock on the old inode would guard nothing. Blocks until it is free; the
+    critical section is a JSON load and write, milliseconds long.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + ".lock")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)  # closing the descriptor releases the lock

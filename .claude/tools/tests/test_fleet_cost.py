@@ -502,6 +502,7 @@ class UnitTest(unittest.TestCase):
             "claude-opus-5-5": "Claude Opus 5.5 (Amazon Bedrock Edition)",
             "claude-opus-5": "Claude Opus 5 (Amazon Bedrock Edition)",
             "claude-fable-5-1": "Claude Fable 5.1 (Amazon Bedrock Edition)",
+            "claude-fable-5-2": "Claude Fable 5.2 (Amazon Bedrock Edition)",
             "claude-sonnet-5-5": "Claude Sonnet 5.5 (Amazon Bedrock Edition)",
             "claude-haiku-4-5-20251001": "Claude Haiku 4.5 (Amazon Bedrock Edition)",
             "us.anthropic.claude-haiku-4-5-20251001-v1:0": (
@@ -514,6 +515,11 @@ class UnitTest(unittest.TestCase):
         for model, service in cases.items():
             self.assertEqual(fc.service_for_model(model), service, model)
         self.assertIsNone(fc.service_for_model("<synthetic>"))
+        # A billed Fable 5.2 line reconciles against its own row, never 5.1's.
+        self.assertEqual(
+            fc.model_for_service("Claude Fable 5.2 (Amazon Bedrock Edition)"),
+            "claude-fable-5-2",
+        )
 
     def test_parse_billed_keeps_only_edition_services(self) -> None:
         response = {

@@ -21,7 +21,19 @@ Two tiers, deliberately:
 * **DENY** — a very small catastrophic set that no marker overrides: a
   recursive delete of `/` or the home directory (force flag or not; for an
   `rm` actually being run, the target anywhere among its operands),
-  and a force-push to the default branch.
+  a force-push to the default branch, and a **bare environment dump**
+  (see below).
+
+**The bare environment dump** is the one deny that is not about deleting
+anything: `env`, `printenv` or `export -p` with no variable named, `set` with
+no arguments, or `declare` / `typeset` with no name. The session environment
+carries secrets, and a dump puts every one of them in the transcript, where
+the only remedy is rotating each. The measured instance read the model tiers
+with a bare `env` and forced three rotations; one `printenv <NAME>` per
+variable reads the same values safely. It is parsed with the shared tokenizer
+(`_shell_tokens.py`), not matched by regex, so a dump after a wrapper
+(`sudo env`), in a pipeline (`env | grep X`), in a `-c` payload or in a
+command substitution is still one; a failed import disables only this check.
 
 **This is a best-effort advisory stop, not a policy boundary.** It reads one
 command string and matches patterns; a determined or unusual spelling gets
@@ -44,6 +56,11 @@ import json
 import os
 import re
 import sys
+
+try:
+    import _shell_tokens as sh
+except Exception:  # fail open: only the environment-dump check needs it
+    sh = None
 
 ESCAPE_HATCH = "#destructive-ok"
 
@@ -1270,6 +1287,154 @@ def classify(cmd, _depth=0):
     return None, ""
 
 
+# --------------------------------------------------------------------------
+# The bare environment dump — a deny parsed by the shared tokenizer.
+# --------------------------------------------------------------------------
+
+# Builtins that list every variable when given no name. `export -n X` and
+# `declare -p X` name one, so they pass; a `-f` / `-F` flag lists functions,
+# not variables.
+_DUMP_DECLARERS = frozenset({"export", "declare", "typeset"})
+_ENV_DUMP_MAX_DEPTH = 4
+
+
+def _env_wrapper_rest(args):
+    """``args`` after `env`'s own flags and assignments, or None for `-S`.
+
+    `env -S <string>` runs the string as a command, which the nested scan
+    reads; it lists nothing itself.
+    """
+    value_flags = sh.WRAPPERS["env"]
+    j = 0
+    while j < len(args):
+        tok = args[j]
+        if tok in ("-S", "--split-string") or tok.startswith("-S"):
+            return None
+        if tok == "--":
+            return args[j + 1 :]
+        if tok in value_flags:
+            j += 2
+            continue
+        if tok.startswith("-") or sh.ASSIGN_RE.match(tok):
+            j += 1
+            continue
+        break
+    return args[j:]
+
+
+def _dump_reason(seg):
+    """Why one command segment dumps the environment, or None."""
+    words = []
+    i = 0
+    while i < len(seg):
+        if seg[i] in sh.REDIRECTS or seg[i] in sh.INPUTS or seg[i] == sh.HERE_STRING:
+            i += 2
+            continue
+        words.append(seg[i])
+        i += 1
+    while words and (words[0] in sh.KEYWORDS or sh.ASSIGN_RE.match(words[0])):
+        words = words[1:]
+    while words:
+        name = os.path.basename(words[0])
+        args = words[1:]
+        if name == "env":
+            rest = _env_wrapper_rest(args)
+            if rest is None:
+                return None
+            if not rest:
+                return "`env` with no command"
+            words = rest
+            continue
+        if name == "printenv":
+            if not [a for a in args if not a.startswith("-")]:
+                return "`printenv` with no variable named"
+            return None
+        if name == "set":
+            return None if args else "`set` with no arguments"
+        if name in _DUMP_DECLARERS:
+            flags = [a for a in args if a.startswith(("-", "+"))]
+            if len(flags) == len(args) and not any("f" in f.lower() for f in flags):
+                return "`%s` with no variable named" % name
+            return None
+        if name == "command":
+            j = 1
+            while j < len(words) and words[j].startswith("-"):
+                if "v" in words[j] or "V" in words[j]:
+                    return None  # `command -v env` looks a name up
+                j += 1
+            words = words[j:]
+            continue
+        if name in sh.WRAPPERS:
+            # Peel ONE wrapper (`sudo -u x env`, `timeout 5 env`) and look at
+            # what it runs. Not `sh.unwrap`: it peels `env` as a wrapper too,
+            # so `sudo env` would come back as nothing run at all.
+            words = _peel_wrapper(name, args)
+            continue
+        return None
+    return None
+
+
+def _peel_wrapper(name, args):
+    """The command a non-`env` wrapper runs: ``args`` past its own options."""
+    value_flags = sh.WRAPPERS[name]
+    j = 0
+    positional_skipped = False
+    while j < len(args):
+        tok = args[j]
+        if tok == "--":
+            return args[j + 1 :]
+        if tok in value_flags:
+            j += 2
+            continue
+        if tok.startswith("-"):
+            j += 1
+            continue
+        if sh.ASSIGN_RE.match(tok) and name in ("sudo", "doas"):
+            j += 1
+            continue
+        if name == "timeout" and not positional_skipped:
+            positional_skipped = True
+            j += 1
+            continue
+        break
+    return args[j:]
+
+
+def env_dump_reason(command, _depth=0):
+    """Why ``command`` prints the whole environment, or None.
+
+    Scans every segment of every pipeline, then each nested command string
+    the shell would run (a `-c` payload, a substitution, an `eval`).
+    """
+    if sh is None or _depth > _ENV_DUMP_MAX_DEPTH:
+        return None
+    joined = command.replace("\x00", "").replace("\\\n", "")
+    rewritten, bodies, _uncertain = sh.raw_pass(joined)
+    nested = list(bodies)
+    for seg, _separator in sh.segments(sh.tokenize(rewritten)):
+        reason = _dump_reason(seg)
+        if reason:
+            return reason
+        nested.extend(sh.unwrap(seg)[1])
+    for payload in nested:
+        if payload and payload != command:
+            reason = env_dump_reason(payload, _depth + 1)
+            if reason:
+                return reason
+    return None
+
+
+ENV_DUMP_MESSAGE = (
+    "BLOCKED (no override): this command prints the whole environment "
+    "({reason}).\n\n"
+    "The session environment carries secrets, and a dump puts every one of "
+    "them in the transcript — the only remedy is rotating each. Read each "
+    "variable you need with its own bare call, one per Bash invocation:\n"
+    "  printenv <NAME>\n"
+    "(a combined `printenv A B C` returns only the first on macOS / BSD). "
+    "The `{hatch}` marker does NOT bypass this."
+)
+
 DENY_MESSAGE = (
     "BLOCKED (no override): this command is {reason}.\n\n"
     "This is in the small catastrophic set that the destructive-command guard "
@@ -1300,6 +1465,16 @@ def evaluate(payload):
     cmd = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
     if not isinstance(cmd, str) or not cmd.strip():
         return 0, ""
+
+    # The environment dump first, on the RAW command: the tokenizer drops
+    # comments itself, and no marker is consulted, so `env #destructive-ok`
+    # is denied like `env`. Any parse failure allows (fail open).
+    try:
+        dump = env_dump_reason(cmd)
+    except Exception:
+        dump = None
+    if dump:
+        return 2, ENV_DUMP_MESSAGE.format(reason=dump, hatch=ESCAPE_HATCH)
 
     # Classify the command with its comments REMOVED. A shell comment is inert,
     # so this is faithful — and it closes a real bypass: the deny patterns
@@ -1829,12 +2004,74 @@ def _self_test():
     if evaluate({"tool_name": "Write", "tool_input": {"command": "rm -rf /"}})[0] != 0:
         failures.append("  a non-Bash tool was blocked")
 
+    # The bare environment dump: denied in every spelling, marker or not,
+    # while a named read and an `env` running a command pass.
+    env_cases = [
+        ("env", True),
+        ("/usr/bin/env", True),
+        ("env | grep MODEL", True),
+        ("env | sort", True),
+        ("env -u HOME", True),
+        ("env FOO=1", True),
+        ("env -0", True),
+        ("printenv", True),
+        ("printenv -0", True),
+        ("export -p", True),
+        ("export", True),
+        ("set", True),
+        ("declare -p", True),
+        ("declare -x", True),
+        ("typeset", True),
+        ("sudo env", True),
+        ("sudo -u root printenv", True),
+        ("timeout 5 env", True),
+        ("nohup env > /tmp/x", True),
+        ("command env", True),
+        ("ls; env", True),
+        ("ls && printenv | head", True),
+        ("env #destructive-ok", True),
+        ("bash -c 'env'", True),
+        ('echo "$(env)"', True),
+        ("echo `printenv`", True),
+        ("eval env", True),
+        ("printenv DS_MODEL_ADVISOR", False),
+        ("printenv LINEAR_API_KEY", False),
+        ("env FOO=1 make lint", False),
+        ("env -u HOME ls", False),
+        ("env -S 'make lint'", False),
+        ("sudo env FOO=1 ls", False),
+        ("export FOO=1", False),
+        ("export -n FOO", False),
+        ("declare -p FOO", False),
+        ("declare -f", False),
+        ("set -o pipefail", False),
+        ("set -x", False),
+        ("command -v env", False),
+        ("which printenv", False),
+        ("grep -rn 'env' docs", False),
+        ("echo env", False),
+        ("git commit -m 'Deny a bare env dump'", False),
+        ("gh pr create --body 'Running `env` is now denied'", False),
+        ("python3 .claude/tools/search_source.py 'printenv'", False),
+    ]
+    for command, blocked in env_cases:
+        code, message = evaluate(
+            {"tool_name": "Bash", "tool_input": {"command": command}}
+        )
+        if (code == 2) != blocked:
+            failures.append(f"  env dump {command!r}: expected block={blocked}")
+        elif blocked and "printenv <NAME>" not in message:
+            failures.append(f"  env dump {command!r}: message lacks the remedy")
+
     if failures:
         print("self-test FAILED:", file=sys.stderr)
         for line in failures:
             print(line, file=sys.stderr)
         return 1
-    print(f"self-test passed ({len(cases)} cases + 4 hatch/scope checks)")
+    print(
+        f"self-test passed ({len(cases)} cases + {len(env_cases)} env-dump "
+        "cases + 4 hatch/scope checks)"
+    )
     return 0
 
 

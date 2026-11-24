@@ -434,6 +434,16 @@ tiers**:
   heredoc not fed to a shell — gets only the flags-only shape; a
   command substitution inside double quotes is not prose, since it
   runs.
+- **DENY, the bare environment dump** — `env`, `printenv` or
+  `export -p` with no variable named, `set` with no arguments, or
+  `declare` / `typeset` with no name. The session environment carries
+  the session secrets, and a dump puts every one of them in the
+  transcript, where the only remedy is rotating each (the measured
+  instance forced three). The message points to one bare
+  `printenv <NAME>` per variable. Parsed with the shared tokenizer, so
+  a dump behind a wrapper, in a pipeline (`env | grep X`), in a `-c`
+  payload or a command substitution is still one; `env FOO=1 <cmd>`
+  and a named `printenv NAME` pass.
 
 Every git rule matches through git's global options, so
 `git -C <path> push --force origin main` is the same deny as the bare

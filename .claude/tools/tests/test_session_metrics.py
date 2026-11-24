@@ -844,6 +844,8 @@ class Costing(unittest.TestCase):
         # 5.5's cache reads are their own figures, Sonnet 5's is 0.1x input.
         expected = {
             "claude-fable-5-1": ((11.00, 55.00, 22.00, 0.275), "2026-10-22"),
+            # Projected only: 1.10x the $8 / $40 list, cache read $0.20 list.
+            "claude-fable-5-2": ((8.80, 44.00, 17.60, 0.22), None),
             "claude-sonnet-5-5": ((2.20, 11.00, 4.40, 0.11), "2026-10-21"),
             "claude-sonnet-5": ((2.20, 11.00, 4.40, 0.22), "2026-10-26"),
         }

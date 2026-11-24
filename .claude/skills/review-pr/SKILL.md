@@ -371,7 +371,7 @@ migrations or generation inputs, and whether it spans crates.
    `make decks-build`** — not hooks, so step 18's reproduce-the-hook
    advice does not apply. When the diff touches what a `.claude/tools/`
    checker validates (`.claude/tools/**`, `market-data/grafana/**`),
-   run `python3 .claude/tools/run_quiet.py -- make tools-tests`, whole,
+   run `make tools-tests` (quiet by itself), whole,
    before pushing — it runs every tree even past a failing one, and
    make's `-k` epilogue names each failed `tools-tests-<tree>`; CI
    runs on Linux, so a macOS-only test needs a `unittest.skipUnless`

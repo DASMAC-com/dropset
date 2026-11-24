@@ -1365,8 +1365,15 @@ Two rules keep the cap from turning into deletion:
   So for anything under `.claude/tools/`, the post-edit check is:
 
   ```sh
-  python3 .claude/tools/run_quiet.py -- make tools-tests
+  make tools-tests
   ```
+
+  Both `tools-tests` and `tools-test` route each unittest run through
+  `run_quiet.py` in the recipe itself, so a green tree prints one line
+  and a red one its failing `FAIL:` / `ERROR:` headers and the log's
+  tail. Never wrap the target by hand (a doubled wrapper hides the inner
+  summary behind the outer one); `VERBOSE=1` prints the raw output, as
+  CI always does.
 
   Reserve a `-p test_X.py` discover run for a suite that is genuinely
   slow — this one runs in well under a second. The rule generalizes to
