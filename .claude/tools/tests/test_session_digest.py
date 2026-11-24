@@ -559,6 +559,27 @@ class CalibrationTests(unittest.TestCase):
         self.assertIn("drift +10.0% FLAGGED", row)
         self.assertEqual(len(flags), 1)
 
+    def test_the_days_friction_follows_the_calibration_line(self):
+        calibration = self.calibration(True, 100.0, 100.0)
+        calibration["friction"] = {
+            "spanned_sessions": 2,
+            "rebased_sessions": 1,
+            "stalled_sessions": 0,
+            "dollars_after": {"bedrock": 3.5},
+        }
+        lines = sd.calibration_lines(calibration, [])
+        self.assertEqual(
+            lines[1],
+            "- friction: 2 session(s) spanned a day, 1 rebased or re-enqueued, "
+            "0 stalled; $3.50 Bedrock after",
+        )
+        self.assertFalse(
+            any(
+                "friction" in ln
+                for ln in sd.calibration_lines(self.calibration(True, 100.0, 100.0), [])
+            )
+        )
+
     def test_no_reading_says_why(self):
         lines = sd.calibration_lines({"error": "the fleet-cost read failed"}, [])
         self.assertEqual(

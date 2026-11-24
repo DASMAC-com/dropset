@@ -876,6 +876,120 @@ def hourly_page(hours: list[tuple[str, float]], token: str | None = None) -> dic
     return page
 
 
+def prompt(text: str, cwd: str) -> str:
+    """The user record a launch's bootstrap prompt is written as."""
+    return json.dumps({"type": "user", "cwd": cwd, "message": {"content": text}})
+
+
+class ByVerbTest(unittest.TestCase):
+    """`local --by verb`: each session under the verb its bootstrap named."""
+
+    def test_each_launch_prompt_names_its_verb(self) -> None:
+        cases = {
+            "/init-pr": "task",
+            "<command-name>/init-pr</command-name>": "task",
+            "/chore 2031": "chore",
+            "<command-name>/architect</command-name><command-args>ENG-2358": "architect",
+            "/explore 1196": "explore",
+            "Bootstrap this explore task from Linear issue ENG-1196. Read": "explore",
+            "/plan anthropic": "plan",
+            "/curate": "curate",
+            "/launch": "analyze",
+            "/analyze": "analyze",
+        }
+        for text, verb in cases.items():
+            self.assertEqual(fc.session_verb_of_prompt(text), verb, text)
+        self.assertIsNone(fc.session_verb_of_prompt("/init-project"))
+        self.assertIsNone(fc.session_verb_of_prompt("please /plan later"))
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.home = root / "home"
+        projects = self.home / "projects"
+        base = root / "repo"
+        (base / sm.SUBSTRATE_DIR).mkdir(parents=True)
+        (base / sm.SUBSTRATE_DIR / "1651").write_text("bedrock\n")
+        worker = f"{base}/.claude/worktrees/1651"
+        for name, lines in {
+            "w/task.jsonl": [prompt("/init-pr", worker), record("m1", worker)],
+            "w/task/subagents/a.jsonl": [record("m2", worker)],
+            "b/plan.jsonl": [prompt("/plan", str(base)), record("m3", str(base))],
+            # A session resumed past its bootstrap names no verb.
+            "b/loose.jsonl": [prompt("carry on", str(base)), record("m4", str(base))],
+        }.items():
+            path = projects / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("\n".join(lines) + "\n")
+        self.projects = projects
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_the_breakdown_sums_both_substrates_costliest_first(self) -> None:
+        meter = fc.walk(self.projects, [DAY])
+        rows = fc.verb_breakdown(meter, DAY)
+        # The task's sub-agent bills under its parent's verb.
+        self.assertEqual(
+            rows,
+            [
+                {
+                    "verb": "task",
+                    "dollars": 2 * ONE_MESSAGE,
+                    "sessions": 1,
+                    "unpriced": [],
+                },
+                {"verb": "plan", "dollars": ONE_MESSAGE, "sessions": 1, "unpriced": []},
+                {
+                    "verb": "unattributed",
+                    "dollars": ONE_MESSAGE,
+                    "sessions": 1,
+                    "unpriced": [],
+                },
+            ],
+        )
+        self.assertEqual(
+            fc.render_verbs(rows),
+            "by verb: task {} (1) · plan {} (1) · unattributed {} (1)".format(
+                fc.money(2 * ONE_MESSAGE),
+                fc.money(ONE_MESSAGE),
+                fc.money(ONE_MESSAGE),
+            ),
+        )
+
+    def test_an_unpriced_model_is_named_not_summed(self) -> None:
+        meter = fc.walk(self.projects, [DAY])
+        tokens = sm.Tokens()
+        tokens.add(USAGE)
+        meter.by_verb[(DAY, "plan", UNPRICED_MODEL)] = tokens
+        meter.by_verb[(DAY, "plan", "<synthetic>")] = sm.Tokens()
+        plan = next(r for r in fc.verb_breakdown(meter, DAY) if r["verb"] == "plan")
+        self.assertEqual(plan["dollars"], ONE_MESSAGE)
+        self.assertEqual(plan["unpriced"], [UNPRICED_MODEL])
+        self.assertIn(
+            f"plan {fc.money(ONE_MESSAGE)} (1) + unpriced {UNPRICED_MODEL}",
+            fc.render_verbs([plan]),
+        )
+
+    def test_local_prints_the_row_under_each_day_only_when_asked(self) -> None:
+        def run(by_verb: bool) -> str:
+            out = io.StringIO()
+            with (
+                mock.patch.object(fc.sm, "claude_home", return_value=self.home),
+                mock.patch.object(fc, "aws", side_effect=fc.AwsError("off")),
+                contextlib.redirect_stdout(out),
+            ):
+                fc.local_main(False, UTC, hour("2026-10-14T17:00:00"), by_verb)
+            return out.getvalue()
+
+        lines = run(True).splitlines()
+        at = next(
+            i for i, ln in enumerate(lines) if ln.startswith(f"  {DAY} yesterday")
+        )
+        self.assertTrue(lines[at + 1].startswith("    by verb: task "), lines[at + 1])
+        self.assertNotIn("by verb", run(False))
+
+
 @unittest.skipIf(PACIFIC is None, "no tz database")
 class LocalDayTest(unittest.TestCase):
     def test_windows_keep_each_days_own_offset_across_dst(self) -> None:

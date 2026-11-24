@@ -732,6 +732,11 @@ class PassTests(unittest.TestCase):
                 "sessions": 4,
                 "subscription": 10.0,
                 "subscription_sessions": 1,
+                # `--by verb` fills every day; upkeep prints yesterday's.
+                "by_verb": [
+                    {"verb": "task", "dollars": 80.0, "sessions": 3},
+                    {"verb": "plan", "dollars": 20.0, "sessions": 2},
+                ],
             }
 
         on = billed == "ok"
@@ -799,13 +804,13 @@ class PassTests(unittest.TestCase):
         self.assertEqual(
             cost["days"],
             [
-                "2026-10-06: Bedrock $110.00 metered ($120.00 with the classifier) "
-                "vs $100.00 billed, drift +20.0% FLAGGED; subscription $41.50 at Bedrock "
-                "rates over 3 session(s), no bill line",
-                "2026-10-07: Bedrock $110.00 metered ($120.00 with the classifier) "
-                "vs $100.00 billed, drift n/a (provisional); subscription $41.50 at "
-                "Bedrock rates over 3 session(s), no bill line",
+                "10-06: $100.00 billed, drift +20.0% FLAGGED",
+                "10-07: $100.00 billed, drift n/a (provisional)",
             ],
+        )
+        # The local-day table leads the cost section.
+        self.assertLess(
+            self.report.index("local-cost"), self.report.index("fleet-cost")
         )
 
     def test_the_local_view_prints_every_day_past_the_list_cap(self):
@@ -825,6 +830,11 @@ class PassTests(unittest.TestCase):
             local["days"][-1],
             "last 7 days: billed $560.00 | metered $630.00 | subscription $70.00",
         )
+        # Yesterday alone carries its by-verb row, under its own line.
+        verb_rows = [r for r in local["days"] if "by verb" in r]
+        self.assertEqual(verb_rows, ["  by verb: task $80.00 (3) · plan $20.00 (2)"])
+        at = local["days"].index(verb_rows[0])
+        self.assertTrue(local["days"][at - 1].startswith("2026-10-07 yesterday:"))
         # Seven days, today and the week: none cut by the cap.
         self.assertGreater(len(local["days"]), upkeep.LIST_CAP)
         self.assertIn("  - last 7 days: billed $560.00", self.report)
@@ -1834,31 +1844,46 @@ class CliTests(unittest.TestCase):
 
 
 class CostDayLineTests(unittest.TestCase):
-    """The cost line carries the friction rollup only on a day that has one."""
+    """A settled day is one line, billed and drift; its friction is the
+    digest's, handed over in the calibration input."""
 
-    SUMMARY = {"substrates": {}, "reconcile": {"metered": 10.0}}
+    FRICTION = {
+        "spanned_sessions": 2,
+        "rebased_sessions": 1,
+        "stalled_sessions": 0,
+        "dollars_after": {"bedrock": 3.5},
+    }
+    SUMMARY = {
+        "substrates": {"subscription": {"dollars": 41.5, "sessions": 3}},
+        "reconcile": {"metered": 440.0, "billed_matched": 463.0, "drift": 0.045},
+    }
 
-    def test_friction_rides_the_day_line(self) -> None:
-        friction = {
-            "spanned_sessions": 2,
-            "rebased_sessions": 1,
-            "stalled_sessions": 0,
-            "dollars_after": {"bedrock": 3.5},
-        }
+    def test_a_settled_day_is_one_short_line(self) -> None:
         line = upkeep.cost_day_line(
-            "2026-10-12", {**self.SUMMARY, "friction": friction}
+            "2026-10-28", {**self.SUMMARY, "friction": self.FRICTION}
+        )
+        self.assertEqual(line, "10-28: $463.00 billed, drift +4.5%")
+
+    def test_the_flag_and_provisional_marks_survive(self) -> None:
+        flagged = {**self.SUMMARY, "reconcile": {**self.SUMMARY["reconcile"]}}
+        flagged["reconcile"]["flagged"] = True
+        self.assertEqual(
+            upkeep.cost_day_line("2026-10-28", flagged),
+            "10-28: $463.00 billed, drift +4.5% FLAGGED",
         )
         self.assertTrue(
-            line.endswith(
-                "no bill line; friction: 2 session(s) spanned a day, "
-                "1 rebased or re-enqueued, 0 stalled; $3.50 Bedrock after"
-            ),
-            line,
+            upkeep.cost_day_line(
+                "2026-10-29", {**self.SUMMARY, "provisional": True}
+            ).endswith(" (provisional)")
         )
 
-    def test_a_day_without_friction_has_no_suffix(self) -> None:
-        line = upkeep.cost_day_line("2026-10-12", self.SUMMARY)
-        self.assertTrue(line.endswith("no bill line"), line)
+    def test_the_friction_rides_the_digest_calibration(self) -> None:
+        ctx = make_ctx(FakeRun())
+        ctx.data["fleet_cost"] = {
+            "days": {"2026-10-28": {**self.SUMMARY, "friction": self.FRICTION}}
+        }
+        ctx.tool = lambda *a, **k: (0, "{}", "")
+        self.assertEqual(upkeep.digest_calibration(ctx)["friction"], self.FRICTION)
 
 
 if __name__ == "__main__":

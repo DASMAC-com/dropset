@@ -1563,6 +1563,113 @@ class ResidentProseLine(unittest.TestCase):
         self.assertNotIn("Resident instruction prose", md)
 
 
+def cache_request(at: str, written: int, read: int, msg_id: str) -> str:
+    """A billed main-loop request at ``at`` writing ``written`` and reading
+    ``read`` prefix tokens from the cache."""
+    return json.dumps(
+        {
+            "type": "assistant",
+            "timestamp": at,
+            "message": {
+                "id": msg_id,
+                "role": "assistant",
+                "model": MODEL,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 100,
+                    "cache_creation_input_tokens": written,
+                    "cache_read_input_tokens": read,
+                },
+                "content": [],
+            },
+        }
+    )
+
+
+class ColdReloadTests(unittest.TestCase):
+    """A gap past the TTL then a near-full cache write is one cold reload."""
+
+    def _finish(self, lines: list[str]) -> dict:
+        agg = sm.SessionAggregator()
+        for line in lines:
+            agg.ingest_main_line(line)
+        return agg.finish(sm.SUBSTRATE_BEDROCK)
+
+    def test_a_gap_past_the_ttl_then_a_full_write_counts_once(self):
+        report = self._finish(
+            [
+                cache_request("2026-11-20T10:00:00Z", 90_000, 0, "m1"),
+                cache_request("2026-11-20T10:02:00Z", 1_000, 90_000, "m2"),
+                # Overnight: the cache expired, so the whole prefix re-writes.
+                cache_request("2026-11-21T08:00:00Z", 91_000, 0, "m3"),
+                cache_request("2026-11-21T08:01:00Z", 500, 91_000, "m4"),
+            ]
+        )
+        cold = report["cold_reloads"]
+        self.assertEqual(cold.count, 1)
+        self.assertEqual(cold.by_model[MODEL].cache_creation, 91_000)
+        write_1h = sm.RATES_BY_MODEL[MODEL].cache_write_1h
+        self.assertAlmostEqual(cold.cost, 91_000 / 1_000_000 * write_1h)
+        line = sm.cost_line(report, "2026-11-21")
+        self.assertIn(f"· 1 cold reload ({sm.money(cold.cost)}), 2026-11-21", line)
+        self.assertIn(
+            "**Cold reloads**: 1 (a gap past the 60-minute TTL",
+            sm.to_markdown(report, "x"),
+        )
+
+    def test_a_gap_inside_the_ttl_is_warm_whatever_it_writes(self):
+        report = self._finish(
+            [
+                cache_request("2026-11-20T10:00:00Z", 90_000, 0, "m1"),
+                # 55 minutes: inside the measured hour.
+                cache_request("2026-11-20T10:55:00Z", 91_000, 0, "m2"),
+            ]
+        )
+        self.assertEqual(report["cold_reloads"].count, 0)
+
+    def test_a_long_gap_with_a_warm_cache_is_not_cold(self):
+        # A context change, not an expiry, re-writes a sliver: below half.
+        report = self._finish(
+            [
+                cache_request("2026-11-20T10:00:00Z", 90_000, 0, "m1"),
+                cache_request("2026-11-20T12:00:00Z", 20_000, 90_000, "m2"),
+            ]
+        )
+        self.assertEqual(report["cold_reloads"].count, 0)
+        self.assertIn("0 cold reloads", sm.to_brief(report, "x"))
+
+    def test_the_subscription_cost_line_counts_but_never_prices(self):
+        agg = sm.SessionAggregator()
+        agg.ingest_main_line(cache_request("2026-11-20T10:00:00Z", 90_000, 0, "m1"))
+        agg.ingest_main_line(cache_request("2026-11-20T14:00:00Z", 90_000, 0, "m2"))
+        line = sm.cost_line(agg.finish(sm.SUBSTRATE_SUBSCRIPTION), "d")
+        self.assertIn("· 1 cold reload, d", line)
+        self.assertNotIn("$", line)
+
+    def test_an_older_stamp_never_winds_the_clock_back(self):
+        # A spliced transcript: 10:00, then 12:00, then a stray 09:00, then
+        # 12:30 re-writing. Measured from 12:00 the last gap is 30 minutes.
+        report = self._finish(
+            [
+                cache_request("2026-11-20T10:00:00Z", 90_000, 0, "m1"),
+                cache_request("2026-11-20T12:00:00Z", 1_000, 90_000, "m2"),
+                cache_request("2026-11-20T09:00:00Z", 1_000, 90_000, "m3"),
+                cache_request("2026-11-20T12:30:00Z", 91_000, 0, "m4"),
+            ]
+        )
+        # m2 is past the TTL but warm; m4 is inside it from 12:00.
+        self.assertEqual(report["cold_reloads"].count, 0)
+
+    def test_json_carries_the_count(self):
+        report = self._finish(
+            [
+                cache_request("2026-11-20T10:00:00Z", 90_000, 0, "m1"),
+                cache_request("2026-11-20T14:00:00Z", 90_000, 0, "m2"),
+            ]
+        )
+        self.assertEqual(json.loads(sm.to_json(report))["cold_reloads"]["count"], 1)
+
+
 class ExitBrief(unittest.TestCase):
     """`--brief` and `--estimate-out`, the shell launcher's exit epilogue."""
 
@@ -1577,13 +1684,23 @@ class ExitBrief(unittest.TestCase):
         report = self._report(sm.SUBSTRATE_BEDROCK)
         brief = sm.to_brief(report, "abcd1234")
         self.assertEqual(brief.count("\n"), 1)
-        self.assertIn(f"about {sm.money(report['total_cost'].total())}", brief)
         verified = sm.RATES_BY_MODEL[MODEL].verified
-        self.assertIn(f"at Bedrock rates (rates verified {verified});", brief)
+        # The headline leads: dollars, turns, cache-hit, cold reloads.
+        self.assertTrue(
+            brief.startswith(
+                "Session abcd1234: {} · 1 turns · cache-hit 99% · 0 cold reloads, "
+                "at Bedrock rates (rates verified {});".format(
+                    sm.money(report["total_cost"].total()), verified
+                )
+            ),
+            brief,
+        )
         self.assertIn(
             f"main loop {sm.money(report['session_cost'].total())} on {MODEL}", brief
         )
-        self.assertIn("turns 1, peak prefix", brief)
+        # Peak prefix is the full report's alone.
+        self.assertNotIn("prefix", brief)
+        self.assertIn("peak", sm.to_markdown(report, "abcd1234"))
         self.assertNotIn("sub-agents", brief)
         self.assertTrue(brief.rstrip().endswith(sm.BRIEF_CODA))
 
@@ -1620,16 +1737,17 @@ class ExitBrief(unittest.TestCase):
         line = sm.cost_line(bedrock, "2026-10-27")
         self.assertEqual(
             line,
-            "**Cost actual**: {} estimate, 1 turns, peak prefix {}, 2026-10-27\n".format(
-                sm.money(bedrock["total_cost"].total()),
-                sm.human(bedrock["totals"].prefix_max),
-            ),
+            "**Cost actual**: {} estimate · 1 turns · cache-hit 99% · 0 cold "
+            "reloads, 2026-10-27\n".format(sm.money(bedrock["total_cost"].total())),
         )
         subscription = sm.cost_line(
             self._report(sm.SUBSTRATE_SUBSCRIPTION), "2026-10-27"
         )
-        self.assertTrue(subscription.startswith("**Token profile**: "))
-        self.assertNotIn("$", subscription)
+        self.assertEqual(
+            subscription,
+            "**Token profile**: 900 cache-read · 1 turns · cache-hit 99% · 0 cold "
+            "reloads, 2026-10-27\n",
+        )
         withheld = sm.cost_line(self._report(sm.SUBSTRATE_BEDROCK, "claude-x"), "d")
         self.assertIn("withheld, no Bedrock rate for claude-x", withheld)
 
@@ -1666,7 +1784,7 @@ class ExitBrief(unittest.TestCase):
                     ]
                 )
             self.assertEqual(rc, 0)
-            self.assertTrue(stdout.getvalue().startswith("Session sid: total about $"))
+            self.assertTrue(stdout.getvalue().startswith("Session sid: $"))
             self.assertNotIn("## Session metrics", stdout.getvalue())
             record = json.loads(out_path.read_text(encoding="utf-8"))
         report = self._report(sm.SUBSTRATE_BEDROCK)

@@ -9,7 +9,8 @@ itself, reads it (and its sub-agent transcripts) in its **own** process — so t
 multi-megabyte file never enters the model's context — and prints a compact,
 ranked summary: what the session cost, session-wide token totals, how far its
 replayed prefix grew, how much of that prefix was resident instruction prose (see
-:class:`ResidentLine`), a cache-hit rate, its rebases and day span with the spend
+:class:`ResidentLine`), a cache-hit rate and cold reloads (see
+:class:`ColdReloads`), its rebases and day span with the spend
 after each (see :class:`Friction`), its wait ledger (``wait_ledger.py``: the
 pool lock, CI, the verify race, the operator, idle and sub-agent wall clock,
 largest first), the tools whose results cost the most,
@@ -19,10 +20,12 @@ data as JSON. The sub-agent rollup sums per-turn input, which runs roughly an
 order of magnitude above the Agent tool's ``subagent_tokens`` for the same
 agent, since its context is re-sent every turn; never compare the two.
 
-``--brief`` prints the one-paragraph estimate (:func:`to_brief`): the total, the
-rates' verified date, the main loop and each sub-agent model's share, turns and
-peak prefix. ``--cost-line`` prints the one line a close appends to the issue
-(:func:`cost_line`), which ``close_session.py --session-id`` writes itself.
+``--brief`` prints the one-paragraph estimate (:func:`to_brief`), headlined
+``$X · N turns · cache-hit Y% · Z cold reloads ($W)``, then the rates' verified
+date and the main loop and each sub-agent model's share. ``--cost-line``
+prints the one line a close appends to the issue (:func:`cost_line`), which
+``close_session.py --session-id`` writes itself, under the same headline. Peak
+prefix is the full report's alone: it is right only while the cache is warm.
 
 **Dollars lead, on both substrates.** A Bedrock worker session is metered per
 token, so its headline is a dollar figure computed from its own transcript at
@@ -442,6 +445,57 @@ class DaySlice:
     subagents: dict[str, Tokens] = field(default_factory=dict)
     turns: int = 0
     rewarm: dict[str, Tokens] = field(default_factory=dict)
+
+
+# The prompt-cache TTL, measured rather than assumed: over 30 days of
+# transcripts (2026-11-23; 64 Bedrock and 18 subscription sessions), a gap
+# between two billed main-loop requests under 55 minutes was followed by a near-full
+# cache write twice in 5,405 pairs, and every gap past 65 minutes (32 pairs)
+# was. Both substrates hold the one-hour tier, so every write is priced at
+# `cache_write_1h` and the cold-reload test below keys on this bound
+# (`docs/conventions/context-economy.md` → "The prompt-cache TTL").
+CACHE_TTL_SECONDS = 3600
+# A request after a gap past the TTL is a **cold reload** when it wrote at
+# least this share of its prefix to the cache: the measured edge is sharp, and
+# a warm turn after a long tool result writes a small fraction, never half.
+COLD_WRITE_SHARE = 0.5
+
+
+@dataclass
+class ColdReloads:
+    """The main loop's cold reloads: requests after an idle gap past
+    :data:`CACHE_TTL_SECONDS` that re-wrote at least
+    :data:`COLD_WRITE_SHARE` of their prefix. ``by_model`` holds those
+    requests' cache writes; ``cost`` is the whole re-write at the write rate
+    (a warm turn would still have paid the cheaper read on the same prefix),
+    or ``None`` when a model has no rate."""
+
+    count: int = 0
+    by_model: dict[str, Tokens] = field(default_factory=dict)
+    cost: float | None = 0.0
+    _last: datetime.datetime | None = None
+
+    def observe(self, timestamp, usage: dict, model: str) -> None:
+        """Test one billed main-loop request against the previous one."""
+        stamp = utc_stamp(timestamp)
+        written = int(usage.get("cache_creation_input_tokens", 0) or 0)
+        prefix = (
+            written
+            + int(usage.get("input_tokens", 0) or 0)
+            + int(usage.get("cache_read_input_tokens", 0) or 0)
+        )
+        # An unstamped or all-zero request answers nothing about the cache.
+        if stamp is None or not prefix:
+            return
+        at = datetime.datetime.fromisoformat(stamp)
+        gap = None if self._last is None else (at - self._last).total_seconds()
+        # A spliced or resumed transcript can carry an older stamp after a
+        # newer one; the clock never runs back, or the next gap would inflate.
+        self._last = at if self._last is None else max(self._last, at)
+        if gap is not None and gap > CACHE_TTL_SECONDS:
+            if written >= COLD_WRITE_SHARE * prefix:
+                self.count += 1
+                self.by_model.setdefault(model, Tokens()).cache_creation += written
 
 
 def utc_stamp(value) -> str | None:
@@ -977,6 +1031,7 @@ class SessionAggregator:
         self.friction = Friction()
         # The wall clock spent waiting, windowed like the day slices.
         self.wait = wait_ledger.WaitLedger(since, until)
+        self.cold = ColdReloads()
         self._resident: list[ResidentLine] = []
         # Calibration state for the bytes-per-token proxy. Each new request's
         # prefix minus the previous request's prefix and output is what the
@@ -1107,6 +1162,7 @@ class SessionAggregator:
             # record (which repeats the same usage).
             if self._first_usage_sighting(msg.get("id")):
                 self.totals.add(usage, _model_of(msg))
+                self.cold.observe(rec.get("timestamp"), usage, _model_of(msg))
                 self._slice_main(rec, usage, _model_of(msg))
                 self._close_request(usage)
         content = msg.get("content")
@@ -1370,6 +1426,7 @@ class SessionAggregator:
 
         resident = self._resident_prose(total_input, unpriced_models)
         rebases, day_span = self.friction.finish()
+        self.cold.cost = price_or_none(self.cold.by_model)
 
         return {
             "totals": self.totals,
@@ -1382,6 +1439,7 @@ class SessionAggregator:
             "priced_models": priced_models,
             "unpriced_models": unpriced_models,
             "cache_hit_rate": cache_hit_rate,
+            "cold_reloads": self.cold,
             "tools": tools,
             "top_sinks": sinks,
             "subagents": subagents,
@@ -1899,6 +1957,21 @@ def to_markdown(report: dict, session_label: str) -> str:
             report["cache_hit_rate"] * 100.0
         )
     )
+    cold: ColdReloads = report["cold_reloads"]
+    out.append(
+        "**Cold reloads**: {} (a gap past the {}-minute TTL, then a cache "
+        "write of at least {:.0%} of the prefix){}\n".format(
+            cold.count,
+            CACHE_TTL_SECONDS // 60,
+            COLD_WRITE_SHARE,
+            ""
+            if not cold.count
+            else ", re-writing {} tokens{}".format(
+                human(sum(t.cache_creation for t in cold.by_model.values())),
+                "" if cold.cost is None else f" ({money(cold.cost)})",
+            ),
+        )
+    )
     out.append(_rebase_line(report["rebases"]))
     if report["day_span"].first is not None:
         out.append(_day_span_line(report["day_span"]))
@@ -2101,6 +2174,12 @@ def to_json(report: dict) -> str:
             }
         if isinstance(obj, wait_ledger.DimensionLine):
             return wait_ledger.to_dict(obj)
+        if isinstance(obj, ColdReloads):
+            return {
+                "count": obj.count,
+                "by_model": obj.by_model,
+                "cost": None if obj.cost is None else round(obj.cost, 6),
+            }
         if isinstance(obj, DaySlice):
             return {
                 "main": obj.main,
@@ -2415,22 +2494,42 @@ def _subagent_clause(subagents: list[SubAgentLine], sub: Cost) -> str:
     return f"sub-agents {money(sub.total())}, of which " + " and ".join(parts)
 
 
+def cache_profile(report: dict, priced: bool = True) -> str:
+    """``N turns · cache-hit Y% · Z cold reloads ($W)``: the headline's tail,
+    the figures that follow the money once the cache is the cost. The cold
+    reloads' price is left off when ``priced`` is false (the subscription's cost
+    line, whose dollars would be invented) or a model has no rate."""
+    cold: ColdReloads = report["cold_reloads"]
+    reloads = f"{cold.count} cold reload{'' if cold.count == 1 else 's'}"
+    if priced and cold.count and cold.cost is not None:
+        reloads += f" ({money(cold.cost)})"
+    return " · ".join(
+        [
+            f"{report['totals'].turns} turns",
+            f"cache-hit {report['cache_hit_rate'] * 100.0:.0f}%",
+            reloads,
+        ]
+    )
+
+
 def to_brief(report: dict, session_label: str) -> str:
     """The one-paragraph estimate a session prints at its close and the
-    launcher prints when it exits.
+    launcher prints when it exits, headlined
+    ``$X · N turns · cache-hit Y% · Z cold reloads ($W)``.
 
     Every substrate is priced at Bedrock rates. A subscription session's figure says it
     was not billed, so it reads as what the work would have cost and not as a
     bill. Only an unpriced model withholds the figure, as in `to_markdown`.
+    Peak prefix is the full report's: it is right only while the cache is warm.
     """
     totals: Totals = report["totals"]
     total: Cost | None = report["total_cost"]
-    profile = f"turns {totals.turns}, peak prefix {human(totals.prefix_max)}"
     if total is None:
         clauses = [
             "cost withheld, no Bedrock rate for {}".format(
                 ", ".join(report["unpriced_models"])
-            )
+            ),
+            cache_profile(report, priced=False),
         ]
     else:
         label = (
@@ -2440,7 +2539,7 @@ def to_brief(report: dict, session_label: str) -> str:
         )
         rates = _rates_note(report["priced_models"]) if report["priced_models"] else ""
         clauses = [
-            f"total about {money(total.total())} {label}"
+            f"{money(total.total())} · {cache_profile(report)}, {label}"
             + (f" ({rates})" if rates else "")
         ]
         main_models = _heaviest_models(totals.by_model)
@@ -2451,7 +2550,6 @@ def to_brief(report: dict, session_label: str) -> str:
         sub: Cost = report["subagent_cost"]
         if sub.total() > 0.0:
             clauses.append(_subagent_clause(report["subagents"], sub))
-    clauses.append(profile)
     return f"Session {session_label}: {'; '.join(clauses)}. {BRIEF_CODA}\n"
 
 
@@ -2459,18 +2557,21 @@ def cost_line(report: dict, day: str) -> str:
     """The one line a close appends to the session's issue, marked estimate:
     the dollar form on Bedrock, the token profile on the subscription, whose dollar
     figure would be invented (`docs/conventions/context-economy.md` →
-    "Cost bands")."""
-    totals: Totals = report["totals"]
-    tail = f"{totals.turns} turns, peak prefix {human(totals.prefix_max)}, {day}"
+    "Cost bands"). Both carry :func:`cache_profile`."""
     if report["substrate"] != SUBSTRATE_BEDROCK:
-        return f"**Token profile**: {human(totals.cache_read)} cache-read, {tail}\n"
+        profile = cache_profile(report, priced=False)
+        return (
+            f"**Token profile**: {human(report['totals'].cache_read)} cache-read "
+            f"· {profile}, {day}\n"
+        )
     total: Cost | None = report["total_cost"]
-    figure = (
-        f"{money(total.total())} estimate"
-        if total is not None
-        else "withheld, no Bedrock rate for " + ", ".join(report["unpriced_models"])
+    if total is None:
+        figure = "withheld, no Bedrock rate for " + ", ".join(report["unpriced_models"])
+        return f"**Cost actual**: {figure} · {cache_profile(report, False)}, {day}\n"
+    return (
+        f"**Cost actual**: {money(total.total())} estimate · "
+        f"{cache_profile(report)}, {day}\n"
     )
-    return f"**Cost actual**: {figure}, {tail}\n"
 
 
 def session_cost_line(session_id: str, substrate: str | None = None) -> str:

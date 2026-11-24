@@ -62,9 +62,11 @@ refuses the whole pass, since every later step assumes it.
     (``skill_size --utilization``), allowlist cruft, and the
     monthly refresh gate — mining the recent session digests when due and
     stamping the marker whatever the yield, writing no allow-rule;
-12. the fleet cost: ``fleet_cost reconcile`` per settled UTC day (Bedrock
-    metered beside the bill, with its drift flag), then ``fleet_cost local``,
-    the last seven local days and today so far, billed beside metered;
+12. the fleet cost: ``fleet_cost local --by verb`` first, the last seven
+    local days and today so far, billed beside metered, with yesterday's
+    by-verb row under its line; then ``fleet_cost reconcile``, one line per
+    UTC day (billed and drift, with its flag), the friction left to the
+    digest;
 13. the session digest (``session_metrics digest``) over every transcript since
     the last digest's window closed, its rate-calibration line fed by step 12's
     reconcile figure and the settled day's ``fleet_cost rates`` read, and its
@@ -779,9 +781,12 @@ def step_checks(ctx: Ctx) -> None:
 
 
 def cost_day_line(day: str, summary: dict) -> str:
-    """One reconciled day: Bedrock against its bill, the subscription as metered alone."""
+    """One reconciled day, ``10-28: $463 billed, drift +4.5%``: ruling 28's
+    drift guard against the bill, and nothing more. The metered and
+    subscription figures are the local-day table's, which leads the section,
+    and the friction sentence is the digest's (`digest_calibration`), where
+    the fold acts on it."""
     rec = summary.get("reconcile") or {}
-    subscription = summary["substrates"].get(fleet_cost.SUBSCRIPTION) or {}
     mark = (
         " (provisional)"
         if summary.get("provisional")
@@ -789,25 +794,55 @@ def cost_day_line(day: str, summary: dict) -> str:
         if rec.get("flagged")
         else ""
     )
-    line = (
-        f"{day}: Bedrock {fleet_cost.money(rec.get('metered', 0.0))} metered "
-        f"({fleet_cost.money(rec.get('expected', 0.0))} with the classifier) vs "
-        f"{fleet_cost.money(rec.get('billed_matched', 0.0))} billed, drift "
-        f"{fleet_cost.pct(rec.get('drift'))}{mark}; subscription "
-        f"{fleet_cost.money(subscription.get('dollars', 0.0))} at Bedrock rates over "
-        f"{subscription.get('sessions', 0)} session(s), no bill line"
+    return (
+        f"{day[5:]}: {fleet_cost.money(rec.get('billed_matched', 0.0))} billed, "
+        f"drift {fleet_cost.pct(rec.get('drift'))}{mark}"
     )
-    friction = summary.get("friction")
-    if friction:
-        line += "; friction: " + fleet_cost.render_friction(friction)
-    return line
+
+
+def local_cost_rows(local: dict) -> list[str]:
+    """The local-day table, yesterday's by-verb row under its line: the one
+    full day the operator acts on, so the other days stay one line each."""
+    state = local.get("billed", "")
+    rows = []
+    for row in local.get("days", []):
+        rows.append(fleet_cost.local_row(row, state))
+        if row.get("label") == "yesterday" and "by_verb" in row:
+            rows.append("  " + fleet_cost.render_verbs(row["by_verb"]))
+    rows.append(fleet_cost.local_week(local))
+    return rows
 
 
 def step_cost(ctx: Ctx) -> None:
+    # The operator's own day, midnight to midnight in the machine zone, leads
+    # the section. A billed column the hourly preference leaves off is a
+    # state, not a failed read.
+    local = _json_tool(
+        ctx,
+        "local-cost",
+        "fleet_cost.py",
+        "local",
+        "--json",
+        "--by",
+        "verb",
+        ok_rcs=(0,),
+        timeout=TIMEOUT_COST,
+    )
+    if local is not None:
+        rows = local_cost_rows(local)
+        ctx.record(
+            "local-cost",
+            fleet_cost.local_heading(local),
+            ok=local.get("billed", "") in ("ok", fleet_cost.HOURLY_OFF)
+            and not local.get("unreadable_transcripts"),
+            days=rows,
+            # Every day is the table; the list cap would cut the newest.
+            list_cap=len(rows),
+        )
     # Exit 1 is a settled day flagged: a finding the report carries, not a
     # failed read. Exit 2 (an AWS error, expired credentials included) is. A
     # failed AWS preflight skips the reconcile alone: the local-day table
-    # below meters transcripts and only marks its billed column unread.
+    # above meters transcripts and only marks its billed column unread.
     aws_down = (ctx.data.get("auth") or {}).get("aws")
     if aws_down:
         ctx.record("fleet-cost", f"skipped — {aws_down}", False)
@@ -844,30 +879,6 @@ def step_cost(ctx: Ctx) -> None:
             ok=bool(days) and not unreadable,
             days=[cost_day_line(d, s) for d, s in days],
         )
-    # The operator's own day, midnight to midnight in the machine zone. A billed
-    # column the hourly preference leaves off is a state, not a failed read.
-    local = _json_tool(
-        ctx,
-        "local-cost",
-        "fleet_cost.py",
-        "local",
-        "--json",
-        ok_rcs=(0,),
-        timeout=TIMEOUT_COST,
-    )
-    if local is not None:
-        state = local.get("billed", "")
-        rows = [fleet_cost.local_row(r, state) for r in local.get("days", [])]
-        rows.append(fleet_cost.local_week(local))
-        ctx.record(
-            "local-cost",
-            fleet_cost.local_heading(local),
-            ok=state in ("ok", fleet_cost.HOURLY_OFF)
-            and not local.get("unreadable_transcripts"),
-            days=rows,
-            # Every day is the table; the list cap would cut the newest.
-            list_cap=len(rows),
-        )
 
 
 def digest_calibration(ctx: Ctx) -> dict:
@@ -885,6 +896,10 @@ def digest_calibration(ctx: Ctx) -> dict:
         "day": day,
         "tolerance": report.get("tolerance", fleet_cost.DEFAULT_TOLERANCE),
         "reconcile": days[day].get("reconcile") or {},
+        # The settled day's friction, which left the reconcile line for the
+        # digest the fold reads. Only this day's: on a by-hand multi-day
+        # catch-up the other days' friction is not carried.
+        "friction": days[day].get("friction"),
     }
     # Exit 1 is a row that misses its bill: a finding the digest flags.
     rc, stdout, err = ctx.tool(

@@ -526,6 +526,12 @@ def calibration_lines(calibration: dict | None, flags: list[str]) -> list[str]:
         line += " FLAGGED"
         flags.append(f"{day} Bedrock drift {_pct(rec.get('drift'))}")
     lines = [line]
+    # The day's friction moved here from the upkeep reconcile line: the fold
+    # is what acts on it.
+    if calibration.get("friction"):
+        lines.append(
+            f"- friction: {fleet_cost.render_friction(calibration['friction'])}"
+        )
     if calibration.get("rates_error"):
         lines.append(f"- rate rows not read — {calibration['rates_error']}")
         return lines
