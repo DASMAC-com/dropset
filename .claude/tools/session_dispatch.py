@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# cspell:word commenters
 """Open a new iTerm tab per session verb and type the verb into it.
 
 A board session's dispatch arm (the scheduler's, or the curator's for an
@@ -54,6 +55,13 @@ halts the fleet: the batch is admitted under the total alone, and the dispatch
 says why — unless the total itself is unset, which holds the whole batch and
 names the variable. `fleet_resume.py` runs the same gate over its resume list,
 which is why the gate is public here rather than inlined in `run`.
+
+**The knobs are read at call time** from the runtime config (the profile the
+manifest `.claude/shell/runtime-config.manifest.json` describes), not from the
+calling shell, which holds whatever it was launched with: a long-lived
+scheduler tab would otherwise refuse every dispatch at a total raised since.
+A knob where the shell and the config disagree prints a note naming both; an
+unreadable config falls back to the environment.
 """
 
 from __future__ import annotations
@@ -406,8 +414,118 @@ def recorded_class(directory: Path, number: str) -> str:
     return BUILDING
 
 
-def probe(slots: list[Slot], directory: Path) -> dict:
-    """One machine-load reading as the probe's JSON.
+#: The probe's knobs, read from the runtime config at call time. One per line:
+#: the manifest check reads a `("NAME", value)` pair as a default.
+FLEET_KNOBS = (
+    "DS_FLEET_TOTAL",
+    "DS_FLEET_CPU_LOAD_MAX",
+    "DS_FLEET_BUILD_WAIT_S",
+    "DS_FLEET_RESERVE_GB",
+)
+
+#: A `DS_*` name, and a value that is a plain literal once unquoted: a
+#: number, a word, a path. Anything else (`$`, a backtick, a substitution) is
+#: not read.
+_DS_NAME = re.compile(r"DS_[A-Z0-9_]+")
+_LITERAL = re.compile(r"[A-Za-z0-9._/:+-]*")
+#: The builtins that assign (or clear) a variable in the current shell.
+_DECLARERS = ("export", "typeset", "declare", "local", "readonly")
+
+
+def runtime_config_path() -> Path:
+    """The untracked runtime config: the zsh profile that sources `init.zsh`."""
+    return Path(os.environ.get("ZDOTDIR") or Path.home()) / ".zshrc"
+
+
+def _first_command(line: str) -> list[str]:
+    """The words of the line's first command: quotes removed, a comment
+    dropped, stopped at `;` `&` `|`. Empty on a line the lexer refuses."""
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=";&|()")
+    lexer.whitespace_split = True
+    lexer.commenters = "#"
+    words: list[str] = []
+    try:
+        for word in lexer:
+            if word and all(ch in ";&|()" for ch in word):
+                break
+            words.append(word)
+    except ValueError:
+        return []
+    return words
+
+
+def read_runtime_config(path: Path) -> dict[str, str] | None:
+    """The literal `DS_*` values the profile leaves set, as zsh would, or
+    `None` when it cannot be read.
+
+    Only COLUMN-ZERO lines count: an indented assignment is presumed to sit in
+    a function or conditional body, which a line scan cannot evaluate, so it is
+    left to the environment rather than guessed at. On each line only the
+    first command is read: `NAME=v`, or `export` / `typeset` / `declare` with
+    any number of `NAME=v` words (flags skipped), while `unset NAME` clears
+    one. A `NAME=v cmd` prefix sets the variable for that command alone, so it
+    is skipped; a value that is not a plain literal is skipped too.
+    """
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return None
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line[:1].isalpha():
+            continue
+        words = _first_command(line)
+        if not words:
+            continue
+        if words[0] == "unset":
+            for name in words[1:]:
+                values.pop(name, None)
+            continue
+        if words[0] in _DECLARERS:
+            assigns = [w for w in words[1:] if not w.startswith("-")]
+        elif all("=" in w for w in words):
+            assigns = words
+        else:
+            continue  # a command, or a `NAME=v cmd` prefix
+        for word in assigns:
+            name, eq, value = word.partition("=")
+            if eq and _DS_NAME.fullmatch(name) and _LITERAL.fullmatch(value):
+                values[name] = value
+    return values
+
+
+def fleet_env(env, path: Path) -> tuple[dict[str, str], list[str]]:
+    """The environment with the fleet knobs taken from the runtime config.
+
+    A long-lived scheduler or curator tab holds the knobs it was launched
+    with, so a value raised in the config since then never reaches it through
+    the environment. The config wins for every knob it sets, and a knob where
+    the two disagree gets a note, so the stale shell is visible. An unreadable
+    config leaves the environment as it is, and says so.
+    """
+    merged = dict(env)
+    config = read_runtime_config(path)
+    if config is None:
+        return merged, [
+            f"runtime config {path} unreadable; fleet knobs from the environment"
+        ]
+    notes = []
+    for name in FLEET_KNOBS:
+        if name not in config:
+            continue
+        held = env.get(name)
+        if held is not None and held != config[name]:
+            notes.append(
+                f"{name}: this shell holds {held}, the runtime config "
+                f"{config[name]}; using {config[name]} (a stale tab, reopen it)"
+            )
+        merged[name] = config[name]
+    return merged, notes
+
+
+def probe(slots: list[Slot], directory: Path, env=None) -> dict:
+    """One machine-load reading as the probe's JSON, the probe run under `env`
+    (this process's environment when `None`).
 
     Anything that is not a reading — exit 3, a crash, a timeout, output that is
     not the JSON shape — comes back as the probe's own no-reading shape, so the
@@ -428,6 +546,7 @@ def probe(slots: list[Slot], directory: Path) -> dict:
             capture_output=True,
             text=True,
             timeout=60,
+            env=env,
         )
         reading = json.loads(proc.stdout)
         if isinstance(reading, dict) and ("verdict" in reading or "error" in reading):
@@ -561,14 +680,19 @@ def gate(
     A hold on the pool-lock wait is re-probed once before it stands: the probe
     takes one snapshot, and a build caught between two children reads as a
     waiter. That error leans toward refusing, and a second reading heals it.
+
+    With no `env`, the fleet knobs come from the runtime config at call time
+    (`fleet_env`), and the probe runs under the result.
     """
     reader = reader or probe
-    env = os.environ if env is None else env
-    reading = reader(slots, directory)
+    config_notes: list[str] = []
+    if env is None:
+        env, config_notes = fleet_env(os.environ, runtime_config_path())
+    reading = reader(slots, directory, env=env)
     has_reading = "verdict" in reading
     if has_reading:
         total = int(reading["knobs"]["total"])
-        notes = []
+        notes = list(config_notes)
     else:
         # The probe's own knob parse, so the total means the same number in
         # both places; `physical` feeds only the memory reserve, unused here.
@@ -580,11 +704,12 @@ def gate(
                 admitted=[],
                 held=[(slot, str(exc)) for slot in slots],
                 remedies=["the knob set in the runtime config"],
-                notes=[f"no machine reading ({reading.get('error', 'unknown')})"],
+                notes=config_notes
+                + [f"no machine reading ({reading.get('error', 'unknown')})"],
                 overridden=[],
             )
         total = knobs.total
-        notes = list(knobs.notes)
+        notes = config_notes + list(knobs.notes)
         notes.append(
             f"no machine reading ({reading.get('error', 'unknown')}); "
             f"admitting under the total {total} alone"
@@ -593,7 +718,7 @@ def gate(
     if has_reading and not over_budget and any("wait" in why for _, why in held):
         # The first reading stands unless the second is one: its holds are
         # rendered from whichever reading produced them.
-        second = reader(slots, directory)
+        second = reader(slots, directory, env=env)
         if "verdict" in second:
             reading = second
             admitted, held = _admit(slots, reading, total, over_budget)

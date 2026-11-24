@@ -427,7 +427,13 @@ class Cli(unittest.TestCase):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         self.state = Path(scratch.name)
-        for name, value in (("probe", self.probe), ("state_dir", lambda: self.state)):
+        # The runtime config is a scratch path that does not exist, so the gate
+        # keeps the patched environment rather than reading the real profile.
+        for name, value in (
+            ("probe", self.probe),
+            ("state_dir", lambda: self.state),
+            ("runtime_config_path", lambda: self.state / "absent-zshrc"),
+        ):
             patcher = mock.patch.object(fr.session_dispatch, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)

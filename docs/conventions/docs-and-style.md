@@ -39,6 +39,15 @@ mid-line glues the rest of that line onto the replacement and builds
 the very overlong line the fix was for. The same holds for yamllint's
 line length.
 
+**Or let the tool do it.** `.claude/tools/rewrap.py <path> --line N` (or
+`--anchor <text>`) re-flows the one paragraph, list item or `#` comment block
+holding that line to the cap its linter applies. That is 80 for markdown and for
+YAML, Makefile, Dockerfile and TOML comments, `--width` for anything else. It
+keeps quote and list-marker prefixes and indentation, never breaks a code span,
+refuses a fence or the front matter, and prints only the changed range. It is
+the default response to an MD013 or yamllint line-length failure, and the
+cheapest way to settle a paragraph after any edit that changed a line's length.
+
 **Never place a line wrap inside an inline code span.** `mdformat`
 rejoins a line break that falls between backticks, and the rejoined
 line is then long enough for markdownlint to fail it on MD013 — so the

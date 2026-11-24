@@ -1344,6 +1344,15 @@ same way while the pool is on ("The cargo pool"). The launcher exports
 each knob it checked once they pass, since the probe and cargo read their
 environment and a plain profile assignment would not reach them.
 
+The dispatcher (`session_dispatch.py`, and `fleet_resume.py` through its
+gate) does not trust that export: a long-lived scheduler or curator tab
+holds the value it was launched with. It re-reads the four `DS_FLEET_*`
+knobs from the profile (`$ZDOTDIR/.zshrc`, else `~/.zshrc`) at call time,
+runs the probe under them, and prints a note naming both values when the
+shell disagrees. Only literal assignments at column zero are read, so a knob
+set inside a function or conditional, a knob the profile does not set, and
+an unreadable profile all fall back to the environment.
+
 | Knob                    | Default      | Bounds                                                               |
 | ----------------------- | ------------ | -------------------------------------------------------------------- |
 | `DS_FLEET_TOTAL`        | required     | live top-level clients of every class at once                        |

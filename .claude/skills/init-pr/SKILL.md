@@ -266,8 +266,10 @@ The reminders neither states:
   mdformat rewraps, so a one-line fix pushes the overflow down a line
   and costs a lint run per line; and an `old_string` that ends mid-line
   glues that line's tail onto the replacement. On an MD013 (or
-  yamllint line-length) failure, read the whole paragraph once and
-  rewrap it, never the single flagged line
+  yamllint line-length) failure, run
+  `python3 .claude/tools/rewrap.py <path> --line N` on the flagged
+  line, which re-flows its whole paragraph or comment block in one
+  call, never a hand fix of the single line
   (`docs/conventions/docs-and-style.md` → "Line length").
 
 - **Don't re-derive a diff.** Read a `review_diff.py --split` diff

@@ -910,6 +910,102 @@ class CliTests(unittest.TestCase):
             )
 
 
+class AroundTests(unittest.TestCase):
+    """``--around LINE`` prints one file's window, its matches marked."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        body = "".join(
+            f"line {n}{' needle' if n in (9, 30) else ''}\n" for n in range(1, 41)
+        )
+        (self.root / "one.rs").write_text(body, encoding="utf-8")
+        (self.root / "two.rs").write_text(body, encoding="utf-8")
+        self.cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, self.cwd)
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = ss.run(["search_source.py"] + argv)
+        return code, out.getvalue().splitlines(), err.getvalue()
+
+    def test_the_window_is_numbered_and_bounded_by_the_span(self):
+        code, lines, err = self._run(
+            ["--around", "10", "--span", "2", "--glob", "one.rs"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            lines,
+            [
+                f"one.rs:{n}:line {n}" + (" needle" if n == 9 else "")
+                for n in range(8, 13)
+            ],
+        )
+        self.assertIn("around 10 ±2 in one.rs (lines 8-12 of 40)", err)
+
+    def test_the_default_span_is_fifteen_and_clips_at_the_file_s_ends(self):
+        _, lines, err = self._run(["--around", "3", "--glob", "one.rs"])
+        self.assertEqual(len(lines), 18)
+        self.assertIn("(lines 1-18 of 40)", err)
+
+    def test_a_pattern_marks_its_hits_and_counts_only_the_window(self):
+        code, lines, err = self._run(
+            ["needle", "--around", "10", "--span", "2", "--glob", "one.rs"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("one.rs:9:line 9 needle", lines)
+        self.assertIn("one.rs-10-line 10", lines)
+        self.assertIn("1 match(es) in the window", err)
+
+    def test_no_hit_in_the_window_exits_one(self):
+        code, _, err = self._run(
+            ["needle", "--around", "20", "--span", "2", "--glob", "one.rs"]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("0 match(es) in the window", err)
+
+    def test_a_scope_that_is_not_one_file_is_refused(self):
+        for scope in (["--glob", "*.rs"], ["--glob", "one.rs,two.rs"], []):
+            with self.subTest(scope=scope):
+                with self.assertRaisesRegex(ss.SearchSourceError, "exactly one file"):
+                    self._run(["--around", "5", *scope])
+
+    def test_a_single_file_dir_is_one_file_too(self):
+        code, lines, _ = self._run(["--around", "5", "--span", "0", "--dir", "one.rs"])
+        self.assertEqual((code, lines), (0, ["one.rs:5:line 5"]))
+
+    def test_locations_and_a_negative_span_are_refused(self):
+        for argv, message in (
+            (["x", "--around", "5", "--locations", "--glob", "one.rs"], "alternatives"),
+            (["--around", "5", "--span", "-1", "--glob", "one.rs"], "--span from 0"),
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaisesRegex(ss.SearchSourceError, message):
+                    self._run(argv)
+
+    def test_conflicting_and_orphan_flags_are_refused(self):
+        for argv, message in (
+            (
+                ["x", "--around", "5", "--context", "2", "--glob", "one.rs"],
+                "alternatives",
+            ),
+            (
+                ["x", "--around", "5", "--files-only", "--glob", "one.rs"],
+                "alternatives",
+            ),
+            (["x", "--span", "4", "--glob", "one.rs"], "--around, which was not given"),
+            (["--glob", "one.rs"], "pattern is required"),
+            (["--around", "0", "--glob", "one.rs"], "line from 1"),
+            (["--around", "41", "--glob", "one.rs"], "past the end"),
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaisesRegex(ss.SearchSourceError, message):
+                    self._run(argv)
+
+
 class SingleFileContextRefusalTests(unittest.TestCase):
     """Once the scope is one named file, a wide context window is refused.
 
@@ -949,7 +1045,7 @@ class SingleFileContextRefusalTests(unittest.TestCase):
         _, printed = self._run(["needle", "--glob", "one.rs", "--context", "9"])
         self.assertIn("clamped", printed)
         self.assertIn("one.rs", printed)
-        self.assertIn("offset/limit", printed)
+        self.assertIn("--around <line>", printed)
 
     def test_the_clamp_note_rides_the_summary_line(self):
         # It used to be a trailing stderr write, while this tool's own comment

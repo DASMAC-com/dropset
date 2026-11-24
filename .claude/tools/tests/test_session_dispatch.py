@@ -89,23 +89,30 @@ class Readings:
     def __init__(self, *readings):
         self.readings = list(readings)
         self.calls = 0
+        self.env = None
 
-    def __call__(self, _slots, _directory):
+    def __call__(self, _slots, _directory, env=None):
         self.calls += 1
+        self.env = env
         return self.readings[min(self.calls, len(self.readings)) - 1]
 
 
-def stub_gate(case, *readings, bodies=None):
-    """Patch the probe, the state directory and the body fetch for `run`."""
+def stub_gate(case, *readings, bodies=None, config=""):
+    """Patch the probe, the state directory, the body fetch and the runtime
+    config (`config` its text, `None` for an unreadable one) for `run`."""
     probe = Readings(*(readings or (reading(),)))
     scratch = tempfile.TemporaryDirectory()
     case.addCleanup(scratch.cleanup)
     directory = Path(scratch.name)
+    profile = directory / "zshrc"
+    if config is not None:
+        profile.write_text(config)
     bodies = bodies or {}
     for name, value in (
         ("probe", probe),
         ("state_dir", lambda: directory),
         ("fetch_body", lambda number: bodies.get(number, "")),
+        ("runtime_config_path", lambda: profile),
     ):
         original = getattr(session_dispatch, name)
         setattr(session_dispatch, name, value)
@@ -1065,10 +1072,34 @@ class Probe(unittest.TestCase):
         self.assertTrue(argv[1].endswith("machine_load.py"))
         self.assertEqual(argv[2:], ["--json", "--sessions", "2", "--state-dir", "/s"])
 
+    def test_the_probe_runs_under_the_env_it_is_handed(self):
+        # The stale-tab fix on the real-reading path: the merged knobs must
+        # reach the probe's own process, not only the in-process fallback.
+        env = {**FLEET, "DS_FLEET_TOTAL": "20"}
+        with unittest.mock.patch.object(
+            session_dispatch.subprocess,
+            "run",
+            return_value=unittest.mock.Mock(stdout=""),
+        ) as run:
+            session_dispatch.probe([slot(["task", "1"])], Path("/s"), env=env)
+        self.assertEqual(run.call_args.kwargs["env"]["DS_FLEET_TOTAL"], "20")
+
+    def test_the_wait_re_probe_runs_under_the_same_env(self):
+        waiting = reading(slots=0, reasons=["wait"], longest=465, waiting=1)
+        seen = []
+
+        def reader(_slots, _directory, env=None):
+            seen.append(env)
+            return waiting
+
+        env = {**FLEET, "DS_FLEET_TOTAL": "20"}
+        session_dispatch.gate([slot(["task", "1"])], Path("/s"), env=env, reader=reader)
+        self.assertEqual(seen, [env, env])
+
 
 class GatedRun(unittest.TestCase):
-    def _run(self, *argv, readings=(), bodies=None, ttys=None):
-        _, directory = stub_gate(self, *readings, bodies=bodies)
+    def _run(self, *argv, readings=(), bodies=None, ttys=None, config=""):
+        self.probe, directory = stub_gate(self, *readings, bodies=bodies, config=config)
         seen = []
 
         def fake(commands, roles=None):
@@ -1136,6 +1167,89 @@ class GatedRun(unittest.TestCase):
             rc, seen, _, err, _ = self._run("task", "1", readings=(NO_READING,))
         self.assertEqual((rc, seen), (0, [["task 1"]]))
         self.assertIn("no machine reading (not Darwin (Linux))", err)
+
+    def test_a_stale_shell_total_yields_to_the_runtime_config_and_says_so(self):
+        # The tab was launched at 12; the profile has since been raised to 20.
+        config = "export DS_FLEET_TOTAL=20  # raised\nDS_FLEET_CPU_LOAD_MAX='16'\n"
+        stale = {**FLEET, "DS_FLEET_TOTAL": "12"}
+        with unittest.mock.patch.dict(os.environ, stale):
+            rc, seen, _, err, _ = self._run(
+                "task", "1", readings=(NO_READING,), config=config
+            )
+        self.assertEqual((rc, seen), (0, [["task 1"]]))
+        self.assertEqual(self.probe.env["DS_FLEET_TOTAL"], "20")
+        self.assertIn("DS_FLEET_TOTAL: this shell holds 12, the runtime config 20", err)
+        self.assertIn("admitting under the total 20 alone", err)
+        self.assertNotIn("DS_FLEET_CPU_LOAD_MAX:", err)
+
+    def test_an_unreadable_runtime_config_falls_back_to_the_environment(self):
+        stale = {**FLEET, "DS_FLEET_TOTAL": "12"}
+        with unittest.mock.patch.dict(os.environ, stale):
+            rc, _, _, err, _ = self._run(
+                "task", "1", readings=(NO_READING,), config=None
+            )
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.probe.env["DS_FLEET_TOTAL"], "12")
+        self.assertIn("unreadable; fleet knobs from the environment", err)
+        self.assertIn("admitting under the total 12 alone", err)
+
+
+class RuntimeConfig(unittest.TestCase):
+    def _read(self, text):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "zshrc"
+            path.write_text(text)
+            return session_dispatch.read_runtime_config(path)
+
+    def test_literal_assignments_parse_and_the_last_wins(self):
+        got = self._read(
+            "DS_FLEET_TOTAL=8\n"
+            'export DS_FLEET_TOTAL="16"\n'
+            "typeset -x DS_FLEET_RESERVE_GB=6 # comment\n"
+            "# DS_FLEET_BUILD_WAIT_S=99\n"
+            "NOT_OURS=1\n"
+        )
+        self.assertEqual(got, {"DS_FLEET_TOTAL": "16", "DS_FLEET_RESERVE_GB": "6"})
+
+    def test_an_expansion_is_not_a_literal(self):
+        got = self._read('DS_FLEET_TOTAL=$(nproc)\nDS_FLEET_CPU_LOAD_MAX="$X"\n')
+        self.assertEqual(got, {})
+
+    def test_an_indented_assignment_in_a_body_is_left_to_the_environment(self):
+        # A line scan cannot evaluate a branch or a function, so the textually
+        # last assignment would win on every host or call; it is not read.
+        got = self._read(
+            "DS_FLEET_TOTAL=16\n"
+            "if [[ $HOST == mini ]]; then\n"
+            "  export DS_FLEET_TOTAL=8\n"
+            "fi\n"
+            "ds_low() {\n"
+            "  export DS_FLEET_TOTAL=4\n"
+            "}\n"
+        )
+        self.assertEqual(got, {"DS_FLEET_TOTAL": "16"})
+
+    def test_only_the_first_command_is_read_and_unset_clears(self):
+        got = self._read(
+            "DS_FLEET_TOTAL=20; echo hi\n"
+            "export DS_FLEET_CPU_LOAD_MAX=8 DS_FLEET_RESERVE_GB=6\n"
+            "DS_FLEET_BUILD_WAIT_S=30 some_command\n"
+            "unset DS_FLEET_RESERVE_GB\n"
+        )
+        self.assertEqual(got, {"DS_FLEET_TOTAL": "20", "DS_FLEET_CPU_LOAD_MAX": "8"})
+
+    def test_a_missing_file_is_unreadable(self):
+        self.assertIsNone(session_dispatch.read_runtime_config(Path("/nonexistent/z")))
+
+    def test_a_knob_the_config_leaves_unset_keeps_the_environment_s(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "zshrc"
+            path.write_text("DS_FLEET_TOTAL=16\n")
+            env, notes = session_dispatch.fleet_env(
+                {"DS_FLEET_TOTAL": "16", "DS_FLEET_BUILD_WAIT_S": "30"}, path
+            )
+        self.assertEqual(env["DS_FLEET_BUILD_WAIT_S"], "30")
+        self.assertEqual(notes, [])
 
 
 if __name__ == "__main__":
