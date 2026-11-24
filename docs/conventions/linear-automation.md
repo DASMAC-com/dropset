@@ -969,7 +969,8 @@ launches on the subscription; an architect thread titled
 launches as `architect <n>`, on Bedrock. The token stays required — a
 bare `chore`, `explore` or `architect` refuses a title without one —
 and a typed substrate word (`chore anthropic 1234`) remains the
-override and the path when Linear is unreachable. The verb table it
+override where the title names no substrate, and the path when Linear
+is unreachable; one that contradicts the token refuses. The verb table it
 reads against is in `local-integrations.md` → "The verb table".
 
 - **One elision.** A title with no token is `Task` on `Bedrock`. Every

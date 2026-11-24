@@ -1822,7 +1822,7 @@ names alive was the outcome to avoid.
 | Verb              | Job                                        | Substrate             | Tier      | Sub-agents          | Title token               |
 | ----------------- | ------------------------------------------ | --------------------- | --------- | ------------------- | ------------------------- |
 | `task <n>`        | worktree session on Linear task n          | the token's, Bedrock  | executor  | the session's       | none (the one elision)    |
-| `task [s] <n>`    | same, the substrate typed (the override)   | `[s]`                 | executor  | the session's       | `[Task/Anthropic]`, none  |
+| `task [s] <n>`    | same, the substrate typed (must agree)     | `[s]`                 | executor  | the session's       | `[Task/Anthropic]`, none  |
 | `task resume [n]` | resume by number (bare = the picker)       | as recorded           | re-pinned | as recorded         | —                         |
 | `explore <n>`     | research / audit, read-only, temp worktree | the token's, or `[s]` | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
 | `chore <n>`       | minor non-repo job, base checkout, no PR   | the token's, or `[s]` | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
@@ -1842,9 +1842,11 @@ on 1234 launches as `chore 1234` (the grammar is in
 `linear-automation.md` → "The verb/substrate title token"). The token
 stays required: with none, `task <n>` launches on Bedrock (the one
 elision) and the other three refuse, naming the token to add or the
-word to type. A typed word is the override, and the only path for
-those three when Linear is unreachable; a bare `task` then falls back
-to its configured substrate. The old `architect <n> bedrock` order is
+word to type. A typed word must agree with a token the title carries;
+it stands in where the title has none, over a stale marker, and as
+the only path for those three when Linear is unreachable; a bare
+`task` then falls back to its configured substrate. The old
+`architect <n> bedrock` order is
 refused as a plain usage error.
 **The title guard** (`.claude/tools/verb_check.py`) is that read: its
 print mode (`--print <verb> <n>`) gives a bare launch its substrate,
@@ -2729,10 +2731,10 @@ a terminal closed outright, is covered by the next morning's digest.
 
 - **`task anthropic <n>`** — the same thing on the **subscription**,
   for work that needs web search or deep research (`task bedrock <n>`
-  forces the other way). A bare `task <n>` already launches where the
-  title's `[Task/Anthropic]` token says, so the typed word is the
-  override and the path when Linear is unreachable. The substrate is a
-  literal first word rather than a flag: these helpers do no flag
+  the other way). A bare `task <n>` already launches where the
+  title's `[Task/Anthropic]` token says, so the typed word must agree
+  with the title, and is the path when Linear is unreachable. The
+  substrate is a literal first word rather than a flag: these helpers do no flag
   parsing, and the word reads better at the call site.
 
 - **`task resume <n>`** — resume a worktree session by number: takes a

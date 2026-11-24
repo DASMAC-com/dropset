@@ -31,7 +31,7 @@ no token, any other verb                    print: refuse, add the token or
                                             typed word overriding the implied
                                             task verb and its substrate
 a token naming another verb or substrate    refuse, printing the implied line
-``[Operator]``, first or after the token    refuse: no agent (ruling 27)
+``[Operator]`` among the leading brackets   refuse: no agent (ruling 27)
 a bracket token that is not one of these    refuse: fix the title
 Linear unreachable, or no key               check: warn in one line, launch;
                                             print: ``task`` warns and launches
@@ -91,8 +91,10 @@ def launch_line(verb: str, number: str, substrate: str = "") -> str:
 
     Check mode spells the substrate out. Its launch already carried a
     substrate — typed, or a marker a stale record left — and a bare
-    suggestion would read that same marker and refuse again; a typed word
-    wins over the marker, so the spelled-out line always launches.
+    suggestion would read that same marker and refuse again; in ``chore``
+    and ``architect`` a typed word wins over the marker. (An ``explore``
+    into an existing worktree still refuses a switch: a session keeps its
+    substrate.)
     """
     return f"{verb} {substrate} {number}" if substrate else f"{verb} {number}"
 
@@ -101,7 +103,8 @@ def token(title: str) -> tuple[str, str, str] | str | None:
     """The title's launch token as ``(verb, substrate, text)``.
 
     ``None`` when the title carries no token, or the one-line reason to
-    refuse when it leads with a bracket that is not a launch token.
+    refuse when it leads with a bracket that is not a launch token or
+    carries an ``[Operator]`` mark among its leading brackets.
     """
     if _OPERATOR.match(title):
         return _NO_AGENT

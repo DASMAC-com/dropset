@@ -895,8 +895,9 @@ _ds_class_resolve() {
 # session — $1 verb, $2 substrate, $3 tag; or `--print`, $2 verb, $3 tag, for
 # a bare launch, printing the title's `<verb> <substrate>`. A reopen keeps the
 # session it has, so it is not re-judged against a title edited since. A name
-# is not checked; an unreachable Linear warns and passes a typed word. Non-zero
-# means DO NOT LAUNCH.
+# is not checked. An unreachable Linear warns and passes a typed word, and a
+# bare `task` (on its configured substrate); a bare chore, explore or
+# architect then refuses. Non-zero means DO NOT LAUNCH.
 _ds_verb_check() {
   [[ "$3" == <-> ]] || return 0
   _ds_secrets
@@ -904,19 +905,21 @@ _ds_verb_check() {
 }
 
 # Internal: the substrate a bare `$1 <$2>` launch reads from the title's
-# launch-line token, so the operator never retypes what the title records.
-# Empty when there is none to read (a name, or `task` with Linear unreachable,
-# where the tier's configured substrate stands); non-zero refuses — no token on
-# a non-task verb, a token for another verb, `[Operator]`, or an unreachable
-# Linear where only a typed word can stand in. Run for a NEW session only,
-# after any recorded substrate a reopen keeps.
+# launch-line token, so the operator never retypes what the title records —
+# set in REPLY, not printed, so the caller runs this in its own shell rather
+# than a substitution. Empty when there is none to read (a name, or `task`
+# with Linear unreachable, where the tier's configured substrate stands);
+# non-zero refuses — no token on a non-task verb, a token for another verb,
+# `[Operator]`, or an unreachable Linear where only a typed word can stand
+# in. Run for a NEW session only, after any recorded substrate a reopen keeps.
 _ds_title_substrate() {
   local line
-  # Read the secrets HERE, in this shell: inside the substitution below they
-  # would be read in a subshell and lost, so the launch would read them twice.
+  REPLY=''
+  # Read the secrets here, in the caller's shell: inside the substitution
+  # below they would be read in a subshell and lost, and read again later.
   _ds_secrets
   line="$(_ds_verb_check --print "$1" "$2")" || return 1
-  [[ -n "$line" ]] && print -r -- "${line#* }"
+  [[ -n "$line" ]] && REPLY="${line#* }"
   return 0
 }
 
@@ -1836,7 +1839,8 @@ _ds_task_start() {
   # guard, so a typed word is the only launch the check below re-judges.
   local inferred=''
   if [[ -z "$override" ]]; then
-    override="$(_ds_title_substrate task "$tag")" || return 1
+    _ds_title_substrate task "$tag" || return 1
+    override="$REPLY"
     inferred=1
   fi
   { read -r model; read -r substrate; } <<< "$(_ds_tier executor "$override")"
@@ -1844,7 +1848,8 @@ _ds_task_start() {
 
   _ds_base || return 1
   _ds_secrets
-  # A task always starts a new session, so the title guard always runs.
+  # A task always starts a new session, so the title guard always runs —
+  # as the read above for a bare launch, as the check here for a typed word.
   [[ -n "$inferred" ]] || _ds_verb_check task "$substrate" "$tag" || return 1
   _ds_substrate_enter "$substrate" 'task' || return 1
 
@@ -2160,7 +2165,7 @@ explore() {
   # wrong provider, and the next reopen would switch mid-conversation. The
   # same holds for an unmarked tree some other launch made, which this verb
   # may not mark. An explicit word that disagrees refuses. Only a launch with
-  # no session and no worktree takes the word or the Bedrock default, and it
+  # no session and no worktree takes the word or the title's token, and it
   # writes the marker below, over any stale one a pruned tree left.
   local sid key recorded=''
   sid="$(_ds_topic_sid explore "$raw")"
@@ -2188,7 +2193,8 @@ explore() {
   # and refuses a title with none — the record is the title, never a default.
   local inferred=''
   if [[ -z "$override" ]] && ! _ds_session_exists "$sid"; then
-    override="$(_ds_title_substrate explore "$raw")" || return 1
+    _ds_title_substrate explore "$raw" || return 1
+    override="$REPLY"
     inferred=1
   fi
 
@@ -2295,8 +2301,9 @@ _ds_upkeep() {
 #   chore <n>             the helper tier on the substrate the title's
 #                         `[Chore/<Substrate>]` token names; no token refuses
 #   chore anthropic <n>   the helper tier on the subscription — for web search
-#   chore bedrock <n>     the helper tier on Bedrock, whatever the title says
-#                         (the override, and the path when Linear is down)
+#   chore bedrock <n>     the helper tier on Bedrock — the override for a
+#                         title with no token (a token it contradicts
+#                         refuses), and the path when Linear is down
 #
 # The gap it fills: `task` is the executor tier plus a bootstrap PR, `explore`
 # is the advisor tier on the subscription, and nothing was both cheap and PR-less. The
@@ -2347,7 +2354,8 @@ chore() {
   local inferred=''
   if [[ -z "$override" ]] && ! _ds_session_exists "$(_ds_topic_sid chore "$tag")"
   then
-    override="$(_ds_title_substrate chore "$tag")" || return 1
+    _ds_title_substrate chore "$tag" || return 1
+    override="$REPLY"
     inferred=1
   fi
   { read -r model; read -r substrate; } <<< "$(_ds_tier helper "$override")"
@@ -2844,7 +2852,8 @@ architect() {
   local inferred='' sid
   sid="$(_ds_topic_sid architect "$tag")"
   if [[ -z "$override" ]] && ! _ds_session_exists "$sid"; then
-    override="$(_ds_title_substrate architect "$tag")" || return 1
+    _ds_title_substrate architect "$tag" || return 1
+    override="$REPLY"
     inferred=1
   fi
   { read -r model; read -r substrate; } <<< "$(_ds_tier advisor "$override")"
