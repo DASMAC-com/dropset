@@ -923,7 +923,7 @@ class PassTests(unittest.TestCase):
         ],
     }
 
-    def test_the_lanes_step_wipes_only_when_armed(self):
+    def test_the_lanes_step_wipes_armed_or_not(self):
         calls: list = []
         base_run = FakeRun()
 
@@ -935,7 +935,8 @@ class PassTests(unittest.TestCase):
 
         run_pass(make_ctx(run, armed=False))
         run_pass(make_ctx(run, armed=True))
-        self.assertEqual(calls, [["--json"], ["--json", "--apply"]])
+        # A cache clean, not a destructive item (plan ruling 16).
+        self.assertEqual(calls, [["--json", "--apply"], ["--json", "--apply"]])
 
     def test_the_lanes_line_names_the_held_lane_and_the_freed_bytes(self):
         step = self._lanes_step(True, {**self.LANES, "dry_run": False})

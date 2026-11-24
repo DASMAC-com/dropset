@@ -182,7 +182,10 @@ the document's state sections.
    as the pre-launch in the typed tab, its report in the
    curator's bootstrap; the lever fold runs in the analyst's
    tab, and destructive items are asked once there, in one ask,
-   applied only on a yes (2026-10-28).
+   applied only on a yes (2026-10-28). The cargo-lane wipe is a
+   cache clean, not a destructive item: upkeep applies it unasked,
+   armed or not. The ask keeps the transcript purge, allowlist
+   cruft and memories (2026-10-30).
 
 1. **Dispatch never steals focus, and no notification for
    self-waiting.** A yellow tab is a trigger problem, not a window

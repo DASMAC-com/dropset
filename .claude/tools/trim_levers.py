@@ -17,6 +17,11 @@ deterministic acts in that loop:
   ``## <fingerprint> | <title>`` section per part. It numbers the parts, demotes
   their headings under ``# Part N``, carries exactly one ``**Fingerprint**:`` per
   part, and refuses a part assigned to no batch or to two.
+- ``skill-size`` — the cap-flagged files as lever candidates: every subject
+  ``skill_size`` puts above its watch percent (the list upkeep's watch line
+  reads aloud) becomes a ``skill-size:<name>`` fingerprint, appended to the
+  probe's keys file with ``--append-to``, so a file near its byte cap is
+  folded into the day's batches like any other lever.
 
 Filing goes through ``linear_issue.py create`` (and a fold into an existing
 issue through ``linear_issue.py append``), both zero-echo. The parked
@@ -39,6 +44,9 @@ Subcommands::
     python3 .claude/tools/trim_levers.py compose --parts-file <scratchpad>/parts.md \\
         --out <scratchpad>/fold.md --start 4
 
+    # The cap-flagged files, their keys appended to the probe's keys file.
+    python3 .claude/tools/trim_levers.py skill-size --append-to <scratchpad>/keys.txt
+
 ``probe`` reads ``LINEAR_API_KEY`` and ``LINEAR_PROJECT_ID`` from the
 environment — never a hard-coded UUID, per ``CLAUDE.md`` → "Linear automation";
 ``compose`` touches no API. It writes no relations, ever. Stdlib only; a Python
@@ -53,8 +61,10 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 import linear_api
+import skill_size
 
 ENDPOINT = linear_api.ENDPOINT
 
@@ -592,6 +602,67 @@ def _write_private(path: str, text: str) -> None:
         raise TrimLeversError(f"cannot write {path}: {exc}") from exc
 
 
+# --------------------------------------------------------------------------
+# Cap-flagged files as lever candidates
+# --------------------------------------------------------------------------
+
+#: The domain token every cap-flagged lever files under.
+SKILL_SIZE_DOMAIN = "skill-size"
+
+
+def skill_size_fingerprint(key: str) -> str:
+    """The lever fingerprint for one ``skill_size`` subject key.
+
+    The slug is the subject's name, never its raw path: ``SKILL.md`` and
+    ``CLAUDE.md`` are uppercase (refused by :data:`FINGERPRINT_RE`) and
+    hostname-valid file names (linkified by Linear, which corrupts the key).
+    ``.claude/skills/<name>/SKILL.md`` is ``skill-size:<name>``, its
+    description ``skill-size:<name>-description``, and ``CLAUDE.md``
+    ``skill-size:claude-md``."""
+    path, _, part = key.partition("#")  # `skill_size.DESCRIPTION_SUFFIX`
+    if path == skill_size.PROJECT_FILE:
+        slug = "claude-md"
+    else:
+        slug = path.removeprefix(f"{skill_size.SKILLS_DIR}/").split("/")[0]
+    if part:
+        slug += f"-{part}"
+    # A skill directory may carry `_`, which the slug pattern refuses.
+    slug = slug.lower().replace("_", "-")
+    return validate_fingerprint(f"{SKILL_SIZE_DOMAIN}:{slug}")
+
+
+def skill_size_candidates(root) -> list[tuple[str, str]]:
+    """``(fingerprint, utilization line)`` for every subject above
+    ``skill_size.WATCH_PERCENT`` of its limit — the list upkeep's skill-size
+    watch line reports, measured at HEAD."""
+    subjects = skill_size.collect(root)
+    exceptions, errors = skill_size.load_baseline(root / skill_size.DEFAULT_BASELINE)
+    if errors:
+        raise TrimLeversError(f"skill-size baseline unreadable: {errors[0]}")
+    lines, flagged = skill_size.utilization(subjects, exceptions)
+    # Every candidate is flagged, so its `!` marker says nothing.
+    by_key = {line.rsplit(maxsplit=1)[-1]: line.lstrip("! ") for line in lines}
+    return [(skill_size_fingerprint(key), by_key[key]) for key in flagged]
+
+
+def _skill_size(args: argparse.Namespace) -> int:
+    candidates = skill_size_candidates(args.root)
+    print(
+        f"trim-levers: {len(candidates)} cap-flagged subject(s) above "
+        f"{skill_size.WATCH_PERCENT}% of their limit"
+    )
+    for fingerprint, line in candidates:
+        print(f"trim-levers: {fingerprint} | {line}")
+    if args.append_to and candidates:
+        try:
+            with open(args.append_to, "a", encoding="utf-8") as fh:
+                fh.writelines(f"{fingerprint}\n" for fingerprint, _ in candidates)
+        except OSError as exc:
+            raise TrimLeversError(f"cannot append to {args.append_to}: {exc}") from exc
+        print(f"trim-levers: appended {len(candidates)} key(s) to {args.append_to}")
+    return 0
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="trim_levers.py",
@@ -643,6 +714,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         metavar="DIR",
         help="batch mode: where to write the per-batch bodies (created if absent)",
     )
+
+    size = sub.add_parser(
+        "skill-size", help="the cap-flagged files, as lever candidates"
+    )
+    size.add_argument(
+        "--append-to",
+        metavar="FILE",
+        help="append each candidate's fingerprint to this keys file (the probe's)",
+    )
+    size.add_argument(
+        "--root", type=Path, default=Path(__file__).resolve().parents[2],
+        help=argparse.SUPPRESS,
+    )  # fmt: skip
 
     args = parser.parse_args(argv[1:])
 
@@ -713,8 +797,10 @@ def _compose_batches(args: argparse.Namespace) -> int:
 def run(argv: list[str]) -> int:
     args = _parse_args(argv)
 
-    # `compose` is pure local text work, handled before the credential lookup so
-    # it runs in a shell with no Linear secrets resolved.
+    # `compose` and `skill-size` are pure local work, handled before the
+    # credential lookup so they run in a shell with no Linear secrets resolved.
+    if args.cmd == "skill-size":
+        return _skill_size(args)
     if args.cmd == "compose" and args.groups_file:
         return _compose_batches(args)
     if args.cmd == "compose":

@@ -46,12 +46,13 @@ refuses the whole pass, since every later step assumes it.
     (:func:`undigested`) — is held
     out of the set and reported ``held: not yet digested``; it goes the next
     morning;
- 7. dismiss every settled PR's notifications, unsubscribing only from a
-    merged one's (``pr_notifications dismiss --settled``) — merged or closed,
-    whatever its issue's state, one thread at a time (never mark-all);
+ 7. dismiss every settled PR's notifications
+    (``pr_notifications dismiss --settled``) — merged or closed, whatever its
+    issue's state, one ``DELETE`` per thread (never mark-all, and no ignore:
+    the merge tail already unsubscribed the thread);
  8. the cargo lanes (``cargo_lanes``): each lane under the cargo target root
     and every non-lane entry there, sized, with whether a build is running on
-    it; armed, every idle one is wiped — the bound on the lanes' growth.
+    it; every idle one is wiped, armed or not — the bound on the lanes' growth.
     Beside the other cleanup, so the report's length cap cannot cut it;
  9. the runtime config (``runtime_config_check --live``) against its committed
     manifest: one line leading with any missing required row, then the pinned
@@ -89,13 +90,15 @@ alone, each with a one-line reason, rather than hanging the pass on an
 interactive prompt; the report's ``auth`` line names the re-authentication
 once.
 
-**Arming.** Steps 6 and 8 run as a dry run and touch nothing unless
-``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. Step 7 is
-always armed in ``run``: with the board gate gone, a settled PR's threads are
-dismissible on sight, and a dismissal destroys nothing. The open-PR guard holds
+**Arming.** Step 6 runs as a dry run and touches nothing unless
+``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. Steps 7
+and 8 are always armed in ``run``: with the board gate gone, a settled PR's
+threads are dismissible on sight, and a dismissal destroys nothing; the lane
+wipe is a cache clean, not a destructive item (plan ruling 16), and a lane
+with a build on it is held by the process table. The open-PR guard holds
 even when armed, and the purge never arms — its apply stays an operator
-approval at the analyst's prune ask. ``prune`` arms both steps only under
-``--apply``.
+approval at the analyst's prune ask. ``prune`` arms steps 6 and 7 only
+under ``--apply``; it never runs step 8.
 
 **Report.** One section of the Planning document — from ``REPORT_HEADING``
 through its ``REPORT_END`` line — is replaced wholesale each run, bounded to
@@ -181,8 +184,8 @@ TIMEOUT_GH = 60
 TIMEOUT_TOOL = 120
 # The transcript walk alone takes about a minute, before the Cost Explorer read.
 TIMEOUT_COST = 300
-# Two calls per thread (ignore, mark done); the first armed pass meets a
-# backlog of a hundred-odd.
+# One call per thread (mark done); a backlog of a hundred-odd still drains in
+# one pass.
 TIMEOUT_DISMISS = 300
 # The digest's transcript walk plus its CI read: a cold job cache is one
 # `gh api` read per merge-queue run of the past week, a few hundred.
@@ -1066,10 +1069,11 @@ def step_config(ctx: Ctx) -> None:
 
 
 def step_lanes(ctx: Ctx) -> None:
-    # Armed like the prune: a wipe costs the day's first build on each lane a
-    # cold dependency build and destroys nothing else, and a lane with a
-    # build running on it is held by the tool's own probe.
-    args = ["--json"] + (["--apply"] if ctx.armed else [])
+    # Always applied, whatever `armed` says: the wipe is a cache clean, not a
+    # destructive item (plan ruling 16) — it costs the day's first build on
+    # each lane a cold dependency build and destroys nothing else, and a lane
+    # with a build running on it is held by the tool's own probe.
+    args = ["--json", "--apply"]
     result = _json_tool(
         ctx, "lanes", "cargo_lanes.py", *args, ok_rcs=(0,), timeout=TIMEOUT_LANES
     )

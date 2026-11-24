@@ -1,6 +1,6 @@
 ---
 name: analyze
-description: Run the analyst — the executor-tier session that runs the mechanical morning, opened by the fresh-day `plan` pre-launch beside the curator's tab (or typed as `analyze`), in the base repo with no worktree, branch or PR. Runs the trim-context lever fold in its own visible tab, filing the Claude: batches into Backlog and writing the fold stamp; gathers kill and merge candidates, filing nothing on them. Then prunes, unasked, every worktree (once the digest has read its session) and stray branch whose issue is Done or Canceled, reporting each tip. Hands the curator the fold's hand-off, and on the curator's `state of play written` opens the scheduler's tab. Weekly, a read-only sub-agent judges every memory stale, superseded, repo-bound or keep. Then asks the one destructive question — the transcript purge, the upkeep report's other destructive items and the judged memories — applying only what is ticked. Ends with session metrics and its cost; the tab stays open.
+description: Run the analyst — the executor-tier session that runs the mechanical morning, opened by the fresh-day `plan` pre-launch beside the curator's tab (or typed as `analyze`), in the base repo with no worktree, branch or PR. Runs the trim-context lever fold in its own visible tab, filing the Claude: batches into Backlog and writing the fold stamp; gathers kill and merge candidates, filing nothing on them. Then prunes, unasked, every worktree (once the digest has read its session) and stray branch whose issue is Done or Canceled, reporting each tip. Hands the curator the fold's hand-off, and on the curator's `state of play written` opens the scheduler's tab. Daily, a read-only sub-agent judges every memory memorialize or drop. Then asks the one destructive question — the transcript purge, the upkeep report's other destructive items and the judged memories — applying only what is ticked. Ends with session metrics and its cost; the tab stays open.
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -190,13 +190,14 @@ write itself.
 
 ## 3. The memory judge
 
-The memory posture is a **minimal** store: a memory earns its place
-only when it is about the operator or how to work and is not
-derivable from the repo. The upkeep report's `memory` line carries
+The memory store is a **daily-expiring scratch store**
+(`docs/conventions/local-integrations.md`, the `analyze` verb's
+entry): nothing in it is kept, `feedback` memories
+included — a how-to-work rule that matters is a skill or convention
+line the fleet can see. The upkeep report's `memory` line carries
 `memory_audit.py`'s mechanical findings and the `MEMORY.md` line
-count, which should fall run over run. The judgment is weekly, on
-its own gate, with the auto-memory directory this session's system
-prompt names:
+count. The judgment is daily, on its own gate, with the auto-memory
+directory this session's system prompt names:
 
 ```sh
 python3 .claude/tools/memory_scan_gate.py judge-check <memory-dir>
@@ -210,32 +211,28 @@ canonical brief by pointer (`lens_preamble.py` with `--out` and
 `--no-facts`), the memory directory and the base checkout as its
 named-path allowlist, the pre-filter's path, a budget (≤ 30 turns),
 and this deliverable
-— one row per memory file, `<file> — <verdict> — <fact>`, after
-reading every file and checking each claim against HEAD and the
-board:
+— one row per memory file, every one, `<file> — <verdict> — <fact>`,
+after reading every file and checking each claim against HEAD:
 
-- **stale** — disproved; the fact is the commit, file or issue state
-  that disproves it;
-- **superseded** — a named sibling memory says it better;
-- **repo-bound** — a durable project or convention fact that belongs
-  in a committed doc; the fact names the doc;
-- **keep** — about the operator or how to work, not derivable from
-  the repo. `feedback` memories are always kept.
+- **memorialize** — the fact belongs in a committed doc, skill or
+  convention and is not there yet; the fact names the target and the
+  claim to land;
+- **drop** — anything else: stale, superseded, already in the repo,
+  or not worth landing.
 
-**`first: true` is the full cull**: every memory, `keep` verdicts
-included, uncapped. Later runs are incremental: the ten strongest
-non-keep verdicts.
-Record the run whatever the yield:
+A failed sub-agent is one report line, and step 4 carries no memory
+section; the store grows one more day. Record the run whatever the
+yield:
 
 ```sh
 python3 .claude/tools/memory_scan_gate.py judge-record <memory-dir>
 ```
 
-The verdicts join step 4's ask. **Repo-bound** items are filed first
-as **one** `Claude:` docs task per run (Backlog, no milestone; one
-part per memory with its target doc and the claim to land), so a
-ticked repo-bound memory is deleted only once its fact is queued for
-a committed doc.
+The verdicts join step 4's ask. **Memorialize** items are filed
+first as **one** `Claude:` docs task per run (Backlog, no milestone;
+one part per memory with its target and the claim to land), so a
+memorialized memory is deleted only once its fact is queued for a
+committed doc.
 
 ## 4. The destructive ask
 
@@ -251,19 +248,17 @@ Gather, each with one call:
   section in context: allowlist cruft and permission-refresh
   candidates, when listed.
 
-- **Memories**, from step 3 on a judge day: each verdict with its
-  fact beside the name (on the first run, the whole set).
+- **Memories**, from step 3: the whole store, each verdict with its
+  fact beside the name.
 
 Then **one `AskUserQuestion` call**, one question per category with
 something in it (none for an empty one): the purge's total and its
-named tags; a `multiSelect` over the report's items; and the first
-page of memories. The recommended answer first. **Memories page**:
-a question holds at most four options and a call four questions, so
-each memory question is a `multiSelect` of four, the label the file
-name and the description `<verdict> — <fact>`, a non-keep verdict
-being the recommended tick. Fill the first call's spare questions
-with memory pages, then ask further calls of four pages each until
-every memory has been shown. Apply only what is ticked:
+named tags; a `multiSelect` over the report's items; and the
+memories. The recommended answer first. **Memories**: one question,
+**"delete all N"** first and recommended (the memorialize task
+already filed), then "delete only the drops" and "keep all today";
+a per-memory pick is the free-text answer, naming the files to
+spare. Apply only what is ticked:
 
 - **Purge**: `purge-conversations` step 4's apply, this yes its
   approval, then its step 5 report.
@@ -272,7 +267,7 @@ every memory has been shown. Apply only what is ticked:
   exit-code-only parse check.
 - **Permission-refresh candidates**: `allowlist.py add` per approved
   rule.
-- **Memories**: delete each ticked memory file **and** its
+- **Memories**: delete each chosen memory file **and** its
   `MEMORY.md` pointer, then say the index's new line count.
 
 Nothing to ask in any category: say so in one line and skip the ask.

@@ -22,6 +22,12 @@ separate windows. This reverses an earlier "one iTerm window per session is
 load-bearing" rationale that used to be stated here, in the `plan` skill's step
 5, and in the local-integrations convention doc.
 
+**A dispatched `fleet` opens no tab at all**: it runs `fleet_resume.py` in
+process (`run_fleet`), so the roll-call prints into the dispatching session
+and the sessions it resumes open as tabs beside it. The tab driver's
+window-create fallback once put a dispatched `fleet go` in a window of its own.
+The operator's own typed `fleet go` is the shell verb, unchanged.
+
 A tab still never falls back to typing into the CURRENT session — the failure
 path prints the verb instead. Typing a launch verb into a session that is
 already running something remains the one outcome worse than not dispatching at
@@ -274,7 +280,8 @@ FREE, BUILDING = "free", "building"
 #: Each verb's class. `architect`, `explore` and the daily-role verbs run no cargo
 #: and no Docker and open no PR, so only the machine checks can refuse them; `fleet`
 #: is free because each session it resumes meets this same gate inside
-#: `fleet_resume.py`. `chore` is absent on purpose — it is inspected
+#: `fleet_resume.py` (and `run` never gates it: it runs in process, no tab).
+#: `chore` is absent on purpose — it is inspected
 #: (`chore_class`) — and a verb added later is building until this says
 #: otherwise, the direction that errs toward refusing.
 VERB_CLASS = {
@@ -839,6 +846,54 @@ def run(argv: list[str]) -> int:
             print(command_line(words))
         return 0
 
+    # A `fleet` verb runs here, in process, never in a tab: the roll-call
+    # belongs in the dispatching session, and the tab driver's window-create
+    # fallback is what once opened it in a window of its own. It opens no
+    # client, so it spends no slot of the gate below; each session it resumes
+    # meets that gate inside `fleet_resume.py`. It runs after the tabs, so its
+    # gate sees them.
+    fleet = [words for words in groups if words[0] == "fleet"]
+    groups = [words for words in groups if words[0] != "fleet"]
+    if groups:
+        rc = _dispatch_tabs(groups, args, by_hand=[command_line(w) for w in fleet])
+        if rc:
+            return rc
+    for words in fleet:
+        rc = run_fleet(words)
+        if rc:
+            return rc
+    return 0
+
+
+#: The resume tool the `fleet` shell verb runs; a dispatched `fleet` runs it
+#: directly, with the same flags.
+FLEET_RESUME = Path(__file__).resolve().parent / "fleet_resume.py"
+
+
+def run_fleet(words: list[str]) -> int:
+    """Run ``fleet_resume.py`` as a subprocess, its output streaming into the
+    dispatching session — ``fleet go`` applies, a bare ``fleet`` shows the
+    plan. The operator's own typed ``fleet go`` is the shell verb, unchanged."""
+    cmd = [sys.executable, str(FLEET_RESUME)]
+    if words[1:] == ["go"]:
+        cmd.append("--apply")
+    sys.stdout.flush()
+    try:
+        return subprocess.run(cmd, check=False).returncode
+    except OSError as exc:
+        print(
+            f"session-dispatch: fleet resume did not start ({exc}); "
+            f"run `{command_line(words)}` by hand",
+            file=sys.stderr,
+        )
+        return 1
+
+
+def _dispatch_tabs(
+    groups: list[list[str]], args: argparse.Namespace, by_hand: list[str]
+) -> int:
+    """Gate, open and confirm the tabs. ``by_hand`` names the in-process verbs
+    a driver failure leaves never run, so they join its hand-run list."""
     # The machine gate, still before any tab. Unlike a malformed verb, a held
     # one is valid, so a partial batch is correct HERE: the held lines say
     # which, and re-dispatching them later cannot double an admitted one.
@@ -876,6 +931,7 @@ def run(argv: list[str]) -> int:
         pending = set(exc.unfinished(len(commands)))
         sent = [(n, command) for n, command in enumerate(commands) if n not in pending]
         remaining = [command for n, command in enumerate(commands) if n in pending]
+        remaining += by_hand
         if sent:
             print(
                 f"session-dispatch: {len(sent)} tab(s) were already opened and "

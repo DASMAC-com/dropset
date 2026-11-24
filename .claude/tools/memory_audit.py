@@ -36,9 +36,9 @@ existence lives in Linear, this is a stdlib-only offline tool, and a check that
 cannot run is worse than an absent one because its silence reads as a pass. Verify
 an ``ENG-###`` through the Linear MCP if a candidate's reason turns on one.
 
-The tool decides nothing and deletes nothing: a purge is the operator's yes at
-``plan``'s bootstrap gate, because losing a still-good memory is worse than
-keeping a stale one.
+The tool decides nothing and deletes nothing: the analyst's daily memory judge
+gives every memory a verdict (memorialize or drop), and the deletes are the
+operator's tick at the analyst's one destructive ask.
 
 Stdlib only; a Python skill-tool under ``.claude/tools/`` — deliberately **not** a
 Cargo workspace member (see ``CLAUDE.md`` → "Skill tooling").

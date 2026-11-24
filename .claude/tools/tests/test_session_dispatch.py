@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import os
+import subprocess
 import tempfile
 import unittest
 import unittest.mock
@@ -589,6 +590,50 @@ class Dispatch(unittest.TestCase):
             rc = session_dispatch.run(["task", "resume", "12", "+", "chore", "34"])
         self.assertEqual(rc, 0)
         self.assertEqual(self.marked, ["/dev/a", "/dev/b"])
+
+    def _stub_fleet(self, rc=0):
+        ran = []
+
+        def fake(words):
+            ran.append(list(words))
+            return rc
+
+        original = session_dispatch.run_fleet
+        session_dispatch.run_fleet = fake
+        self.addCleanup(setattr, session_dispatch, "run_fleet", original)
+        return ran
+
+    def test_a_dispatched_fleet_go_runs_in_process_and_opens_no_tab(self):
+        seen = self._stub_tabs(["/dev/a"])
+        ran = self._stub_fleet()
+        with redirect_stdout(io.StringIO()):
+            rc = session_dispatch.run(["fleet", "go"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen, [])
+        self.assertEqual(ran, [["fleet", "go"]])
+
+    def test_a_batch_tabs_the_rest_then_runs_the_fleet(self):
+        seen = self._stub_tabs(["/dev/a"])
+        self._stub_names([])
+        ran = self._stub_fleet(rc=3)
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            rc = session_dispatch.run(["plan", "+", "fleet", "go"])
+        self.assertEqual(seen, [["plan"]])
+        self.assertEqual(ran, [["fleet", "go"]])
+        self.assertEqual(rc, 3)
+
+    def test_the_fleet_runner_passes_apply_only_for_go(self):
+        calls = []
+
+        def fake_run(cmd, check):
+            calls.append(cmd[1:])
+            return subprocess.CompletedProcess(cmd, 0)
+
+        with unittest.mock.patch.object(session_dispatch.subprocess, "run", fake_run):
+            session_dispatch.run_fleet(["fleet", "go"])
+            session_dispatch.run_fleet(["fleet"])
+        resume = str(session_dispatch.FLEET_RESUME)
+        self.assertEqual(calls, [[resume, "--apply"], [resume]])
 
     def test_a_lost_mark_is_named_and_does_not_fail_the_dispatch(self):
         self._stub_tabs(["/dev/a", None])

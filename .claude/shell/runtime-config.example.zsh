@@ -57,7 +57,7 @@ export CARGO_BUILD_JOBS=8
 # DS_PR_POLL_S=20                  # seconds between every PR / queue poll
 # DS_CARGO_POOL=0                  # turn the cargo pool off
 # DS_PLAN_TAB_RIGHTMOST=0          # leave the scheduler tab where it opens
-# export DS_UPKEEP_ARMED=1         # let the upkeep pass prune and wipe
+# export DS_UPKEEP_ARMED=1         # let the upkeep pass prune worktrees
 # Per-command toggles, set for one run rather than in the profile:
 # DS_SKIP_UPKEEP=1 plan            # skip the morning upkeep pass
 # DS_BEDROCK_PROBE=1 task <n>      # pay for the Bedrock pre-flight
