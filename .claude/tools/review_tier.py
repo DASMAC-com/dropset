@@ -159,6 +159,10 @@ MOVE_SHARE = 0.8
 # at 1.4-3.3x the exemplars.
 SUBDIVIDE_DIFF_LINES = 1500
 
+# A top-level group at or above this share of the changes is split one level
+# deeper, since handing a lens "nearly everything" scopes nothing.
+DOMINANT_SHARE = 0.8
+
 LENS_ORDER = (
     "correctness",
     "ops-correctness",
@@ -545,8 +549,9 @@ def subdivision(files: list[dict], diff_lines: int) -> list[dict] | None:
     """
     if diff_lines <= SUBDIVIDE_DIFF_LINES:
         return None
-    # One segment deep, or two when everything shares one top-level tree (a
-    # lone `.claude/**` group subdivides nothing).
+    # One segment deep, or two when one top-level tree dominates: a
+    # `.claude/**` group holding 2,929 of 2,931 changes subdivides nothing,
+    # whether or not a two-line `cfg/**` group sits beside it.
     for depth in (1, 2):
         groups: Counter = Counter()
         for f in files:
@@ -556,7 +561,9 @@ def subdivision(files: list[dict], diff_lines: int) -> list[dict] | None:
             else:
                 key = f["path"]
             groups[key] += f["changes"]
-        if len(groups) > 1:
+        total = sum(groups.values())
+        top = groups.most_common(1)[0][1] if groups else 0
+        if top < DOMINANT_SHARE * total:
             break
     return [{"only": glob, "changes": n} for glob, n in groups.most_common()]
 

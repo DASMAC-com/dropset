@@ -275,6 +275,17 @@ class AbridgedAndSubdivisionTests(unittest.TestCase):
             ],
         )
 
+    def test_a_dominant_tree_beside_a_small_one_still_splits_deeper(self):
+        # This PR's own shape: `.claude/**` held 2,929 of 2,931 changes.
+        fl = files(
+            (".claude/tools/a.py", 900), (".claude/skills/x.md", 800), ("cfg/b.json", 2)
+        )
+        groups = rt.subdivision(fl, rt.SUBDIVIDE_DIFF_LINES + 1)
+        self.assertEqual(
+            [g["only"] for g in groups],
+            [".claude/tools/**", ".claude/skills/**", "cfg/b.json"],
+        )
+
     def test_one_shared_tree_subdivides_a_level_deeper(self):
         fl = files((".claude/tools/a.py", 30), (".claude/skills/x/SKILL.md", 9))
         groups = rt.subdivision(fl, rt.SUBDIVIDE_DIFF_LINES + 1)
