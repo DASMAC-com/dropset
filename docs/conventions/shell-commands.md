@@ -440,9 +440,10 @@ before it runs:
   `git clean -fdx`, destructive SQL, a docker prune) blocked with the
   `#destructive-ok` marker as its escape hatch, and a small **deny**
   tier that no marker lifts (a recursive delete of `/` or the home
-  directory, a force-push to the default branch). It is a **best-effort
-  advisory stop, not a policy boundary** — it matches patterns over one
-  command string and is not a sandbox.
+  directory, a force-push to the default branch, a bare environment
+  dump — read each variable with its own `printenv <NAME>`). It is a
+  **best-effort advisory stop, not a policy boundary** — it matches
+  patterns over one command string and is not a sandbox.
 
 Each guard **script** is committed, but its wiring is not — like the
 iTerm color integration, they are user-local configuration the repo

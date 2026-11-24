@@ -254,6 +254,45 @@ class Run(unittest.TestCase):
         self.assertIn("--- last", out)
         self.assertIn("boom", out)
 
+    def test_a_red_unittest_run_names_every_failing_test_above_the_tail(self):
+        # A real failing suite: two failures whose headers sit far above a
+        # two-line tail, the shape a red `make tools-tests` run produces.
+        script = (
+            "import unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_a(self): self.fail('a')\n"
+            "    def test_b(self): raise ValueError('b')\n"
+            "    def test_c(self): pass\n"
+            "unittest.main()\n"
+        )
+        code, out, _ = self._run(2, "tools-test", [PY, "-c", script])
+        self.assertEqual(code, 1)
+        self.assertIn("--- failing tests (2) ---", out)
+        self.assertIn("FAIL: test_a", out)
+        self.assertIn("ERROR: test_b", out)
+        self.assertNotIn("test_c", out)
+
+    def test_a_bare_error_line_is_not_indexed_as_a_test(self):
+        # pip and hooks print `ERROR: …` lines with no `<name> (` shape.
+        code, out, _ = self._run(
+            rq.DEFAULT_TAIL,
+            "lint",
+            [PY, "-c", "print('ERROR: could not install'); import sys; sys.exit(1)"],
+        )
+        self.assertEqual(code, 1)
+        self.assertNotIn("--- failing tests", out)
+
+    def test_a_green_unittest_run_prints_one_line(self):
+        script = (
+            "import unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_c(self): pass\n"
+            "unittest.main()\n"
+        )
+        code, out, _ = self._run(rq.DEFAULT_TAIL, "tools-test", [PY, "-c", script])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(out.splitlines()), 1)
+
     def test_failure_surfaces_failed_hook_index(self):
         code, out, _ = self._run(
             rq.DEFAULT_TAIL,

@@ -543,11 +543,12 @@ def prune_dead(path: Path) -> dict:
     rewritten; ``deny``, ``ask`` and every other key round-trip untouched. No write at all
     when nothing is dead, so a clean file's mtime is left alone.
     """
-    settings, allow = firm_core.load_settings(path)
-    removed = [r for r in allow if firm_core.is_dead_glob(r)]
-    if removed:
-        kept = [r for r in allow if r not in removed]
-        firm_core.write_settings(path, settings, kept)
+    with firm_core.settings_lock(path):
+        settings, allow = firm_core.load_settings(path)
+        removed = [r for r in allow if firm_core.is_dead_glob(r)]
+        if removed:
+            kept = [r for r in allow if r not in removed]
+            firm_core.write_settings(path, settings, kept)
     return {"removed": removed, "count": len(allow) - len(removed)}
 
 

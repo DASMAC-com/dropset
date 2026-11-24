@@ -16,7 +16,9 @@ model's command line stays free of shell redirects and passes the
 * on failure — first an index of every *failed-hook* result line found anywhere
   in the log (a ``make lint`` / pre-commit run prints one
   ``<hook name>………Failed`` line per hook, and the one that actually failed
-  often scrolls off the top past the ``--tail`` window), then an index of the
+  often scrolls off the top past the ``--tail`` window), then the same for
+  every unittest ``FAIL:`` / ``ERROR:`` header (``make tools-tests`` runs
+  through this wrapper, and its tail shows only the last traceback), then an index of the
   distinct spelling offenders (``Unknown word (…)``) with the file each was
   found in, then the last ``--tail`` lines of the log, the exit code, and the
   log path, so the model can ``Read`` more of the log by slice if it needs to.
@@ -390,8 +392,19 @@ def stream_to_log(cmd, log_file):
 LogSummary = collections.namedtuple(
     "LogSummary",
     "lines tail_text failed truncated unknown_words unknown_truncated "
-    "failure_text failure_truncated failure_closed failure_blocks counts",
+    "failure_text failure_truncated failure_closed failure_blocks counts "
+    "failing_tests",
+    defaults=((),),
 )
+
+# A unittest failure header — `FAIL: test_x (module.Class.test_x)` or
+# `ERROR: …` — one per failing test, printed above its traceback. A red
+# `make tools-tests` run interleaves several suites, so the headers scroll off
+# above the tail that shows only the last traceback; indexing them names every
+# failing test regardless of where it sits, as the failed-hook index does.
+# Anchored on unittest's `<name> (` shape: pip, hooks and scripts print bare
+# `ERROR: …` lines too, which a looser pattern listed as failing tests.
+UNITTEST_FAILED_RE = re.compile(r"^(?:FAIL|ERROR): \S+ \(")
 
 
 def add_test_counts(line, counts):
@@ -479,6 +492,7 @@ def read_tail_and_count(path, tail):
     failure_blocks = 0
     counts = {"passed": 0, "failed": 0, "skipped": 0}
     counted = False
+    failing_tests = []
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             count += 1
@@ -507,6 +521,10 @@ def read_tail_and_count(path, tail):
                     failure_started = False
                     failure_done = True
                     failure_closed = True
+            if UNITTEST_FAILED_RE.match(line):
+                # One past the cap marks truncation; the writer drops it.
+                if len(failing_tests) <= MAX_FAILED_LINES:
+                    failing_tests.append(line.rstrip("\n"))
             if is_failed_hook_line(line):
                 if len(failed) < MAX_FAILED_LINES:
                     failed.append(line.rstrip("\n"))
@@ -536,7 +554,22 @@ def read_tail_and_count(path, tail):
         failure_closed,
         failure_blocks,
         counts if counted else None,
+        tuple(failing_tests),
     )
+
+
+def write_failing_tests(summary):
+    """Print the unittest failure-header index, when the log has one."""
+    if summary.failing_tests:
+        shown = summary.failing_tests[:MAX_FAILED_LINES]
+        more = (
+            " (truncated, more omitted)"
+            if len(summary.failing_tests) > MAX_FAILED_LINES
+            else ""
+        )
+        sys.stdout.write("--- failing tests (%d)%s ---\n" % (len(shown), more))
+        for line in shown:
+            sys.stdout.write(line + "\n")
 
 
 def run(tail, label, cmd):
@@ -586,6 +619,7 @@ def run(tail, label, cmd):
         sys.stdout.write("--- failed hooks (%d)%s ---\n" % (len(summary.failed), more))
         for fl in summary.failed:
             sys.stdout.write(fl + "\n")
+    write_failing_tests(summary)
     # Before the tail, not after: the spelling index is the actionable payload,
     # and the tail it would otherwise sit below is precisely the window that
     # tends to show an unrelated passing chunk.
@@ -822,6 +856,7 @@ def inspect(args):
         sys.stdout.write("--- failed hooks (%d)%s ---\n" % (len(summary.failed), more))
         for fl in summary.failed:
             sys.stdout.write(fl + "\n")
+    write_failing_tests(summary)
     if summary.unknown_words:
         more = " (truncated, more omitted)" if summary.unknown_truncated else ""
         sys.stdout.write(

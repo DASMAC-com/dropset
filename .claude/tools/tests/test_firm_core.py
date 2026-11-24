@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -314,6 +317,59 @@ class SettingsIO(unittest.TestCase):
             self.assertIn("Bash(cargo test:*)", allow)
             self.assertNotIn("Bash(cargo test -p dropset:*)", allow)  # pruned
             self.assertIn("Bash(ls:*)", allow)  # untouched
+
+
+class ConcurrentWrites(unittest.TestCase):
+    """Parallel adds must not lose rules: the measured failure was three
+    parallel ``allowlist.py add`` calls, two reporting the same count."""
+
+    RULES = [f"Bash(tool-{i} run:*)" for i in range(8)]
+
+    def _allow(self, path):
+        return json.loads(path.read_text())["permissions"]["allow"]
+
+    def test_parallel_allowlist_adds_all_land(self):
+        tool = Path(fc.__file__).with_name("allowlist.py")
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "settings.local.json"
+            path.write_text(json.dumps({"permissions": {"allow": ["Bash(ls:*)"]}}))
+            children = [
+                subprocess.Popen(
+                    [sys.executable, str(tool), "--settings", str(path), "add", rule],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+                for rule in self.RULES
+            ]
+            for proc in children:
+                _, err = proc.communicate(timeout=60)
+                self.assertEqual(proc.returncode, 0, err)
+            allow = self._allow(path)
+            for rule in self.RULES + ["Bash(ls:*)"]:
+                self.assertIn(rule, allow)
+            self.assertEqual(len(allow), len(self.RULES) + 1)
+            leftovers = [p.name for p in Path(d).iterdir() if p.suffix == ".tmp"]
+            self.assertEqual(leftovers, [])
+
+    def test_a_held_lock_blocks_a_writer_until_released(self):
+        # Deterministic: a writer started while the lock is held must not
+        # write, and must write once it is released.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "settings.local.json"
+            done = threading.Event()
+
+            def writer():
+                fc.firm_into(path, "Bash(cargo test:*)")
+                done.set()
+
+            with fc.settings_lock(path):
+                thread = threading.Thread(target=writer)
+                thread.start()
+                self.assertFalse(done.wait(0.3))
+                self.assertFalse(path.exists())
+            self.assertTrue(done.wait(10))
+            thread.join()
+            self.assertEqual(self._allow(path), ["Bash(cargo test:*)"])
 
 
 if __name__ == "__main__":

@@ -1533,33 +1533,48 @@ deps-audit:
 # non-zero when any tree fails. `-j1` keeps the trees sequential under a
 # caller's `-j`: concurrent suites interleave their output and add the load
 # the timing-sensitive cases are bounded against.
+#
+# Each unittest run goes through `run_quiet.py` (`TOOLS_QUIET`): a green tree
+# prints one line, a red one its failing tests and the log's tail, with the
+# exit status kept. Sessions ran these bare, and every red run put its raw
+# tracebacks into context. `VERBOSE=1` prints the runner's own output instead,
+# and so does CI (`CI` set): a CI run's temp log is never uploaded, so a quiet
+# failure there would lose its tracebacks.
+# The leading `@` keeps make from echoing the recipe, which would cost three
+# more lines than the result itself.
+TOOLS_QUIET = $(if $(VERBOSE)$(CI),,@python3 .claude/tools/run_quiet.py \
+	--label '$@$(if $(T), $(T))' --)
 .PHONY: tools-tests
 tools-tests:
-	$(MAKE) --no-print-directory -j1 -k tools-tests-tools tools-tests-scripts \
+	$(if $(VERBOSE)$(CI),,@)$(MAKE) --no-print-directory -j1 -k \
+		tools-tests-tools tools-tests-scripts \
 		tools-tests-keys tools-tests-release
 
 .PHONY: tools-tests-tools
 tools-tests-tools:
-	$(TOOLS_PY) -m unittest discover \
+	$(TOOLS_QUIET) $(TOOLS_PY) -m unittest discover \
 		-s .claude/tools/tests -t .claude/tools -p 'test_*.py'
 
 .PHONY: tools-tests-scripts
 tools-tests-scripts:
-	$(TOOLS_PY) -m unittest discover -s .claude/scripts -p 'test_*.py'
+	$(TOOLS_QUIET) $(TOOLS_PY) -m unittest discover \
+		-s .claude/scripts -p 'test_*.py'
 
 .PHONY: tools-tests-keys
 tools-tests-keys:
-	$(TOOLS_PY) -m unittest discover -s keys -p 'test_*.py'
+	$(TOOLS_QUIET) $(TOOLS_PY) -m unittest discover -s keys -p 'test_*.py'
 
 .PHONY: tools-tests-release
 tools-tests-release:
-	$(TOOLS_PY) -m unittest discover -s programs/dropset/release -p 'test_*.py'
+	$(TOOLS_QUIET) $(TOOLS_PY) -m unittest discover \
+		-s programs/dropset/release -p 'test_*.py'
 
 # Run ONE test module from any of the tools-tests trees — the inner-loop form
 # after an edit; `make tools-tests` stays the checkpoint run. `T` is the
 # module (`T=test_session_metrics`, `.py` optional); a directory prefix
 # (`T=keys/test_x`) pins the tree, else the first tree holding it wins.
-# `K` optionally narrows to matching test names (`unittest -k`). Resolves the
+# `K` optionally narrows to matching test names (`unittest -k`); quiet like
+# `tools-tests`, `VERBOSE=1` for the raw output. Resolves the
 # module's tree and its `-s` / `-t` pair, the part a hand-typed
 # `python3 -m unittest <path>` gets wrong ("Empty module name", "No module
 # named tests").
@@ -1574,7 +1589,7 @@ TOOLS_TEST_DIR = $(patsubst %/,%,$(dir $(TOOLS_TEST_FILE)))
 tools-test:
 	$(if $(T),,$(error usage: make tools-test T=test_<module> [K=<filter>]))
 	$(if $(TOOLS_TEST_FILE),,$(error no $(TOOLS_TEST_NAME) in a tools tree))
-	$(TOOLS_PY) -m unittest discover -s $(TOOLS_TEST_DIR) \
+	$(TOOLS_QUIET) $(TOOLS_PY) -m unittest discover -s $(TOOLS_TEST_DIR) \
 		$(if $(filter .claude/tools/tests,$(TOOLS_TEST_DIR)),-t .claude/tools) \
 		-p $(TOOLS_TEST_NAME) $(if $(K),-k '$(K)')
 

@@ -123,6 +123,36 @@ class DenyTierTests(unittest.TestCase):
                 self.assertEqual(guard.classify(command)[0], "deny")
 
 
+class EnvDumpTests(unittest.TestCase):
+    """A bare environment dump denies; a named read passes."""
+
+    def test_a_bare_dump_denies_in_each_spelling(self):
+        for command in ("env", "printenv", "export -p", "set", "env | grep X"):
+            with self.subTest(command=command):
+                self.assertEqual(_evaluate(command), 2)
+
+    def test_the_marker_cannot_lift_a_dump(self):
+        self.assertEqual(_evaluate("env #destructive-ok"), 2)
+
+    def test_the_message_names_the_one_variable_remedy(self):
+        message = guard.evaluate(
+            {"tool_name": "Bash", "tool_input": {"command": "env"}}
+        )[1]
+        self.assertIn("printenv <NAME>", message)
+
+    def test_a_named_read_and_a_command_under_env_pass(self):
+        for command in ("printenv DS_MODEL_ADVISOR", "env FOO=1 make lint", "set -x"):
+            with self.subTest(command=command):
+                self.assertEqual(_evaluate(command), 0)
+
+    def test_a_missing_tokenizer_fails_open(self):
+        saved, guard.sh = guard.sh, None
+        try:
+            self.assertIsNone(guard.env_dump_reason("env"))
+        finally:
+            guard.sh = saved
+
+
 class AskTierTests(unittest.TestCase):
     def test_the_marker_lifts_an_ask(self):
         self.assertEqual(_evaluate("rm -rf build #destructive-ok"), 0)

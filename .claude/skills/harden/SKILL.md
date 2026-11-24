@@ -111,10 +111,10 @@ The bar for each new tool:
   a test that the guard **cannot be bypassed** by the obvious
   route.
 
-Then run the whole suite, wrapped:
+Then run the whole suite (the recipe wraps itself in `run_quiet.py`):
 
 ```sh
-python3 .claude/tools/run_quiet.py -- make tools-tests
+make tools-tests
 ```
 
 **Expect the first run to find something.** On the two tools

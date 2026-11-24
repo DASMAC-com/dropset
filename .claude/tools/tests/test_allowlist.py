@@ -650,8 +650,11 @@ class AddTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "settings.local.json"
             add("Bash(cargo test:*)", p)
+            # The flock sidecar persists by design (`firm_core.settings_lock`);
+            # a temp file never does.
             self.assertEqual(
-                sorted(x.name for x in Path(d).iterdir()), ["settings.local.json"]
+                sorted(x.name for x in Path(d).iterdir()),
+                ["settings.local.json", "settings.local.json.lock"],
             )
 
 

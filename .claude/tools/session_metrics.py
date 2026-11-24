@@ -192,6 +192,12 @@ RATES_BY_MODEL: dict[str, Rates] = {
     # these four rates by usage type (no long-context tier billed), and the
     # settled day's quantities priced here reproduced its $58.33 to the cent.
     "claude-fable-5-1": Rates(11.00, 55.00, 0.275, 22.00, verified="2026-10-22"),
+    # The advisor tier's successor, cheaper than 5.1. Seeded by the 5.1 row's
+    # derivation: the 1.10x Bedrock premium over the first-party list price
+    # ($8 / $40, cache read $0.20 at 0.025x input, 1h write 2x input). Only
+    # projected until a settled Bedrock day's bill reproduces it by usage type
+    # (`fleet_cost.py rates <day>`).
+    "claude-fable-5-2": Rates(8.80, 44.00, 0.22, 17.60, verified=None),
     # An audit lane. Cache read is 0.05x input: AWS halved it on 2026-10-07,
     # and 2026-10-21 billed every tier at these rates.
     "claude-sonnet-5-5": Rates(2.20, 11.00, 0.11, 4.40, verified="2026-10-21"),
