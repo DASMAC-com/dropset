@@ -747,6 +747,10 @@ _ds_claude() {
   _ds_fleet_knobs || { _ds_substrate_unset; return 1; }
   local -x ANTHROPIC_MODEL="$1"
   shift
+  # The iTerm permission debounce, under the name the painter's hooks and the
+  # per-tty monitor they start read (see iterm-colors.sh). The monitor reads it
+  # once at start, so a change needs `iterm_deploy.py --restart`.
+  local -x ITERM_PERM_DEBOUNCE_SECONDS="${DS_ITERM_PERM_DEBOUNCE_SECONDS:-5}"
   # The id this launch seeded or resumes, exported so the session's metrics
   # tail resolves it on its first path whatever the verb. `--resume <tag>` (a
   # picker filter) and `--continue` name no id, so an inherited one is blanked

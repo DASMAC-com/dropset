@@ -137,8 +137,8 @@ class DoesNotHeal(HealHarness):
         )
         self.assertTrue(self._sentinel().exists())
 
-    def test_an_edit_tool_yellow_with_no_sentinel_is_left_alone(self):
-        """An edit tool's PreToolUse also paints yellow but carries no
+    def test_a_direct_yellow_with_no_sentinel_is_left_alone(self):
+        """A direct yellow (`iterm-paint.sh <hex>`, no hook event) carries no
         sentinel, and its lifetime is not governed by permission re-fires — so
         it must never be healed."""
         self._state_file().write_text(STATE_PERMISSION, encoding="utf-8")

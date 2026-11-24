@@ -57,12 +57,24 @@ color_for_event() { # $1 = payload
   event="$(json_field hook_event_name "$1")"
   case "$event" in
     PreToolUse)
+      # No tool is yellow here. An edit tool once was, on the guess that it
+      # might prompt, but most edits are auto-approved and many take longer
+      # than the debounce to finish, so the guess surfaced yellow for edits
+      # that never asked anything. A dialog that does reach the operator
+      # fires PermissionRequest (below).
       tool="$(json_field tool_name "$1")"
       case "$tool" in
         AskUserQuestion) printf '%s' "$STATE_REPLY" ;;
-        Edit | Write | MultiEdit | NotebookEdit) printf '%s' "$STATE_PERMISSION" ;;
         *) printf '%s' "$STATE_NEUTRAL" ;;
       esac
+      ;;
+    PermissionRequest)
+      # The yellow trigger: the harness fires this the moment a permission
+      # dialog is shown to the operator, and never for a call the auto-mode
+      # classifier or an allow rule decides. An AskUserQuestion selector fires
+      # it too; its green stands, so that case leaves the tab unchanged.
+      tool="$(json_field tool_name "$1")"
+      [ "$tool" = "AskUserQuestion" ] || printf '%s' "$STATE_PERMISSION"
       ;;
     PostToolUse | UserPromptSubmit) printf '%s' "$STATE_NEUTRAL" ;;
     Stop)
@@ -77,11 +89,14 @@ color_for_event() { # $1 = payload
       ;;
     Notification)
       notification_type="$(json_field notification_type "$1")"
-      # A permission_prompt is yellow. The harness ALSO fires this for an
-      # AskUserQuestion selector (from its side it is blocked on user input),
-      # so this branch fires there too; the sticky-green guard in the main body
-      # suppresses that companion yellow so the tool's green survives. Other
-      # notification types leave the tab unchanged.
+      # A permission_prompt is yellow too. The harness sends it about six
+      # seconds AFTER the PermissionRequest, for a dialog still unanswered,
+      # and re-sends it while the dialog waits; it carries the message text
+      # this integration delivers when it owns notifications. The harness ALSO
+      # fires this for an AskUserQuestion selector (from its side it is blocked
+      # on user input), so this branch fires there too; the sticky-green guard
+      # in the main body suppresses that companion yellow so the tool's green
+      # survives. Other notification types leave the tab unchanged.
       [ "$notification_type" = "permission_prompt" ] && printf '%s' "$STATE_PERMISSION"
       ;;
   esac
@@ -168,40 +183,47 @@ else
   rm -f "$(askq_sentinel_path "$TTY_BASE")"
 fi
 
-# Maintain the permission-wait sentinel. Refresh it on every permission_prompt
-# yellow — the harness re-fires that notification while the prompt waits, so its
-# mtime tracks "still waiting" — and clear it on any other paint. The monitor
-# heals a STALE one back to neutral, which is what stops a guard-denied tool
-# from leaving the tab yellow forever; see PERM_WAIT_STALE_SECONDS in
-# iterm-colors.sh for why that safety net is needed and why it is generous.
-# The clear is keyed on the COLOR, not on "anything that isn't a Notification".
-# An edit tool's PreToolUse also paints yellow (see color_for_event), so an
-# else-branch would delete a live sentinel the moment a Write followed an
-# approved permission prompt — and the guard most likely to then deny that
-# Write is the worktree edit-path guard, whose tool set is exactly those four.
-# That reintroduced the wedge this whole mechanism exists to close, one step
-# further along. Clearing only on a non-permission paint keeps the sentinel
-# alive across a repaint while still dropping it the moment the tab goes
-# neutral or green.
-if [ "$EVENT" = "Notification" ] && [ "$COLOR" = "$STATE_PERMISSION" ]; then
-  : >"$(perm_wait_path "$TTY_BASE")"
-elif [ "$COLOR" != "$STATE_PERMISSION" ]; then
+# Maintain the permission-wait sentinel. Set it on the PermissionRequest that
+# arms a yellow and refresh it on every permission_prompt — the harness re-fires
+# that notification while the dialog waits, so its mtime tracks "still waiting"
+# — and clear it on any non-yellow paint. The monitor heals a STALE one back to
+# neutral, which is what stops a dialog answered with no later paint (a denial,
+# or a tool a guard blocks after approval) from leaving the tab yellow forever;
+# see PERM_WAIT_STALE_SECONDS in iterm-colors.sh for why that safety net is
+# needed and why it is generous. A direct yellow (the attend toggle's, no event)
+# carries none, so it is never healed.
+if [ "$COLOR" = "$STATE_PERMISSION" ]; then
+  case "$EVENT" in
+    Notification | PermissionRequest) : >"$(perm_wait_path "$TTY_BASE")" ;;
+  esac
+else
   rm -f "$(perm_wait_path "$TTY_BASE")"
 fi
 
 # A yellow is ARMED, never painted here: the monitor promotes it once it has
-# outlived PERM_DEBOUNCE_SECONDS (see iterm-colors.sh for the flicker this
-# stops). Two rules keep the debounce from restarting forever:
+# outlived PERM_DEBOUNCE_SECONDS (see iterm-colors.sh for why a dialog answered
+# within the window never moves the tab). Two rules keep the debounce from
+# restarting forever:
 #   * a yellow already on screen is left alone — a re-fire is not a new prompt;
-#   * an existing arm keeps its timestamp. The common order for an edit that
-#     needs approval is the edit tool's PreToolUse (no message) THEN the
-#     permission_prompt (with one), so the message is added to the arm while
-#     its mtime is carried over.
+#   * an existing arm keeps its timestamp. The order for a dialog is the
+#     PermissionRequest (no message) THEN, six seconds on, the permission_prompt
+#     (with one), so the message is added to the arm while its mtime is carried
+#     over.
+# The message usually arrives after the promotion, the debounce being shorter
+# than the harness's six seconds, so a yellow already on screen delivers it
+# then — once, marked so a re-fire does not notify again.
 # Direct mode (`iterm-paint.sh <hex>`) goes through the same two branches, so a
 # direct yellow arms too, and any direct paint — the attend toggle's — cancels
 # an arm, which reads as the operator acknowledging it.
 if [ "$COLOR" = "$STATE_PERMISSION" ]; then
-  [ "$(cat "$(state_file_path "$TTY_BASE")" 2>/dev/null)" = "$STATE_PERMISSION" ] && exit 0
+  if [ "$(cat "$(state_file_path "$TTY_BASE")" 2>/dev/null)" = "$STATE_PERMISSION" ]; then
+    NOTIFIED="$(perm_notified_path "$TTY_BASE")"
+    if [ -n "$MESSAGE" ] && [ ! -f "$NOTIFIED" ]; then
+      : >"$NOTIFIED"
+      notify_operator "$MESSAGE" >"$TTY_PATH"
+    fi
+    exit 0
+  fi
   PENDING="$(perm_pending_path "$TTY_BASE")"
   if [ ! -f "$PENDING" ]; then
     printf '%s' "$MESSAGE" >"$PENDING"
@@ -213,7 +235,7 @@ if [ "$COLOR" = "$STATE_PERMISSION" ]; then
   fi
   exit 0
 fi
-rm -f "$(perm_pending_path "$TTY_BASE")"
+rm -f "$(perm_pending_path "$TTY_BASE")" "$(perm_notified_path "$TTY_BASE")"
 
 echo "$COLOR" >"$STATE_PREFIX$TTY_BASE"
 emit_set_colors "$COLOR" >"$TTY_PATH"

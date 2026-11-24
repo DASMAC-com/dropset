@@ -22,7 +22,11 @@ files, so CI enforces it (a lint hook beside ``skill-size``):
   applies to it (``${NAME:-d}`` in the shell, ``("NAME", d)`` in a tool), and
   a row with no default has none in the code;
 * every row the config sets is named in the example, so it cannot drift
-  either.
+  either;
+* a row's optional ``maps_to`` (``{"file": ..., "name": ...}``, knob or toggle
+  only) names the script variable the shell init hands it to: some shell init
+  line must hand it over, and the script's own ``${name:-d}`` fallback must
+  equal the row's default.
 
 A read through an indirection the scan cannot see (a name built at runtime)
 fails open on that one variable; ``--live`` then lists it as unknown when it
@@ -139,6 +143,17 @@ def load_manifest(path: Path) -> dict:
                 f'{name}: `required_unless` is a {{NAME: "value"}} map on a '
                 "required row"
             )
+        maps_to = row.get("maps_to")
+        if maps_to is not None and (
+            row.get("kind") not in DEFAULTED
+            or not isinstance(maps_to, dict)
+            or set(maps_to) != {"file", "name"}
+            or not all(isinstance(v, str) and v for v in maps_to.values())
+        ):
+            raise ManifestError(
+                f'{name}: `maps_to` is a {{"file": ..., "name": ...}} map on a '
+                "knob or toggle row"
+            )
         if name in seen:
             raise ManifestError(f"{name}: listed twice")
         seen.add(name)
@@ -205,6 +220,57 @@ def static_problems(manifest: dict, reads: Reads, example: str = "") -> list[str
         elif want is not None and code and code != {str(want)}:
             problems.append(
                 f"default drift: {name} manifest {want!r}, code {sorted(code)}"
+            )
+    return problems
+
+
+def _shell_defaults(text: str, target: str) -> set[str]:
+    """The literal ``${target:-d}`` defaults on the non-comment lines of text."""
+    pattern = re.compile(rf"\$\{{{re.escape(target)}:-([^}}]*)\}}")
+    found: set[str] = set()
+    for line in text.splitlines():
+        if not line.lstrip().startswith("#"):
+            found.update(pattern.findall(line))
+    return found
+
+
+def mapping_problems(manifest: dict, root: Path) -> list[str]:
+    """Hold each ``maps_to`` row to the script variable it feeds.
+
+    A row with ``maps_to`` is a config name the shell init hands to a variable
+    a script reads under its own name (``ITERM_PERM_DEBOUNCE_SECONDS``). Two
+    things can drift there that the name scan cannot see: the shell may stop
+    handing the value over, and the script's own fallback may stop matching
+    the row's default, which is what an unmanaged session (no launcher) runs
+    on.
+    """
+    shell = "\n".join(
+        (root / rel).read_text() for rel in SHELL_FILES if (root / rel).exists()
+    )
+    problems: list[str] = []
+    for row in manifest["variables"]:
+        maps_to = row.get("maps_to")
+        if not maps_to:
+            continue
+        name, target, rel = row["name"], maps_to["name"], maps_to["file"]
+        handed = any(
+            target in line and f"${{{name}" in line
+            for line in shell.splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        if not handed:
+            problems.append(f"mapping gap: no shell init line hands {name} to {target}")
+        path = root / rel
+        if not path.exists():
+            problems.append(f"mapping gap: {name} maps to {rel}, which does not exist")
+            continue
+        code = _shell_defaults(path.read_text(), target) - {""}
+        want = row.get("default")
+        if not code:
+            problems.append(f"mapping gap: {rel} applies no default to {target}")
+        elif want is None or code != {str(want)}:
+            problems.append(
+                f"mapping drift: {name} manifest {want!r}, {rel} {target} {sorted(code)}"
             )
     return problems
 
@@ -293,6 +359,7 @@ def main(argv: list[str] | None = None, env=None, root: Path = REPO) -> int:
         example = root / EXAMPLE
         text = example.read_text() if example.exists() else ""
         problems = static_problems(manifest, scan(root), text)
+        problems += mapping_problems(manifest, root)
         for line in problems:
             print(line)
         if not problems:

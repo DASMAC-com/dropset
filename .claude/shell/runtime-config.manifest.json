@@ -182,6 +182,20 @@
       ]
     },
     {
+      "anchor": "docs/conventions/local-integrations.md \u2192 iTerm2 tab-color integration",
+      "default": "5",
+      "kind": "knob",
+      "maps_to": {
+        "file": ".claude/scripts/iterm-colors.sh",
+        "name": "ITERM_PERM_DEBOUNCE_SECONDS"
+      },
+      "name": "DS_ITERM_PERM_DEBOUNCE_SECONDS",
+      "required": false,
+      "verbs": [
+        "every launch"
+      ]
+    },
+    {
       "anchor": "docs/conventions/local-integrations.md \u2192 Model tiers: the role \u2192 model table",
       "default": null,
       "kind": "model-id",

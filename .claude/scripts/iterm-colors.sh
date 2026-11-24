@@ -2,8 +2,8 @@
 # Shared palette + emit helpers, sourced by the other iterm-* scripts.
 #
 # The tab is a coarse attention signal: green when Claude wants a reply (it is
-# done, or asking you a question), yellow when it needs a permission approval or
-# is editing a file (so you go to it quickly), a quiet slate when it has stopped
+# done, or asking you a question), yellow while a permission dialog waits on you
+# (so you go to it quickly), a quiet slate when it has stopped
 # but will resume by itself (a background task or scheduled wake-up is in
 # flight), and no tint while working or after you acknowledge it with the
 # attend shortcut. iTerm mutes the color of a
@@ -48,10 +48,10 @@ SESSION_TTY_PREFIX="/tmp/iterm-session-tty-"
 # a guard denies, the tool errors red, and the tint never clears.
 #
 # The heal keys on a fact the painter already relies on elsewhere: the harness
-# RE-FIRES permission_prompt periodically while a prompt waits. So a prompt that
-# genuinely still wants an answer keeps refreshing this sentinel and never goes
-# stale, while a resolved one — approved or denied — stops being re-fired and
-# heals.
+# RE-FIRES permission_prompt periodically while a dialog waits. So a dialog that
+# genuinely still wants an answer keeps refreshing this sentinel (first set by
+# its PermissionRequest) and never goes stale, while a resolved one — approved
+# or denied — stops being re-fired and heals.
 #
 # The default is deliberately GENEROUS, because the two errors are not
 # symmetric. Healing too eagerly drops the yellow on a prompt that really is
@@ -78,9 +78,9 @@ state_file_path() { printf '%s%s' "$STATE_PREFIX" "$1"; } # $1 = tty base
 # change-detection does the paint and there stays one painting path.
 #
 # All four guards matter, and each is a case that must NOT heal:
-#   * no sentinel      — nothing is waiting (an edit-tool yellow carries none,
-#                        and its lifetime is not governed by permission
-#                        re-fires, so it must never be healed);
+#   * no sentinel      — nothing is waiting (a direct yellow carries none, and
+#                        its lifetime is not governed by permission re-fires,
+#                        so it must never be healed);
 #   * state not yellow — a green or neutral tab is not a lingering permission;
 #   * unreadable mtime — answer unknown, so leave it alone;
 #   * fresh sentinel   — the prompt is still being re-fired, i.e. still waiting.
@@ -95,34 +95,40 @@ heal_stale_permission() {
   [ -n "$mtime" ] || return 0
   now=$(date +%s)
   if [ "$((now - mtime))" -ge "$PERM_WAIT_STALE_SECONDS" ]; then
-    rm -f "$sentinel"
+    rm -f "$sentinel" "$(perm_notified_path "$tty_base")"
     echo "$STATE_NEUTRAL" >"$state_file"
   fi
 }
 
 # How long a yellow must stay outstanding before the tab actually turns yellow.
 #
-# The auto permission-mode classifier answers most prompts itself within a
-# second or two, but the harness fires permission_prompt as soon as it starts
-# deciding. Painting that at once flashed the tab yellow and the reorderer
-# jumped it to the front, then it cleared — so the operator, aiming at the first
-# green tab, kept landing on a yellow one that flickered away. A yellow is
-# therefore only ARMED by the painter (a `.permpending` sentinel) and PROMOTED
-# by the monitor once it has survived this long; any other paint cancels it.
-# The reorderer reads the state file, which is untouched until promotion, so a
-# prompt the classifier resolves never moves a tab at all.
+# The yellow is keyed on PermissionRequest, which the harness fires only for a
+# dialog actually shown to the operator: an auto-approved call fires neither it
+# nor permission_prompt, however long it runs. The debounce is what keeps a
+# dialog answered at once — the operator already in that tab — from flashing
+# yellow and having the reorderer jump the tab to the front. A yellow is only
+# ARMED by the painter (a `.permpending` sentinel) and PROMOTED by the monitor
+# once it has survived this long; any other paint cancels it. The reorderer
+# reads the state file, which is untouched until promotion.
 #
-# The two errors here are cheap in opposite ways: too short and the flicker
-# returns; too long and a genuine prompt surfaces a few seconds late, which a
-# prompt that waits for a human anyway absorbs. Raise or lower it with
-# ITERM_PERM_DEBOUNCE_SECONDS.
+# The two errors here are cheap in opposite ways: too short and an answered
+# dialog flickers; too long and a waiting one surfaces late. Since the trigger
+# no longer fires for auto-approved calls, the window is no longer what stops
+# their flicker, so lengthening it cannot fix one. The operator tunes it with
+# DS_ITERM_PERM_DEBOUNCE_SECONDS in the runtime config; the session launcher
+# hands it over as ITERM_PERM_DEBOUNCE_SECONDS, which the monitor reads once at
+# start.
 PERM_DEBOUNCE_SECONDS="${ITERM_PERM_DEBOUNCE_SECONDS:-5}"
 
 # Per-tty sentinel for an armed-but-not-yet-shown yellow. Its CONTENT is the
-# notification text to deliver on promotion (empty for an edit-tool yellow,
-# which the harness never notified for either), so the notification is
-# debounced together with the color.
+# notification text to deliver on promotion (empty until the permission_prompt
+# adds it), so the notification is debounced together with the color.
 perm_pending_path() { printf '%s%s.permpending' "$STATE_PREFIX" "$1"; } # $1 = tty base
+
+# Per-tty marker that this yellow's notification went out, so a re-fired
+# permission_prompt on a yellow already shown does not notify again. Cleared by
+# any non-yellow paint and by the heal.
+perm_notified_path() { printf '%s%s.permnotified' "$STATE_PREFIX" "$1"; } # $1 = tty base
 
 # Promote an armed yellow that has outlived the debounce. $1 = tty base, $2 =
 # tty path (where a painter-owned notification is written; optional).
@@ -145,7 +151,10 @@ promote_pending_permission() {
   # repaints. The window is one process spawn wide, and it self-corrects.
   rm -f "$sentinel"
   echo "$STATE_PERMISSION" >"$(state_file_path "$tty_base")"
-  [ -n "$message" ] && [ -n "$tty_path" ] && notify_operator "$message" >"$tty_path"
+  if [ -n "$message" ] && [ -n "$tty_path" ]; then
+    : >"$(perm_notified_path "$tty_base")"
+    notify_operator "$message" >"$tty_path"
+  fi
   return 0
 }
 

@@ -6,9 +6,11 @@ Two operator-facing rules, both driven against the real shell, for the reason
 run them in a subprocess rather than porting the logic to have something
 importable to test.
 
-* **The debounce.** A yellow is armed by the painter and only promoted by the
-  monitor once it has outlived `PERM_DEBOUNCE_SECONDS`, so a prompt the auto
-  classifier answers by itself never flashes the tab or moves it.
+* **The trigger and the debounce.** A yellow is armed only by a
+  `PermissionRequest` (a dialog actually shown) or its `permission_prompt`,
+  never by a tool's PreToolUse, so an auto-approved call never arms one. The
+  monitor promotes an arm once it has outlived `PERM_DEBOUNCE_SECONDS`, so a
+  dialog answered at once never flashes the tab or moves it.
 * **Self-waiting is quiet.** A `Stop` with a background task or a scheduled
   wake-up in flight paints the slate rather than green, and the notifications
   this integration owns go out only for the needs-operator class.
@@ -58,6 +60,7 @@ class Harness(unittest.TestCase):
         self.state = Path(f"{self.prefix}{self.tty_base}")
         self.pending = Path(f"{self.prefix}{self.tty_base}.permpending")
         self.askq = Path(f"{self.prefix}{self.tty_base}.askq")
+        self.permwait = Path(f"{self.prefix}{self.tty_base}.permwait")
         self.env = {
             k: v
             for k, v in os.environ.items()
@@ -113,6 +116,11 @@ def _permission(message="Claude needs your permission to use Bash"):
     }
 
 
+def _request(tool: str):
+    """A PermissionRequest, which carries the tool but no message."""
+    return {"hook_event_name": "PermissionRequest", "tool_name": tool}
+
+
 class TheDebounceArms(Harness):
     def setUp(self):
         super().setUp()
@@ -126,10 +134,28 @@ class TheDebounceArms(Harness):
         self.assertEqual(self.pending.read_text(encoding="utf-8"), "go approve")
         self.assertEqual(self.tty_output(), "", "no SetColors may be emitted")
 
-    def test_an_edit_tool_yellow_arms_too(self):
-        self.paint({"hook_event_name": "PreToolUse", "tool_name": "Write"})
+    def test_a_permission_request_arms_the_yellow(self):
+        """The trigger: the harness fires it the moment a dialog is shown."""
+        result = self.paint(_request("Bash"))
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.read(self.state), STATE_NEUTRAL)
         self.assertTrue(self.pending.exists())
+        self.assertTrue(self.permwait.exists(), "the heal must cover the dialog")
+
+    def test_an_edit_tool_alone_arms_nothing(self):
+        """The residual flicker: an auto-approved edit fires only Pre/Post, and
+        many outlive the debounce, so its PreToolUse must not arm."""
+        for tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+            with self.subTest(tool=tool):
+                self.paint({"hook_event_name": "PreToolUse", "tool_name": tool})
+                self.assertFalse(self.pending.exists())
+                self.assertEqual(self.read(self.state), STATE_NEUTRAL)
+
+    def test_a_selector_request_keeps_its_green(self):
+        self.paint({"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion"})
+        self.paint(_request("AskUserQuestion"))
+        self.assertEqual(self.read(self.state), STATE_REPLY)
+        self.assertFalse(self.pending.exists())
 
     def test_any_other_paint_cancels_the_arm(self):
         """The classifier approved: the tool ran and its PostToolUse fires."""
@@ -147,10 +173,10 @@ class TheDebounceArms(Harness):
         self.paint(_permission())
         self.assertEqual(self.pending.stat().st_mtime, before)
 
-    def test_an_edit_then_its_prompt_gains_the_message_but_keeps_the_time(self):
-        """The common order for an edit that needs approval."""
-        self.paint({"hook_event_name": "PreToolUse", "tool_name": "Edit"})
-        self.age(self.pending, 30)
+    def test_a_request_then_its_prompt_gains_the_message_but_keeps_the_time(self):
+        """The measured order: PermissionRequest, then the prompt 6s on."""
+        self.paint(_request("Edit"))
+        self.age(self.pending, 3)
         before = self.pending.stat().st_mtime
         self.paint(_permission("approve the edit"))
         self.assertEqual(self.pending.read_text(encoding="utf-8"), "approve the edit")
@@ -160,6 +186,24 @@ class TheDebounceArms(Harness):
         self.state.write_text(STATE_PERMISSION, encoding="utf-8")
         self.paint(_permission())
         self.assertFalse(self.pending.exists())
+
+    def test_a_prompt_after_promotion_notifies_once(self):
+        """The debounce (5s) beats the harness's 6s, so the message usually
+        lands on a yellow already shown; a re-fire must not notify again."""
+        self.state.write_text(STATE_PERMISSION, encoding="utf-8")
+        self.paint(_permission("go approve"), notify=True)
+        self.paint(_permission("go approve"), notify=True)
+        self.assertEqual(self.tty_output(), f"{OSC9}go approve\a")
+        self.assertEqual(self.read(self.state), STATE_PERMISSION)
+
+    def test_the_next_dialog_notifies_again(self):
+        self.state.write_text(STATE_PERMISSION, encoding="utf-8")
+        self.paint(_permission("first"), notify=True)
+        self.paint({"hook_event_name": "PostToolUse", "tool_name": "Bash"})
+        self.tty.write_text("", encoding="utf-8")  # drop the neutral SetColors
+        self.state.write_text(STATE_PERMISSION, encoding="utf-8")
+        self.paint(_permission("second"), notify=True)
+        self.assertEqual(self.tty_output(), f"{OSC9}second\a")
 
 
 @unittest.skipUnless(sys.platform == "darwin", _DARWIN_ONLY)
@@ -218,9 +262,11 @@ class TheMonitorPromotes(Harness):
         self.assertEqual(self.tty_output(), f"{OSC9}go approve\a")
         self.assertEqual(self.read(self.state), STATE_PERMISSION)
         self.assertFalse(self.pending.exists())
+        notified = Path(f"{self.prefix}{self.tty_base}.permnotified")
+        self.assertTrue(notified.exists(), "a re-fire must not notify again")
 
-    def test_an_edit_arm_promotes_silently(self):
-        # The harness never notified for the edit-tool yellow either. The
+    def test_an_arm_with_no_message_yet_promotes_silently(self):
+        # A PermissionRequest arm carries no text until the prompt adds it. The
         # state assertion is what stops a promotion that did nothing passing.
         self.pending.write_text("", encoding="utf-8")
         self.age(self.pending, 6)
