@@ -1822,7 +1822,7 @@ names alive was the outcome to avoid.
 | Verb              | Job                                        | Substrate             | Tier      | Sub-agents          | Title token               |
 | ----------------- | ------------------------------------------ | --------------------- | --------- | ------------------- | ------------------------- |
 | `task <n>`        | worktree session on Linear task n          | the token's, Bedrock  | executor  | the session's       | none (the one elision)    |
-| `task [s] <n>`    | same, the substrate typed (the override)   | `[s]`                 | executor  | the session's       | `[Task/Anthropic]`        |
+| `task [s] <n>`    | same, the substrate typed (the override)   | `[s]`                 | executor  | the session's       | `[Task/Anthropic]`, none  |
 | `task resume [n]` | resume by number (bare = the picker)       | as recorded           | re-pinned | as recorded         | —                         |
 | `explore <n>`     | research / audit, read-only, temp worktree | the token's, or `[s]` | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
 | `chore <n>`       | minor non-repo job, base checkout, no PR   | the token's, or `[s]` | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
@@ -1850,7 +1850,8 @@ refused as a plain usage error.
 print mode (`--print <verb> <n>`) gives a bare launch its substrate,
 and its check mode refuses a typed word the token contradicts — a
 typed `task anthropic` on a token-less title, another verb or
-substrate (it prints the bare line to type). Both refuse `[Operator]`,
+substrate (it prints the line to type, substrate spelled out, since a
+stale marker would refuse the bare line again). Both refuse `[Operator]`,
 leading or after a launch token, and an unrecognized bracket. A
 mismatch fails closed with no force flag (fix the title); with a typed
 word, an unreachable Linear or a missing key warns and launches, as
@@ -2728,9 +2729,11 @@ a terminal closed outright, is covered by the next morning's digest.
 
 - **`task anthropic <n>`** — the same thing on the **subscription**,
   for work that needs web search or deep research (`task bedrock <n>`
-  forces the other way). The substrate is a literal first word rather
-  than a flag: these helpers do no flag parsing, and the word reads
-  better at the call site.
+  forces the other way). A bare `task <n>` already launches where the
+  title's `[Task/Anthropic]` token says, so the typed word is the
+  override and the path when Linear is unreachable. The substrate is a
+  literal first word rather than a flag: these helpers do no flag
+  parsing, and the word reads better at the call site.
 
 - **`task resume <n>`** — resume a worktree session by number: takes a
   bare `<n>`, resolves it to the `<n>` worktree (or a pre-rename
@@ -2773,10 +2776,12 @@ a terminal closed outright, is covered by the next morning's digest.
 
   **The advisor tier, on Bedrock.** Explore work is thinking-heavy,
   so it runs the top tier like `plan` and `architect` — but its audits
-  fan out sub-agents, so it runs on Bedrock with no word, ignoring
-  `DS_MODEL_ADVISOR_SUBSTRATE`, with sub-agents on the executor tier
-  (see "Model tiers"). `explore anthropic <n>` launches on the
-  subscription, in `task`'s position. **A launch into an existing
+  fan out sub-agents, so it is titled `[Explore/Bedrock]` by default,
+  ignoring `DS_MODEL_ADVISOR_SUBSTRATE`, with sub-agents on the
+  executor tier (see "Model tiers"). A bare `explore <n>` launches on
+  the title token's substrate and refuses a title with none;
+  `[Explore/Anthropic]`, or a typed `explore anthropic <n>`, launches
+  on the subscription, in `task`'s position. **A launch into an existing
   session or worktree takes the substrate the marker records** —
   anthropic where there is none, so an unmarked or `seat`-marked tree
   stays on the subscription, and a tree `task` marked `bedrock` stays there;

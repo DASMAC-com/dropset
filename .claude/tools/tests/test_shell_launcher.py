@@ -365,6 +365,24 @@ class LaunchLineGrammarTest(unittest.TestCase):
                     self.assertNotIn("guard:", got.stderr)
                     self.assertNotIn("in", sections(got.stdout))
 
+    def test_a_reopen_never_reads_the_title(self) -> None:
+        """An existing session keeps the substrate it has: no title read, so
+        a token-less title cannot refuse the reopen."""
+        stub = (
+            '_ds_verb_check() { print -u2 "guard: $*"; return 1; }; '
+            "_ds_session_exists() { return 0; }; "
+            '_ds_substrate_enter() { print -u2 "enter: $1"; return 1; }; '
+        )
+        with tempfile.TemporaryDirectory() as home:
+            env = {"CLAUDE_CONFIG_DIR": home, "DS_MODEL_ADVISOR": "claude-adv-1[1m]"}
+            env.update(TIERS)
+            for verb in ("explore", "architect", "chore"):
+                with self.subTest(verb=verb):
+                    got = run(f"{stub}{verb} 999995", **env)
+                    self.assertEqual(got.returncode, 1, got.stderr)
+                    self.assertNotIn("guard:", got.stderr)
+                    self.assertIn("enter:", got.stderr)
+
     def test_a_refused_title_read_stops_a_bare_launch(self) -> None:
         stub = (
             "_ds_verb_check() { return 1; }; "

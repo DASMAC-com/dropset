@@ -912,6 +912,9 @@ _ds_verb_check() {
 # after any recorded substrate a reopen keeps.
 _ds_title_substrate() {
   local line
+  # Read the secrets HERE, in this shell: inside the substitution below they
+  # would be read in a subshell and lost, so the launch would read them twice.
+  _ds_secrets
   line="$(_ds_verb_check --print "$1" "$2")" || return 1
   [[ -n "$line" ]] && print -r -- "${line#* }"
   return 0

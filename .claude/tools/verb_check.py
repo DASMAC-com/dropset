@@ -28,7 +28,8 @@ no token, the verb is ``task``              launch on Bedrock (the one elision);
                                             check: a typed ``anthropic`` refuses
 no token, any other verb                    print: refuse, add the token or
                                             type a word; check: launch, the
-                                            typed word being the override
+                                            typed word overriding the implied
+                                            task verb and its substrate
 a token naming another verb or substrate    refuse, printing the implied line
 ``[Operator]``, first or after the token    refuse: no agent (ruling 27)
 a bracket token that is not one of these    refuse: fix the title
@@ -85,9 +86,15 @@ class VerbCheckError(Exception):
     """Linear could not answer — the fail-open case."""
 
 
-def launch_line(verb: str, number: str) -> str:
-    """The line to type for a title: the bare form, which reads the token."""
-    return f"{verb} {number}"
+def launch_line(verb: str, number: str, substrate: str = "") -> str:
+    """The line to type for a title: the bare form, which reads the token.
+
+    Check mode spells the substrate out. Its launch already carried a
+    substrate — typed, or a marker a stale record left — and a bare
+    suggestion would read that same marker and refuse again; a typed word
+    wins over the marker, so the spelled-out line always launches.
+    """
+    return f"{verb} {substrate} {number}" if substrate else f"{verb} {number}"
 
 
 def token(title: str) -> tuple[str, str, str] | str | None:
@@ -108,19 +115,17 @@ def token(title: str) -> tuple[str, str, str] | str | None:
     return (word, half, text)
 
 
-def _redirect(said: str, verb: str, number: str) -> str:
-    return (
-        f"the title says {said} — launch `{launch_line(verb, number)}`, "
-        "or edit the title"
-    )
+def _redirect(said: str, line: str) -> str:
+    return f"the title says {said} — launch `{line}`, or edit the title"
 
 
 def decide(title: str, verb: str, substrate: str, number: str) -> str | None:
     """Check mode: ``None`` to launch, or the one-line reason to refuse.
 
     A token-less title implies task on Bedrock, so a typed ``task anthropic``
-    contradicts it; for the other verbs it names nothing, and the typed word
-    is the override the print mode's refusal offers.
+    contradicts it. For the other verbs the typed word overrides the implied
+    task verb as well as its substrate: it is the way out the print mode's
+    no-token refusal offers, so the check lets it through.
     """
     found = token(title)
     if isinstance(found, str):
@@ -128,10 +133,12 @@ def decide(title: str, verb: str, substrate: str, number: str) -> str | None:
     if found is None:
         if verb != "task" or substrate == "bedrock":
             return None
-        return _redirect("task on Bedrock (no token)", "task", number)
+        return _redirect(
+            "task on Bedrock (no token)", launch_line("task", number, "bedrock")
+        )
     if found[:2] == (verb, substrate):
         return None
-    return _redirect(found[2], found[0], number)
+    return _redirect(found[2], launch_line(found[0], number, found[1]))
 
 
 def infer(title: str, verb: str, number: str) -> tuple[str, str] | str:
@@ -148,7 +155,7 @@ def infer(title: str, verb: str, number: str) -> tuple[str, str] | str:
             f"(`{verb} bedrock {number}`)"
         )
     if found[0] != verb:
-        return _redirect(found[2], found[0], number)
+        return _redirect(found[2], launch_line(found[0], number))
     return found[:2]
 
 

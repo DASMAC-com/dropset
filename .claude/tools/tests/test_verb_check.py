@@ -25,6 +25,8 @@ TITLES = {
     "operator": "[Operator] Grind the mainnet keys",
     # A hand-executed item that also carries a launch token ahead of the mark.
     "operator_after_token": "[Chore/Anthropic] [Operator] Rotate the signer",
+    # The mark only counts among the leading brackets, never in the prose.
+    "operator_in_prose": "[Chore/Anthropic] Fix the [Operator] view",
     "half": "[Chore] Rotate the deploy key",
     "foreign": "[WIP] Something",
 }
@@ -61,8 +63,7 @@ class Outcomes(unittest.TestCase):
         code, err = _run(["task", "anthropic", "1234"], TITLES["plain"])
         self.assertEqual(code, 1)
         self.assertIn("the title says task on Bedrock", err)
-        # The bare form: it reads the title, so it launches on Bedrock.
-        self.assertIn("`task 1234`", err)
+        self.assertIn("`task bedrock 1234`", err)
 
     def test_no_token_takes_another_verbs_typed_word(self):
         # The print mode's refusal offers the typed word as the way out, so
@@ -76,12 +77,15 @@ class Outcomes(unittest.TestCase):
                 self.assertEqual(_run(argv, TITLES["plain"]), (0, ""))
 
     def test_another_token_refuses_with_the_implied_line(self):
+        # Spelled out: a check-mode launch carried a substrate (typed, or a
+        # stale marker), and a bare line would read that marker and refuse
+        # again; a typed word wins over the marker.
         code, err = _run(["task", "bedrock", "1234"], TITLES["chore_anthropic"])
         self.assertEqual(code, 1)
-        self.assertIn("`chore 1234`", err)
+        self.assertIn("`chore anthropic 1234`", err)
         code, err = _run(["explore", "anthropic", "1234"], TITLES["explore_bedrock"])
         self.assertEqual(code, 1)
-        self.assertIn("`explore 1234`", err)
+        self.assertIn("`explore bedrock 1234`", err)
 
     def test_operator_refuses(self):
         for title in ("operator", "operator_after_token"):
@@ -169,6 +173,12 @@ class PrintMode(unittest.TestCase):
         ):
             with self.subTest(title=title):
                 self.assertEqual(_print([verb, "1234"], TITLES[title]), (0, line, ""))
+
+    def test_an_operator_mark_in_the_prose_does_not_refuse(self):
+        self.assertEqual(
+            _print(["chore", "1234"], TITLES["operator_in_prose"]),
+            (0, "chore anthropic\n", ""),
+        )
 
     def test_no_token_prints_task_on_bedrock(self):
         self.assertEqual(
