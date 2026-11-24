@@ -337,6 +337,67 @@ class LaunchLineGrammarTest(unittest.TestCase):
                     self.assertIn(f"guard: {line}", got.stderr)
                     self.assertNotIn("in", sections(got.stdout))
 
+    def test_a_bare_new_session_takes_the_titles_substrate(self) -> None:
+        """With no word typed, each verb asks the print mode for the title's
+        substrate and launches on it, skipping the check that print mode
+        already was. The substrate entry stub refuses, so nothing launches."""
+        stub = (
+            '_ds_verb_check() { if [[ "$1" == --print ]]; then '
+            'print -u2 "infer: $*"; print -r -- "$2 anthropic"; return 0; fi; '
+            'print -u2 "guard: $*"; return 1; }; '
+            '_ds_substrate_enter() { print -u2 "enter: $1"; return 1; }; '
+            "_ds_base() { :; }; "
+        )
+        with tempfile.TemporaryDirectory() as home:
+            env = {"CLAUDE_CONFIG_DIR": home, "DS_MODEL_ADVISOR": "claude-adv-1[1m]"}
+            env.update(TIERS)
+            for verb, n in (
+                ("task", "999990"),
+                ("explore", "999991"),
+                ("architect", "999992"),
+                ("chore", "999993"),
+            ):
+                with self.subTest(verb=verb):
+                    got = run(f"{stub}{verb} eng-{n}", **env)
+                    self.assertEqual(got.returncode, 1, got.stderr)
+                    self.assertIn(f"infer: --print {verb} {n}", got.stderr)
+                    self.assertIn("enter: anthropic", got.stderr)
+                    self.assertNotIn("guard:", got.stderr)
+                    self.assertNotIn("in", sections(got.stdout))
+
+    def test_a_reopen_never_reads_the_title(self) -> None:
+        """An existing session keeps the substrate it has: no title read, so
+        a token-less title cannot refuse the reopen."""
+        stub = (
+            '_ds_verb_check() { print -u2 "guard: $*"; return 1; }; '
+            "_ds_session_exists() { return 0; }; "
+            '_ds_substrate_enter() { print -u2 "enter: $1"; return 1; }; '
+        )
+        with tempfile.TemporaryDirectory() as home:
+            env = {"CLAUDE_CONFIG_DIR": home, "DS_MODEL_ADVISOR": "claude-adv-1[1m]"}
+            env.update(TIERS)
+            for verb in ("explore", "architect", "chore"):
+                with self.subTest(verb=verb):
+                    got = run(f"{stub}{verb} 999995", **env)
+                    self.assertEqual(got.returncode, 1, got.stderr)
+                    self.assertNotIn("guard:", got.stderr)
+                    self.assertIn("enter:", got.stderr)
+
+    def test_a_refused_title_read_stops_a_bare_launch(self) -> None:
+        stub = (
+            "_ds_verb_check() { return 1; }; "
+            '_ds_substrate_enter() { print -u2 "enter: $1"; return 1; }; '
+        )
+        with tempfile.TemporaryDirectory() as home:
+            env = {"CLAUDE_CONFIG_DIR": home, "DS_MODEL_ADVISOR": "claude-adv-1[1m]"}
+            env.update(TIERS)
+            for verb in ("task", "explore", "architect", "chore"):
+                with self.subTest(verb=verb):
+                    got = run(f"{stub}{verb} 999994", **env)
+                    self.assertEqual(got.returncode, 1, got.stderr)
+                    self.assertNotIn("enter:", got.stderr)
+                    self.assertNotIn("in", sections(got.stdout))
+
     def test_explore_refuses_a_word_as_its_name(self) -> None:
         got = run("explore bedrock")
         self.assertEqual(got.returncode, 1)

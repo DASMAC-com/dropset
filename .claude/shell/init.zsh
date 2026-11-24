@@ -892,13 +892,35 @@ _ds_class_resolve() {
 }
 
 # Internal: the title guard (`verb_check.py`) for a launch that starts a NEW
-# session — $1 verb, $2 substrate, $3 tag. A reopen keeps the session it has,
-# so it is not re-judged against a title edited since. A name is not checked;
-# an unreachable Linear warns and passes. Non-zero means DO NOT LAUNCH.
+# session — $1 verb, $2 substrate, $3 tag; or `--print`, $2 verb, $3 tag, for
+# a bare launch, printing the title's `<verb> <substrate>`. A reopen keeps the
+# session it has, so it is not re-judged against a title edited since. A name
+# is not checked. An unreachable Linear warns and passes a typed word, and a
+# bare `task` (on its configured substrate); a bare chore, explore or
+# architect then refuses. Non-zero means DO NOT LAUNCH.
 _ds_verb_check() {
   [[ "$3" == <-> ]] || return 0
   _ds_secrets
   python3 "$_DS_REPO/.claude/tools/verb_check.py" "$@"
+}
+
+# Internal: the substrate a bare `$1 <$2>` launch reads from the title's
+# launch-line token, so the operator never retypes what the title records —
+# set in REPLY, not printed, so the caller runs this in its own shell rather
+# than a substitution. Empty when there is none to read (a name, or `task`
+# with Linear unreachable, where the tier's configured substrate stands);
+# non-zero refuses — no token on a non-task verb, a token for another verb,
+# `[Operator]`, or an unreachable Linear where only a typed word can stand
+# in. Run for a NEW session only, after any recorded substrate a reopen keeps.
+_ds_title_substrate() {
+  local line
+  REPLY=''
+  # Read the secrets here, in the caller's shell: inside the substitution
+  # below they would be read in a subshell and lost, and read again later.
+  _ds_secrets
+  line="$(_ds_verb_check --print "$1" "$2")" || return 1
+  [[ -n "$line" ]] && REPLY="${line#* }"
+  return 0
 }
 
 _ds_session() {
@@ -1713,7 +1735,9 @@ _ds_subscription_guard() {
 
 # Start a WORKTREE session on one Linear task. THE implementation entry point.
 #
-#   task <n>             the executor tier on its configured substrate (Bedrock)
+#   task <n>             the executor tier on the substrate the title's
+#                        `[Task/<Substrate>]` token names, Bedrock with none
+#                        (the configured one when Linear cannot be read)
 #   task anthropic <n>   the executor tier on the Anthropic subscription
 #   task bedrock <n>     the executor tier on Bedrock, whatever the config says
 #   task resume <n>      resume by number, on the substrate and tier it had
@@ -1811,13 +1835,22 @@ _ds_task_start() {
     return 1
   fi
 
+  # A bare launch reads its substrate from the title; that read IS the title
+  # guard, so a typed word is the only launch the check below re-judges.
+  local inferred=''
+  if [[ -z "$override" ]]; then
+    _ds_title_substrate task "$tag" || return 1
+    override="$REPLY"
+    inferred=1
+  fi
   { read -r model; read -r substrate; } <<< "$(_ds_tier executor "$override")"
   [[ -n "$substrate" ]] || return 1
 
   _ds_base || return 1
   _ds_secrets
-  # A task always starts a new session, so the title guard always runs.
-  _ds_verb_check task "$substrate" "$tag" || return 1
+  # A task always starts a new session, so the title guard always runs —
+  # as the read above for a bare launch, as the check here for a typed word.
+  [[ -n "$inferred" ]] || _ds_verb_check task "$substrate" "$tag" || return 1
   _ds_substrate_enter "$substrate" 'task' || return 1
 
   # A task always starts a NEW session, so it gets a fresh id to key the
@@ -2039,10 +2072,11 @@ _ds_task_resume() {
 # the top tier like `plan` and `architect` do — but not on the subscription. An audit
 # fans out sub-agents, and one (1813, 10-22) ran ten at 1.0M–2.3M input each on
 # the subscription and spent the session window and most of the weekly one. So
-# the substrate is Bedrock with no word, deliberately ignoring
-# `DS_MODEL_ADVISOR_SUBSTRATE` (which only `architect` reads), and
-# `explore anthropic` is the web-research escape, in `task`'s position. Its
-# sub-agents default to the executor tier, as on every Bedrock launch.
+# a bare launch takes the substrate the title's `[Explore/<Substrate>]` token
+# names (no token refuses), never `DS_MODEL_ADVISOR_SUBSTRATE` (which only
+# `architect` reads), and `[Explore/Anthropic]` or a typed `explore anthropic`
+# is the web-research escape, in `task`'s position. Its sub-agents default to
+# the executor tier, as on every Bedrock launch.
 #
 # This was once PINNED to anthropic, because a pre-marker explore worktree has
 # no marker and so always resumed on the subscription. Now a launch into an existing
@@ -2131,7 +2165,7 @@ explore() {
   # wrong provider, and the next reopen would switch mid-conversation. The
   # same holds for an unmarked tree some other launch made, which this verb
   # may not mark. An explicit word that disagrees refuses. Only a launch with
-  # no session and no worktree takes the word or the Bedrock default, and it
+  # no session and no worktree takes the word or the title's token, and it
   # writes the marker below, over any stale one a pruned tree left.
   local sid key recorded=''
   sid="$(_ds_topic_sid explore "$raw")"
@@ -2155,6 +2189,15 @@ explore() {
     override="$recorded"
   fi
 
+  # A bare launch with nothing recorded reads the title's `[Explore/…]` token,
+  # and refuses a title with none — the record is the title, never a default.
+  local inferred=''
+  if [[ -z "$override" ]] && ! _ds_session_exists "$sid"; then
+    _ds_title_substrate explore "$raw" || return 1
+    override="$REPLY"
+    inferred=1
+  fi
+
   local model substrate
   { read -r model; read -r substrate; } <<< \
     "$(_ds_tier advisor "${override:-bedrock}")"
@@ -2163,7 +2206,7 @@ explore() {
   # Sub-agents on Bedrock default to the executor tier, as on every Bedrock
   # launch (`_ds_claude`). The title guard judges a new session only — one
   # in a tree another verb made included, which is the mismatch it exists for.
-  if ! _ds_session_exists "$sid"; then
+  if [[ -z "$inferred" ]] && ! _ds_session_exists "$sid"; then
     _ds_verb_check explore "$substrate" "$raw" || return 1
   fi
   _ds_substrate_enter "$substrate" 'explore' || return 1
@@ -2255,9 +2298,12 @@ _ds_upkeep() {
 # Start OR resume a CHORE session — a minor job whose deliverable lands OUTSIDE
 # the repo (a key file for 1Password, a local deploy, a one-off probe).
 #
-#   chore <n>             the helper tier on its configured substrate (Bedrock)
+#   chore <n>             the helper tier on the substrate the title's
+#                         `[Chore/<Substrate>]` token names; no token refuses
 #   chore anthropic <n>   the helper tier on the subscription — for web search
-#   chore bedrock <n>     the helper tier on Bedrock, whatever the config says
+#   chore bedrock <n>     the helper tier on Bedrock — the override for a
+#                         title with no token (a token it contradicts
+#                         refuses), and the path when Linear is down
 #
 # The gap it fills: `task` is the executor tier plus a bootstrap PR, `explore`
 # is the advisor tier on the subscription, and nothing was both cheap and PR-less. The
@@ -2303,9 +2349,19 @@ chore() {
   if [[ -z "$override" && "$(_ds_resume_tier "$tag")" == helper ]]; then
     override="$(_ds_substrate_read "$tag")"
   fi
+  # A bare launch with nothing recorded reads the title's `[Chore/…]` token,
+  # and refuses a title with none — that read is the title guard.
+  local inferred=''
+  if [[ -z "$override" ]] && ! _ds_session_exists "$(_ds_topic_sid chore "$tag")"
+  then
+    _ds_title_substrate chore "$tag" || return 1
+    override="$REPLY"
+    inferred=1
+  fi
   { read -r model; read -r substrate; } <<< "$(_ds_tier helper "$override")"
   [[ -n "$substrate" ]] || return 1
-  if ! _ds_session_exists "$(_ds_topic_sid chore "$tag")"; then
+  if [[ -z "$inferred" ]] && ! _ds_session_exists "$(_ds_topic_sid chore "$tag")"
+  then
     _ds_verb_check chore "$substrate" "$tag" || return 1
   fi
   _ds_substrate_enter "$substrate" 'chore' || return 1
@@ -2791,9 +2847,18 @@ architect() {
     override="$(_ds_substrate_read "$tag")"
   fi
   [[ "$(_ds_resume_tier "$tag")" == executor ]] && executor_owned=1
+  # A bare launch with nothing recorded reads the title's `[Architect/…]`
+  # token, and refuses a title with none — that read is the title guard.
+  local inferred='' sid
+  sid="$(_ds_topic_sid architect "$tag")"
+  if [[ -z "$override" ]] && ! _ds_session_exists "$sid"; then
+    _ds_title_substrate architect "$tag" || return 1
+    override="$REPLY"
+    inferred=1
+  fi
   { read -r model; read -r substrate; } <<< "$(_ds_tier advisor "$override")"
   [[ -n "$substrate" ]] || return 1
-  if ! _ds_session_exists "$(_ds_topic_sid architect "$tag")"; then
+  if [[ -z "$inferred" ]] && ! _ds_session_exists "$sid"; then
     _ds_verb_check architect "$substrate" "$tag" || return 1
   fi
   _ds_substrate_enter "$substrate" 'architect' || return 1

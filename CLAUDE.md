@@ -164,10 +164,11 @@ It is a **Linear-title signal only — never a PR title** (PR titles keep
 
 A Linear title's leading **`[<Verb>/<Substrate>]`** (`Task` /
 `Chore` / `Explore` / `Architect`, `Bedrock` / `Anthropic`) is the
-issue's **launch line**: `[Chore/Anthropic]` on 1234 is
-`chore anthropic 1234`. No token is Task on Bedrock, the only
-elision; it precedes `Claude:`, `[Operator]` marks hand-executed
-items, and the token never reaches a PR title. Detail: same doc.
+issue's **launch line**, read by the launcher: `[Chore/Anthropic]` on
+1234 is `chore 1234`, a typed word the override. No token is Task on
+Bedrock, the only elision (a bare chore, explore or architect refuses
+it); it precedes `Claude:`, `[Operator]` marks hand-executed items,
+and the token never reaches a PR title. Detail: same doc.
 
 ### Keep Linear tags out of PR bodies and comments
 

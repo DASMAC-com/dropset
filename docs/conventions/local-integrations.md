@@ -1819,38 +1819,46 @@ clean cut with **no aliases** — the family is small and every launcher
 is the operator's own muscle memory, so a half-migration leaving both
 names alive was the outcome to avoid.
 
-| Verb                 | Job                                        | Substrate              | Tier      | Sub-agents          | Title token               |
-| -------------------- | ------------------------------------------ | ---------------------- | --------- | ------------------- | ------------------------- |
-| `task <n>`           | worktree session on Linear task n          | executor's (Bedrock)   | executor  | the session's       | none (the one elision)    |
-| `task anthropic <n>` | same, when the work needs web research     | anthropic              | executor  | the session's       | `[Task/Anthropic]`        |
-| `task resume [n]`    | resume by number (bare = the picker)       | as recorded            | re-pinned | as recorded         | —                         |
-| `explore [s] <n>`    | research / audit, read-only, temp worktree | Bedrock, or `[s]`      | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
-| `chore [s] <n>`      | minor non-repo job, base checkout, no PR   | helper's (Bedrock)     | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
-| `plan [a]`           | fresh day: pass + role tabs; else schedule | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
-| `curate [a]`         | the curator: Backlog→Todo review, no PR    | Bedrock, or `[a]`      | advisor   | executor if Bedrock | — (no issue)              |
-| `analyze [a]`        | the morning analyst, base checkout, no PR  | Bedrock, or `[a]`      | executor  | the session's       | — (no issue)              |
-| `architect [b] <n>`  | design thread, read-only, temp worktree    | advisor's, or override | advisor   | executor if Bedrock | `[Architect/<Substrate>]` |
-| `fleet [go]`         | batch resume                               | per-window             | re-pinned | per-window          | —                         |
-| `models [check]`     | print the tier table; `check` it for free  | —                      | —         | —                   | —                         |
-| `cdds [n]`           | not a session verb — navigation            | —                      | —         | —                   | —                         |
+| Verb              | Job                                        | Substrate             | Tier      | Sub-agents          | Title token               |
+| ----------------- | ------------------------------------------ | --------------------- | --------- | ------------------- | ------------------------- |
+| `task <n>`        | worktree session on Linear task n          | the token's, Bedrock  | executor  | the session's       | none (the one elision)    |
+| `task [s] <n>`    | same, the substrate typed (must agree)     | `[s]`                 | executor  | the session's       | `[Task/Anthropic]`, none  |
+| `task resume [n]` | resume by number (bare = the picker)       | as recorded           | re-pinned | as recorded         | —                         |
+| `explore <n>`     | research / audit, read-only, temp worktree | the token's, or `[s]` | advisor   | executor if Bedrock | `[Explore/<Substrate>]`   |
+| `chore <n>`       | minor non-repo job, base checkout, no PR   | the token's, or `[s]` | helper    | executor if Bedrock | `[Chore/<Substrate>]`     |
+| `plan [a]`        | fresh day: pass + role tabs; else schedule | Bedrock, or `[a]`     | advisor   | executor if Bedrock | — (no issue)              |
+| `curate [a]`      | the curator: Backlog→Todo review, no PR    | Bedrock, or `[a]`     | advisor   | executor if Bedrock | — (no issue)              |
+| `analyze [a]`     | the morning analyst, base checkout, no PR  | Bedrock, or `[a]`     | executor  | the session's       | — (no issue)              |
+| `architect <n>`   | design thread, read-only, temp worktree    | the token's, or `[s]` | advisor   | executor if Bedrock | `[Architect/<Substrate>]` |
+| `fleet [go]`      | batch resume                               | per-window            | re-pinned | per-window          | —                         |
+| `models [check]`  | print the tier table; `check` it for free  | —                     | —         | —                   | —                         |
+| `cdds [n]`        | not a session verb — navigation            | —                     | —         | —                   | —                         |
 
-`[b]` is the same optional `anthropic` / `bedrock` word `plan` takes;
-`[s]` is that word too; `[a]` is `anthropic` alone, the web-research
-escape. **Every issue verb takes the line in one order — verb,
-substrate, number** — so a title token lowercased and followed by the
-issue number is the launch line: `[Chore/Anthropic]` on 1234 is
-`chore anthropic 1234` (the grammar is in `linear-automation.md` →
-"The verb/substrate title token"). The old `architect <n> bedrock`
-order is refused as a plain usage error.
-**The title guard** (`.claude/tools/verb_check.py`) holds the launcher
-to that: before `claude` starts a new issue-keyed session it reads the
-title and refuses a launch line the token contradicts — no token on
-anything but `task` on Bedrock, another verb or substrate (it prints
-the implied line), `[Operator]`, or an unrecognized bracket. A
-mismatch fails closed with no force flag (fix the title); an
-unreachable Linear or a missing key warns and launches, as does any
-other Linear failure (a number with no issue included); a reopen and a
-name are not checked.
+`[s]` is the optional `anthropic` / `bedrock` word, typed before the
+number (`chore anthropic 1234`); `[a]` is `anthropic` alone, the
+web-research escape. **The bare form is the launch line**: the
+launcher reads the substrate from the title token, so `[Chore/Anthropic]`
+on 1234 launches as `chore 1234` (the grammar is in
+`linear-automation.md` → "The verb/substrate title token"). The token
+stays required: with none, `task <n>` launches on Bedrock (the one
+elision) and the other three refuse, naming the token to add or the
+word to type. A typed word must agree with a token the title carries;
+it stands in where the title has none, over a stale marker, and as
+the only path for those three when Linear is unreachable; a bare
+`task` then falls back to its configured substrate. The old
+`architect <n> bedrock` order is
+refused as a plain usage error.
+**The title guard** (`.claude/tools/verb_check.py`) is that read: its
+print mode (`--print <verb> <n>`) gives a bare launch its substrate,
+and its check mode refuses a typed word the token contradicts — a
+typed `task anthropic` on a token-less title, another verb or
+substrate (it prints the line to type, substrate spelled out, since a
+stale marker would refuse the bare line again). Both refuse `[Operator]`,
+leading or after a launch token, and an unrecognized bracket. A
+mismatch fails closed with no force flag (fix the title); with a typed
+word, an unreachable Linear or a missing key warns and launches, as
+does any other Linear failure (a number with no issue included); a
+reopen and a name are not checked.
 Every Bedrock launch pins its sub-agents to tiers (see "Model tiers"
 below); on the subscription a sub-agent naming no model inherits the
 session's, and a named alias runs Claude Code's own table. A launch into
@@ -2037,14 +2045,15 @@ substrates and different pins.
 
 **`chore <n>` is the cheap member of the family** — a minor job
 whose deliverable lands outside the repo (a key file, a local
-deploy, a one-off probe), on the **helper** tier, Bedrock by
-default with `chore anthropic <n>` as the web-research escape. It
-shares this section's read-only posture but **not the worktree**:
-it never produces a PR, so it launches in the **base checkout**
-with no worktree, branch or `init-pr`, and its only prompt is
-`/chore <n>` — the `chore` skill bootstraps from the issue, which is
-the whole brief, and closes by moving it to In Review with
-`board_batch.py state` (`close_session.py` refuses the base
+deploy, a one-off probe), on the **helper** tier, on the substrate
+its `[Chore/<Substrate>]` title token names (`[Chore/Anthropic]` is
+the web-research escape). It shares this section's read-only posture
+but **not the worktree**: it never produces a PR, so it launches in
+the **base checkout** with no worktree, branch or `init-pr`, and its
+only prompt is `/chore <n>` — the `chore` skill bootstraps from the
+issue, which is the whole brief, and closes by moving it to In Review
+and then asking once in the tab to mark it Done, each a
+`board_batch.py state` write (`close_session.py` refuses the base
 checkout). **A Bedrock launch, resumes included, probes the model
 first** — one `maxTokens: 1` Converse call with the agent key — and
 refuses with the error on anything but an answer (an alias, which
@@ -2722,9 +2731,11 @@ a terminal closed outright, is covered by the next morning's digest.
 
 - **`task anthropic <n>`** — the same thing on the **subscription**,
   for work that needs web search or deep research (`task bedrock <n>`
-  forces the other way). The substrate is a literal first word rather
-  than a flag: these helpers do no flag parsing, and the word reads
-  better at the call site.
+  the other way). A bare `task <n>` already launches where the
+  title's `[Task/Anthropic]` token says, so the typed word must agree
+  with the title, and is the path when Linear is unreachable. The
+  substrate is a literal first word rather than a flag: these helpers do no flag
+  parsing, and the word reads better at the call site.
 
 - **`task resume <n>`** — resume a worktree session by number: takes a
   bare `<n>`, resolves it to the `<n>` worktree (or a pre-rename
@@ -2767,10 +2778,12 @@ a terminal closed outright, is covered by the next morning's digest.
 
   **The advisor tier, on Bedrock.** Explore work is thinking-heavy,
   so it runs the top tier like `plan` and `architect` — but its audits
-  fan out sub-agents, so it runs on Bedrock with no word, ignoring
-  `DS_MODEL_ADVISOR_SUBSTRATE`, with sub-agents on the executor tier
-  (see "Model tiers"). `explore anthropic <n>` launches on the
-  subscription, in `task`'s position. **A launch into an existing
+  fan out sub-agents, so it is titled `[Explore/Bedrock]` by default,
+  ignoring `DS_MODEL_ADVISOR_SUBSTRATE`, with sub-agents on the
+  executor tier (see "Model tiers"). A bare `explore <n>` launches on
+  the title token's substrate and refuses a title with none;
+  `[Explore/Anthropic]`, or a typed `explore anthropic <n>`, launches
+  on the subscription, in `task`'s position. **A launch into an existing
   session or worktree takes the substrate the marker records** —
   anthropic where there is none, so an unmarked or `seat`-marked tree
   stays on the subscription, and a tree `task` marked `bedrock` stays there;

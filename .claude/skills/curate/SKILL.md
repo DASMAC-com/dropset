@@ -588,8 +588,11 @@ fold.
 1. **Ask once** whether to launch it now; on yes:
 
    ```sh
-   python3 .claude/tools/session_dispatch.py architect bedrock <n>
+   python3 .claude/tools/session_dispatch.py architect <n>
    ```
+
+   The bare form: the launcher reads `[Architect/Bedrock]` off the
+   title it was just filed with.
 
    The fleet bound lives in the dispatcher, so this launch is gated
    like any other.

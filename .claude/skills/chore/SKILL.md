@@ -1,6 +1,6 @@
 ---
 name: chore
-description: Bootstrap a chore session from its Linear issue — the `chore <n>` verb's prompt. Reads the issue as the whole spec, restates the deliverable and where it lands, marks the issue In Progress, does the work READ-ONLY toward the repo (the session runs in the base checkout with no worktree, branch or PR), files anything repo-bound as a follow-up task, and ends by moving the issue to In Review. Never runs init-pr; only the operator marks the issue Done.
+description: Bootstrap a chore session from its Linear issue — the `chore <n>` verb's prompt. Reads the issue as the whole spec, restates the deliverable and where it lands, marks the issue In Progress, does the work READ-ONLY toward the repo (the session runs in the base checkout with no worktree, branch or PR), files anything repo-bound as a follow-up task, and ends by moving the issue to In Review, then asking once in the tab whether to mark it Done. Never runs init-pr; Done lands only on the operator's yes.
 user-invocable: true
 ---
 
@@ -24,7 +24,8 @@ sessions: temporary worktree, no PR".
   which names no issue the pruner can resolve.
 - **Anything repo-bound is a follow-up task**, filed with
   `linear-task`, never a local edit.
-- **In Review at handoff, Done only on the operator's word.**
+- **In Review at handoff, Done only on the operator's word** — asked
+  for once, in this tab, at the close.
 
 ## Steps
 
@@ -60,25 +61,46 @@ sessions: temporary worktree, no PR".
 1. **Do the work.** Decisions go through `AskUserQuestion`, the
    recommended option first.
 
-1. **Hand off.** Run `/session-metrics`, the shared tail. Record the
-   outcome on the issue with a zero-echo append — what was produced,
-   where it is, anything left over, and last the cost line from
-   `session_metrics.py --cost-line --session-id <uuid>` — then move it
-   to In Review. Left over is a filed number, never a restated
-   operator action, and the In Review move is the last word
-   (`docs/conventions/linear-automation.md` → "A close never recites
-   a captured operator action"):
+1. **Hand off: summary, metrics, then one Done ask** — `review-pr`'s
+   post-merge shape, so the operator answers Done in this tab rather
+   than finding the issue on the board.
 
-   ```sh
-   python3 .claude/tools/linear_issue.py append --id ENG-<n> \
-     --file <note>
-   ```
+   1. **Say what was done and where it landed**, in a few lines.
 
-   ```sh
-   python3 .claude/tools/board_batch.py state --id ENG-<n> \
-     --state 'In Review'
-   ```
+   1. **Run `/session-metrics`**, the shared tail.
 
-   There is no worktree to keep or remove, so `close_session.py` (which
-   refuses the base checkout) is not the close; the operator's Done
-   comes later, through `wrap`'s chore branch.
+   1. **Record the outcome on the issue** with a zero-echo append —
+      what was produced, where it is, anything left over, and last the
+      cost line from
+      `session_metrics.py --cost-line --session-id <uuid>` — then move
+      it to In Review. Left over is a filed number, never a restated
+      operator action (`docs/conventions/linear-automation.md` → "A
+      close never recites a captured operator action"):
+
+      ```sh
+      python3 .claude/tools/linear_issue.py append --id ENG-<n> \
+        --file <note>
+      ```
+
+      ```sh
+      python3 .claude/tools/board_batch.py state --id ENG-<n> \
+        --state 'In Review'
+      ```
+
+   1. **Ask once**, via `AskUserQuestion` — *"Everything on the
+      checklist is done: mark Done and close?"* — **"Mark Done
+      (Recommended)"** first, **"Leave In Review"** second. Ask only
+      when every checklist item is done and nothing is left open; an
+      open follow-up or an unticked item skips the ask and leaves In
+      Review, naming why. On the yes, the Done write is the session's
+      **last** tool call:
+
+      ```sh
+      python3 .claude/tools/board_batch.py state --id ENG-<n> \
+        --state Done
+      ```
+
+   Done stays the operator's word — the ask is the mechanism, never a
+   self-marked Done. A no leaves In Review, for `wrap`'s chore branch
+   later. There is no worktree to keep or remove, so `close_session.py`
+   (which refuses the base checkout) is not the close.

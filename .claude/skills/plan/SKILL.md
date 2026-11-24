@@ -444,13 +444,15 @@ machine refused, then a roll-call of open sessions — the
 roll-call and the `held` lines are the confirmation to relay; a
 held verb rides the next dispatch, when a session hands off.
 
-**Type the line the title token says** (`linear-automation.md` →
+**Type the bare verb the title token names** (`linear-automation.md` →
 "The verb/substrate title token"): `[Chore/Bedrock]` on 1234 is
-`chore bedrock 1234`, no token is `task 1234`. **Refuse `task <n>`**
-on a token naming another verb, and dispatch nothing for
-`[Operator]` — the session helpers' title guard refuses each of these too.
-Until the title sweep, judge a token-less legacy issue by its body,
-and fix its title before dispatching anything but `task <n>`.
+`chore 1234`, and the launcher reads the substrate from the token;
+no token is `task 1234`. **Refuse `task <n>`** on a token naming
+another verb, and dispatch nothing for `[Operator]`, leading or after
+a launch token — the session helpers' title guard refuses each of
+these too, and a bare chore, explore or architect on a token-less
+title. Until the title sweep, judge a token-less legacy issue by its
+body, and fix its title before dispatching anything but `task <n>`.
 File operator-attended agent work (a key file, a local deploy)
 `[Chore/Bedrock]` — helper tier, no PR, In Review at handoff — and
 an item the operator executes by hand `[Operator]`.

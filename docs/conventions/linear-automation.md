@@ -962,13 +962,16 @@ product code on the board.
 **A Linear title says which verb and substrate the issue runs on**, as
 a bracket token at its head: `[<Verb>/<Substrate>] <title>`. Verb is
 `Task`, `Chore`, `Explore` or `Architect`; Substrate is `Bedrock` or
-`Anthropic`. **The token is the issue's launch line**: lowercased and
-followed by the issue number, it is what the operator (or a dispatch)
-types. `[Chore/Anthropic]` on 1234 is `chore anthropic 1234`; an
-architect thread titled `[Architect/Bedrock] Linear orchestration flow`
-on its governing issue launches as `architect bedrock <n>`. The verb
-table it reads against, with each verb's default substrate, is in
-`local-integrations.md` → "The verb table".
+`Anthropic`. **The token is the issue's launch line**, and the
+launcher reads it: `[Chore/Anthropic]` on 1234 is `chore 1234`, which
+launches on the subscription; an architect thread titled
+`[Architect/Bedrock] Linear orchestration flow` on its governing issue
+launches as `architect <n>`, on Bedrock. The token stays required — a
+bare `chore`, `explore` or `architect` refuses a title without one —
+and a typed substrate word (`chore anthropic 1234`) remains the
+override where the title names no substrate, and the path when Linear
+is unreachable; one that contradicts the token refuses. The verb table it
+reads against is in `local-integrations.md` → "The verb table".
 
 - **One elision.** A title with no token is `Task` on `Bedrock`. Every
   other combination is written whole — a verb's own default included
