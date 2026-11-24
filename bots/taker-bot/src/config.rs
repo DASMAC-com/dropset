@@ -68,9 +68,18 @@ pub struct FlowConfig {
     /// order (the random-walk component). `0.0` ⇒ a deterministic revert.
     pub buy_bias_shock: f64,
     /// Lower / upper clamp on the buy-bias, keeping the side draw away from
-    /// the degenerate always-buy / always-sell endpoints.
+    /// the degenerate always-buy / always-sell endpoints. The clamp applies
+    /// after the inventory skew too, so it is also the skew's cap.
     pub buy_bias_min: f64,
     pub buy_bias_max: f64,
+
+    /// Inventory skew `k`, in logits per quote unit of net take: the side
+    /// draw uses `P(buy) = σ(logit(buy_bias) − k · net)`, where `net` is the
+    /// cumulative quote notional bought minus sold. Positive values make a run
+    /// of buying make selling progressively likelier, so net mean-reverts and
+    /// the takers stop eating through one side of the book. `0.0` ⇒ the pure
+    /// random walk, with no inventory awareness.
+    pub inventory_skew: f64,
 }
 
 impl Default for FlowConfig {
@@ -113,6 +122,14 @@ impl Default for FlowConfig {
             buy_bias_shock: 0.05,
             buy_bias_min: 0.05,
             buy_bias_max: 0.95,
+            // One logit per $20 of net take: $20 net bought moves an even coin
+            // to ~27% buys, $40 to ~12%, while a single median take shifts it
+            // by only a few points — still a coin. Over ~50k orders this holds
+            // the peak |net| near $60 against the ~$100-per-side seeded book,
+            // where the pure walk reaches the thousands. A stronger skew buys
+            // nothing: past ~0.1 the bias clamp and the size tail set the peak
+            // and it rises again (the model test pins the default under $80).
+            inventory_skew: 0.05,
         }
     }
 }

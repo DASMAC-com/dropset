@@ -305,6 +305,21 @@ pub struct SizedSwap {
     pub depth_capped: bool,
 }
 
+impl SizedSwap {
+    /// The take's quote-leg size in human units — the input for a Buy, the
+    /// expected output for a Sell — which is what the flow's inventory skew
+    /// accrues ([`crate::model::Flow::record_take`]). Both are the sizing-time
+    /// figures, not a realized balance change: close enough for a demo skew,
+    /// whose error has no reason to lean to either side.
+    pub fn quote_notional(&self, quote_decimals: u8) -> f64 {
+        let atoms = match self.side {
+            SwapSide::Buy => self.amount_in,
+            SwapSide::Sell => self.expected_out,
+        };
+        atoms as f64 / 10f64.powi(quote_decimals as i32)
+    }
+}
+
 /// The market's current reference price as a float atoms ratio (quote atoms
 /// per base atom, not a display price), taken from the first active,
 /// validly-priced vault. `None` if no vault is quoting.
@@ -893,6 +908,23 @@ mod tests {
         assert_eq!(to_atoms(1.0, 6), 1_000_000);
         assert_eq!(to_atoms(0.73, 6), 730_000);
         assert_eq!(to_atoms(2.5, 0), 2);
+    }
+
+    /// The skew's quote size reads the quote leg on each side: a Buy's input,
+    /// a Sell's expected output, never the Sell's base-atom input.
+    #[test]
+    fn quote_notional_reads_the_quote_leg() {
+        let swap = |side| SizedSwap {
+            side,
+            amount_in: 2_500_000,
+            limit_price_bits: 0,
+            min_out: 0,
+            expected_out: 7_000_000,
+            depth_capped: false,
+        };
+        assert_eq!(swap(SwapSide::Buy).quote_notional(6), 2.5);
+        assert_eq!(swap(SwapSide::Sell).quote_notional(6), 7.0);
+        assert_eq!(swap(SwapSide::Sell).quote_notional(3), 7_000.0);
     }
 
     /// The event-authority PDA matches the program's `[b"__event_authority"]`

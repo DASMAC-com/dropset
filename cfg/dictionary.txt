@@ -164,6 +164,8 @@ linkifies
 litesvm
 localnet
 localtime
+logit
+logits
 lookahead
 lookaheads
 lpad
