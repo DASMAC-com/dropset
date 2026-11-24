@@ -27,7 +27,7 @@ Two tiers, deliberately:
   (see below).
 
 **The bare environment dump** is the one deny that is not about deleting
-anything: `env`, `printenv` or `export -p` with no variable named, `set` with
+anything: `env`, `printenv`, `export` or `export -p` with no variable named, `set` with
 no arguments, or `declare` / `typeset` with no name. The session environment
 carries secrets, and a dump puts every one of them in the transcript, where
 the only remedy is rotating each. The measured instance read the model tiers
@@ -1303,18 +1303,17 @@ _ENV_DUMP_MAX_DEPTH = 4
 def _env_wrapper_rest(args):
     """``args`` after `env`'s own flags and assignments, or a `-S` string.
 
-    `env -S <string>` runs the string as a command and lists nothing itself.
-    The separated form reaches the nested scan through `sh.unwrap`, so it
-    returns None; the attached (`-S<string>`) and `=` (`--split-string=…`)
-    forms, which `unwrap` does not split out, come back as ``("-S", string)``
-    for the caller to scan.
+    `env -S <string>` splits the string into MORE ARGUMENTS to `env`, so every
+    spelling — separated, attached (`-S<string>`) or `=`
+    (`--split-string=…`) — comes back as ``("-S", string)`` for the caller to
+    scan as `env <string>`: `env -S'FOO=1'` still runs no command and dumps.
     """
     value_flags = sh.WRAPPERS["env"]
     j = 0
     while j < len(args):
         tok = args[j]
         if tok in ("-S", "--split-string"):
-            return None
+            return ("-S", args[j + 1] if j + 1 < len(args) else "")
         if tok.startswith("--split-string="):
             return ("-S", tok.split("=", 1)[1])
         if tok.startswith("-S"):
@@ -1360,7 +1359,7 @@ def _dump_reason(seg, _depth=0):
             if rest is None:
                 return None
             if isinstance(rest, tuple):
-                return env_dump_reason(rest[1], _depth + 1)
+                return env_dump_reason("env " + rest[1], _depth + 1)
             if not rest:
                 return "`env` with no command"
             words = rest
@@ -2062,6 +2061,9 @@ def _self_test():
         ("env -S'printenv'", True),
         ("env --split-string=env", True),
         ("env --split-string='make lint'", False),
+        ("env -S'FOO=1'", True),
+        ("env -S '-i'", True),
+        ("env -S 'make lint'", False),
         ("bash <<EOF\nenv\nEOF", True),
         ("cat <<EOF\nenv\nEOF", False),
         ("git commit -m \"$(cat <<'EOF'\nSubject\n\nenv\nEOF\n)\"", False),
