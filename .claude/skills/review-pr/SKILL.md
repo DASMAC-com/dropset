@@ -464,8 +464,8 @@ migrations or generation inputs, and whether it spans crates.
    (in `review_tier.py`) the security, freshness, meta and infra
    surfaces. Change them there, never in prose. `--out` is required
    (except with `--gate-only`) and not validated against the scratchpad
-   root, so substitute the real path; it is rewritten every full run,
-   owner-only (`--gate-only` and `--spawn-check` never write it).
+   root, so substitute the real path; every run but `--gate-only` and
+   `--spawn-check` rewrites it, owner-only.
 
    **Echo the tier, or override it with a stated reason.** The tier is
    a proposal from paths and shapes: `trivial`, `reduced-infra`,
@@ -560,8 +560,9 @@ migrations or generation inputs, and whether it spans crates.
    suppression pragma, a gate bypass, a relaxed timeout / retry /
    tolerance / exact count, a swallowed exception) goes into `facts.md`
    for completeness and the cross-check. After the catalogue, raise
-   **every** hit — grouped by kind, one question per group, the
-   session's own read stated as context but never as a filter —
+   **every** hit — grouped by kind, one question per group (`by_kind`
+   counts all; past the 20 hits listed, name the count), the session's
+   own read stated as context but never as a filter —
    through `AskUserQuestion` with four options: **restore**, **keep as
    justified**, **keep for another reason**, **leave open**. Record each
    answer in the catalogue. Never auto-fix one, and never dismiss one

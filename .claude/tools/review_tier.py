@@ -439,8 +439,11 @@ def moved_share(diffs, kinds) -> float:
     return sum((removed & added).values()) / total
 
 
+# A char literal is ONE character or escape (`'a'`, `'\n'`, `'\u{1F600}'`): a
+# wider `'…'` branch read the span between two Rust lifetimes
+# (`impl<'a> Foo<'a>`) as a literal and hid the type edit inside it.
 _LITERAL_RE = re.compile(
-    r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|\b\d[\d_.xXa-fA-F]*\b"
+    r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.[^']*)'|\b\d[\d_.xXa-fA-F]*\b"
 )
 
 

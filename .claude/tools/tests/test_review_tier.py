@@ -423,6 +423,24 @@ class UnderTieringRegressionTests(unittest.TestCase):
             tier_of(fl, diff("bots/src/fee.rs", new, old)), "reduced-rewiring"
         )
 
+    def test_a_type_edit_between_lifetimes_is_not_rewiring(self):
+        # No `for`: the control-flow check would block rewiring on its own and
+        # leave the skeleton untested.
+        old = [f"type View{i}<'a> = Foo<'a, u8>;" for i in range(40)]
+        new = [f"type View{i}<'a> = Baz<'a, u8>;" for i in range(40)]
+        fl = files(("bots/src/a.rs", 80))
+        self.assertNotEqual(
+            tier_of(fl, diff("bots/src/a.rs", new, old)), "reduced-rewiring"
+        )
+
+    def test_a_char_literal_swap_is_still_rewiring(self):
+        old = [f"const SEP_{i}: char = 'a';" for i in range(40)]
+        new = [f"const SEP_{i}: char = '\\n';" for i in range(40)]
+        fl = files(("bots/src/a.rs", 80))
+        self.assertEqual(
+            tier_of(fl, diff("bots/src/a.rs", new, old)), "reduced-rewiring"
+        )
+
     def test_one_test_line_beside_new_logic_is_not_small_single_crate(self):
         src = [f"if a{i} {{ b(); }}" for i in range(200)]
         fl = files(("tui/src/a.rs", 200), ("tui/tests/a.rs", 2))
