@@ -7,9 +7,6 @@ user-invocable: true
 
 # `init-pr`
 
-**Deferred tools, loaded in one `ToolSearch` `select:` at entry:**
-`mcp__linear__list_comments`.
-
 Bootstrap the current worktree: fetch main, set up the branch, push a
 draft PR that every later tool keys on. This is the first skill an
 agent runs after `claude --worktree <tag>` starts.
@@ -343,8 +340,12 @@ The reminders neither states:
      to plan.** The bootstrap wrote it there with zero echo; after
      that, Grep its `^#` headings and slice-read a section, never the
      whole file again. Use `get_issue` only if the `spec` step
-     failed. Do pull `list_comments`: acceptance criteria sometimes
-     live in an anchored comment.
+     failed. Do pull the comments — acceptance criteria sometimes
+     live in an anchored one — zero-echo, beside the spec, never
+     through `list_comments`:
+     `linear_issue.py comments --out <scratchpad>/comments.md ENG-<n>`.
+     It prints `N comment(s), B bytes`; read the file only when N > 0.
+     `review-pr` reuses it.
 
    - **An ambiguous tag gets an `AskUserQuestion`, never a
      speculative fetch of candidates.**
@@ -352,7 +353,9 @@ The reminders neither states:
    - **Treat the issue's `file:line` citations — and its "already
      landed" claims — as a snapshot of its discovery commit.** Verify
      each against `HEAD`; the stable key is the `**Fingerprint**`
-     slug, never a line number.
+     slug, never a line number. A sibling's "is it Done?" is
+     `linear_issue.py state ENG-<a> ENG-<b>`, one line each, never
+     its body.
 
    - **A re-scope that changes the subject gets its own issue — ask
      first.** When the body carries a re-scope section that changes

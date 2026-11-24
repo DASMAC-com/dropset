@@ -1018,6 +1018,173 @@ class BodyDir(_Stubbed):
             self.run_cli(["create", "--body-file", "f.md"])
 
 
+class Comments(_Stubbed):
+    def setUp(self):
+        super().setUp()
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.out = os.path.join(self.tmp, "sub", "comments.md")
+
+    @staticmethod
+    def page(nodes, more=False):
+        return {
+            "issue": {
+                "identifier": "ENG-1",
+                "comments": {"nodes": nodes, "pageInfo": {"hasNextPage": more}},
+            }
+        }
+
+    def test_the_comment_bodies_never_reach_the_returned_line(self):
+        secret = "ACCEPTANCE CRITERION THAT MUST NOT BE ECHOED"
+        node = {
+            "body": secret,
+            "createdAt": "2026-11-21T00:00:00Z",
+            "user": {"name": "A"},
+        }
+        self.install([self.page([node])])
+        line = li.spill_comments("k", "ENG-1", self.out)
+        self.assertNotIn(secret, line)
+        self.assertIn("1 comment(s)", line)
+        with open(self.out, encoding="utf-8") as fh:
+            self.assertIn(secret, fh.read())
+
+    def test_zero_comments_still_writes_an_empty_file_for_reuse(self):
+        # `review-pr` reuses the spill, so a zero must leave a file behind
+        # rather than nothing — absence would read as "never fetched".
+        self.install([self.page([])])
+        line = li.spill_comments("k", "ENG-1", self.out)
+        self.assertTrue(line.endswith("0 comment(s), 0 bytes"))
+        self.assertEqual(os.path.getsize(self.out), 0)
+
+    def test_oldest_first_with_anchor_quoted_and_tags(self):
+        nodes = [
+            {
+                "body": "later",
+                "createdAt": "2026-11-02",
+                "parent": {"id": "p"},
+                "resolvedAt": "2026-11-03",
+                "user": {"name": "B"},
+            },
+            {
+                "body": "first",
+                "createdAt": "2026-11-01",
+                "quotedText": "the anchored text",
+                "user": None,
+            },
+        ]
+        text = li.render_comments(nodes)
+        self.assertLess(text.index("first"), text.index("later"))
+        self.assertIn("## Comment 1 — (unknown), 2026-11-01", text)
+        self.assertIn("> the anchored text", text)
+        self.assertIn("## Comment 2 — B, 2026-11-02, reply, resolved", text)
+
+    def test_a_truncated_page_says_so(self):
+        self.install([self.page([], more=True)])
+        self.assertIn("TRUNCATED", li.spill_comments("k", "ENG-1", self.out))
+
+    def test_a_missing_issue_is_an_error(self):
+        self.install([{"issue": None}])
+        with self.assertRaises(li.LinearIssueError):
+            li.spill_comments("k", "ENG-404", self.out)
+
+
+class State(_Stubbed):
+    @staticmethod
+    def issue(ident, state="Done", kind="completed", milestone=None, title="T"):
+        return {
+            "identifier": ident,
+            "title": title,
+            "state": {"name": state, "type": kind},
+            "projectMilestone": {"name": milestone} if milestone else None,
+        }
+
+    def test_one_line_per_issue_in_one_round_trip(self):
+        recorder = self.install(
+            [
+                {
+                    "i0": self.issue("ENG-1"),
+                    "i1": self.issue("ENG-2", "Backlog", "backlog", "Session pending"),
+                }
+            ]
+        )
+        got = li.state_lines("k", ["ENG-1", "ENG-2", "ENG-1"])
+        self.assertEqual(
+            got,
+            [
+                "ENG-1 | Done (completed) | — | T",
+                "ENG-2 | Backlog (backlog) | Session pending | T",
+            ],
+        )
+        self.assertEqual(len(recorder.calls), 1)
+        self.assertEqual(recorder.calls[0][1], {"i0": "ENG-1", "i1": "ENG-2"})
+        self.assertNotIn("description", recorder.calls[0][0])
+
+    def test_a_missing_identifier_is_named_and_the_rest_still_print(self):
+        def post(api_key, query, variables):
+            if "ENG-404" in variables.values():
+                raise li.LinearIssueError("Linear GraphQL error: Entity not found")
+            return {"i0": self.issue(variables["i0"])}
+
+        li._post = post
+        got = li.state_lines("k", ["ENG-1", "ENG-404"])
+        self.assertEqual(
+            got, ["ENG-1 | Done (completed) | — | T", "ENG-404 | (not found)"]
+        )
+
+    def test_another_error_is_raised_not_masked(self):
+        def post(*_a):
+            raise li.LinearIssueError("HTTP 401")
+
+        li._post = post
+        with self.assertRaises(li.LinearIssueError):
+            li.state_lines("k", ["ENG-1", "ENG-2"])
+
+    def test_a_transport_not_found_is_raised_not_read_as_missing_issues(self):
+        # A bare "not found" match turned an HTTP 404 into one "(not found)"
+        # line per issue and exit 0 — a real failure dressed as an answer.
+        def post(*_a):
+            raise li.LinearIssueError("HTTP 404: Not Found")
+
+        li._post = post
+        with self.assertRaises(li.LinearIssueError):
+            li.state_lines("k", ["ENG-1", "ENG-2"])
+
+    def test_no_identifier_is_refused(self):
+        with self.assertRaises(li.LinearIssueError):
+            li.state_lines("k", ["  "])
+
+
+class NewSubcommandCli(_Stubbed):
+    """The argparse layer and dispatch, not just the functions behind them."""
+
+    def _run(self, *argv):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"LINEAR_API_KEY": "k"}):
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                code = li.run(["prog", *argv])
+        return code, out.getvalue()
+
+    def test_state_takes_several_identifiers_and_prints_a_line_each(self):
+        issue = State.issue
+        self.install([{"i0": issue("ENG-1"), "i1": issue("ENG-2")}])
+        code, out = self._run("state", "ENG-1", "ENG-2")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(out.splitlines()), 2)
+
+    def test_state_needs_an_identifier(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            li._parse_args(["prog", "state"])
+
+    def test_comments_needs_out_and_prints_the_count_line(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            li._parse_args(["prog", "comments", "ENG-1"])
+        self.install([Comments.page([])])
+        with tempfile.TemporaryDirectory() as d:
+            code, out = self._run("comments", "--out", f"{d}/c.md", "ENG-1")
+        self.assertEqual(code, 0)
+        self.assertIn("0 comment(s), 0 bytes", out)
+
+
 class Read(unittest.TestCase):
     """``read`` is ``linear_patch.py read`` under the tool sessions reach for
     first — one reader, two front doors."""

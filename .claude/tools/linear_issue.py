@@ -44,6 +44,8 @@ with the ``create`` path's resolver, not a third one.
 Subcommands::
 
     linear_issue.py read   --out body.md ENG-123   # linear_patch.py's reader
+    linear_issue.py comments --out comments.md ENG-123   # count + size only
+    linear_issue.py state  ENG-123 ENG-124   # state, type, milestone; no body
     linear_issue.py append --id ENG-123 --file notes.md
     linear_issue.py tick   --id ENG-123 --box "Part 1 text" --box "Part 2 text"
     linear_issue.py tick   --id ENG-123 --box-file boxes.txt   # one per line
@@ -452,6 +454,135 @@ def find_lines(results: list[tuple[str, list[str]]]) -> list[str]:
     return lines
 
 
+#: Cap on a ``comments`` page. Past it the spill says it was truncated rather
+#: than reading as complete.
+MAX_COMMENTS = 250
+
+_COMMENTS_QUERY = """
+query IssueComments($id: String!, $first: Int!) {
+  issue(id: $id) {
+    identifier
+    comments(first: $first) {
+      nodes { body createdAt quotedText resolvedAt parent { id } user { name } }
+      pageInfo { hasNextPage }
+    }
+  }
+}
+"""
+
+
+def render_comments(nodes: list) -> str:
+    """The spill file's markdown: one ``## Comment N`` heading per comment.
+
+    Oldest first, so a thread reads in order. An inline (anchored) comment
+    carries its quoted description text as a blockquote, since that anchor is
+    usually what makes it an acceptance criterion.
+    """
+    ordered = sorted(nodes, key=lambda n: str(n.get("createdAt") or ""))
+    blocks: list[str] = []
+    for index, node in enumerate(ordered, start=1):
+        author = ((node.get("user") or {}).get("name")) or "(unknown)"
+        tags = [str(node.get("createdAt") or "(undated)")]
+        if node.get("parent"):
+            tags.append("reply")
+        if node.get("resolvedAt"):
+            tags.append("resolved")
+        lines = [f"## Comment {index} — {author}, {', '.join(tags)}", ""]
+        quoted = (node.get("quotedText") or "").strip()
+        if quoted:
+            lines += [f"> {q}" for q in quoted.splitlines()] + [""]
+        lines.append(str(node.get("body") or "").rstrip("\n"))
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) + ("\n" if blocks else "")
+
+
+def spill_comments(api_key: str, identifier: str, out: str) -> str:
+    """Write an issue's comments to ``out``; return a count-and-size line.
+
+    The MCP ``list_comments`` returns every comment object whole, and it lands
+    early in a session (at ``init-pr``), so it is replayed on every later turn
+    — measured at about 7.6k over two calls in each of three task sessions,
+    whose issues mostly carried no comment at all. The count is the answer
+    most of the time: at ``0`` nothing need be read. The file is written even
+    then, so a later skill (``review-pr``) reuses the spill instead of asking
+    again.
+    """
+    data = _post(api_key, _COMMENTS_QUERY, {"id": identifier, "first": MAX_COMMENTS})
+    issue = data.get("issue") or {}
+    if not issue.get("identifier"):
+        raise LinearIssueError(f"no issue {identifier}")
+    page = issue.get("comments") or {}
+    nodes = page.get("nodes") or []
+    text = render_comments(nodes)
+    try:
+        os.makedirs(os.path.dirname(out) or ".", mode=0o700, exist_ok=True)
+        fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    except OSError as exc:
+        raise LinearIssueError(f"cannot write {out}: {exc}") from exc
+    more = (
+        f" (TRUNCATED at {MAX_COMMENTS}; more exist)"
+        if (page.get("pageInfo") or {}).get("hasNextPage")
+        else ""
+    )
+    size = len(text.encode("utf-8"))
+    return (
+        f"COMMENTS {issue['identifier']} -> {out}: "
+        f"{len(nodes)} comment(s), {size} bytes{more}"
+    )
+
+
+def _state_query(count: int) -> str:
+    """One aliased ``issue(id:)`` lookup per identifier, in one round trip."""
+    params = ", ".join(f"$i{n}: String!" for n in range(count))
+    fields = "identifier title state { name type } projectMilestone { name }"
+    body = "\n".join(f"  i{n}: issue(id: $i{n}) {{ {fields} }}" for n in range(count))
+    return f"query IssueStates({params}) {{\n{body}\n}}"
+
+
+def state_lines(api_key: str, identifiers: list[str]) -> list[str]:
+    """``ENG-### | <state> (<type>) | <milestone or —> | <title>`` per issue.
+
+    The question "is this sibling Done?" is answered by a state, never a
+    body, yet the only reads to hand (``get_issue``, ``read``) carry the body
+    — one session read three full bodies (about 8.1k) to confirm three
+    states. The type (``completed`` / ``canceled`` / …) rides along because it,
+    not the name, is what pruning and resume key on.
+    """
+    wanted = list(dict.fromkeys(i.strip() for i in identifiers if i.strip()))
+    if not wanted:
+        raise LinearIssueError("state needs at least one identifier")
+    variables = {f"i{n}": ident for n, ident in enumerate(wanted)}
+    try:
+        data = _post(api_key, _state_query(len(wanted)), variables)
+    except LinearIssueError as exc:
+        # One unresolved identifier fails the whole aliased query ("Entity not
+        # found"), which would hide the states that did resolve. Fall back to
+        # one lookup each so the miss is named and the rest still print.
+        # Linear's own wording, matched exactly: a bare "not found" would also
+        # catch a transport 404 and print every issue as missing, exit 0.
+        if "entity not found" not in str(exc).lower():
+            raise
+        if len(wanted) == 1:
+            return [f"{wanted[0]} | (not found)"]
+        return [line for ident in wanted for line in state_lines(api_key, [ident])]
+    lines: list[str] = []
+    for n, ident in enumerate(wanted):
+        issue = data.get(f"i{n}") or {}
+        if not issue.get("identifier"):
+            lines.append(f"{ident} | (not found)")
+            continue
+        state = issue.get("state") or {}
+        milestone = (issue.get("projectMilestone") or {}).get("name") or "—"
+        lines.append(
+            f"{issue['identifier']} | {state.get('name')} ({state.get('type')}) | "
+            f"{milestone} | {issue.get('title')}"
+        )
+    return lines
+
+
 _CREATE_MUTATION = """
 mutation Create($input: IssueCreateInput!) {
   issueCreate(input: $input) {
@@ -822,8 +953,8 @@ def _add_dry_run(parser: argparse.ArgumentParser, *, top_level: bool) -> None:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="linear_issue.py",
-        description="Zero-echo Linear issue body read, append, checklist tick, "
-        "filing and title-only search.",
+        description="Zero-echo Linear issue body read, comment spill, state "
+        "lookup, append, checklist tick, filing and title-only search.",
     )
     _add_dry_run(parser, top_level=True)
     subs = parser.add_subparsers(dest="command", required=True)
@@ -868,6 +999,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     read_cmd.add_argument("identifier", nargs="?", help="ENG-### identifier")
     read_cmd.add_argument("--id", default=None, help="ENG-### (or positional)")
     read_cmd.add_argument("--out", required=True, help="file to write the body into")
+
+    comments_cmd = subs.add_parser(
+        "comments", help="spill the comments to a file; print count and size only"
+    )
+    comments_cmd.add_argument("identifier", help="ENG-### identifier")
+    comments_cmd.add_argument(
+        "--out", required=True, help="file to write the comments into"
+    )
+
+    state_cmd = subs.add_parser(
+        "state", help="one line of state and milestone per issue, no body"
+    )
+    state_cmd.add_argument("identifiers", nargs="+", help="ENG-### identifiers")
 
     create = subs.add_parser("create", help="file issues, zero echo")
     _add_dry_run(create, top_level=False)
@@ -949,6 +1093,15 @@ def run(argv: list[str]) -> int:
         if (args.identifier is None) == (args.id is None):
             raise LinearIssueError("read takes the identifier once: positional or --id")
         print(read_body(api_key, args.identifier or args.id, args.out))
+        return 0
+
+    if args.command == "comments":
+        print(spill_comments(api_key, args.identifier, args.out))
+        return 0
+
+    if args.command == "state":
+        for line in state_lines(api_key, args.identifiers):
+            print(line)
         return 0
 
     if args.command == "create":

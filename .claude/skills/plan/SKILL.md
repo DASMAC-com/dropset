@@ -104,7 +104,7 @@ operator lever, never this mechanism.
 
 - **The procedure.** A one-line FYI to every live worker with an
   unanswered consult — planning is cycling, re-send anything
-  unanswered; then step 6's close-out rewrite, echo verified;
+  unanswered; then step 6's close-out write, read back clean;
   then `plan_cycle.py cycle`, which leaves the marker and ends
   the client.
 
@@ -161,7 +161,9 @@ holds pending the operator's tick in the curator's tab. Then:
   once: `[Operator]`, which Todo holds until the operator's Done,
   or a chore when a session can do the surrounding work, which
   runs to In Review like any chore. There is no third path.
-- **Release chains** the state of play names as landed.
+- **Release chains** the state of play names as landed; confirm
+  a link's state with `linear_issue.py state ENG-<a> …`, one line
+  each, never its body.
 
 **Say the fold line.** The lever fold runs in the analyst's own
 tab (`analyze`), never here:
@@ -477,7 +479,7 @@ an item the operator executes by hand `[Operator]`.
   implementing issue's body, then delete the file.** One still in
   its read-back is live work.
 
-**6. Write back — incrementally, then rewritten at the gate.**
+**6. Write back — incrementally, then section-patched at the gate.**
 Write after each major decision: scheduler sessions are often
 closed abruptly, and an unwritten decision is lost. A session
 that decides without writing back has dropped its main
@@ -487,7 +489,7 @@ deliverable — the board shows *what*, only the document carries
 **Gate the close-out; don't wait to be told.** When the operator
 signals wrap-up, or the conversation lulls after significant
 decisions, offer via `AskUserQuestion` — "close out now?
-(rewrites the Planning doc to the current state of play)" —
+(brings the Planning doc to the current state of play)" —
 recommended first.
 
 **On the yes, stop the curator first.** `ListAgents`; a live
@@ -495,17 +497,28 @@ curator gets one `SendMessage`, "closing for the day", and its
 `curate` stop tail ends in `CLEAR TO CLOSE`. Do not wait for an
 answer. None live: report `curator: not live`.
 
-**The close-out deliverable is the whole document, rewritten**
-to the ephemeral shape above and nothing else: superseded
-phases, dated addenda and the session's incremental notes
-disappear, and no ruling, doctrine or method text survives
-outside `In-session notes`. **Restore `Discuss with operator`
-to a single blank checkbox**, once its items are acted on, and
-carry no operator-actions list: an open operator action is an
-`[Operator]` issue, never document text. **Read the document back**
-after the write: a write against a stale snapshot silently saves
-the stale base. A wholesale replacement re-parses on the round
-trip, so compose it:
+**The close-out deliverable is the whole document, brought** to
+the ephemeral shape above and nothing else: superseded phases,
+dated addenda and the session's incremental notes disappear (it
+is still no append log: `In-session notes` is swept), and no
+ruling, doctrine or method text survives outside
+`In-session notes`. **Restore `Discuss with operator` to a
+single blank checkbox**, once its items are acted on, and carry
+no operator-actions list: an open operator action is an
+`[Operator]` issue, never document text. **Write only the
+sections that changed**, never the whole body: put each changed
+top-level section in one file and run
+`planning_doc.py replace-sections --file <path>` (`--drop '# <heading>'`
+deletes one; `--dry-run` first). A section owns its
+subsections: re-supply each one changed, `--keep` one carried
+unchanged (always the machine-written upkeep report, so the live
+copy is written, never a stale paste), or `--drop` it, else the
+write is refused.
+Unchanged sections are carried byte for byte, any heading not
+matching exactly once refuses the whole write, and the tool
+reads the document back itself — exit 1 names the first
+differing line, so slice it. A section written this way still
+re-parses on the round trip, so compose it:
 
 - **without inline code spans** — plain names, not backticked;
 - with **no emphasis span crossing a newline**;
