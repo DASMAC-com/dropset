@@ -369,15 +369,20 @@ cold when it wrote at least half its prefix to the cache:
 | 65m to 3h   |             8 |    8 |                  2 |    2 |
 | over 3h     |            21 |   21 |                  1 |    1 |
 
-The edge is sharp: no gap fell between 55 and 65 minutes, and the two
-stray cold writes inside the hour are context changes, not expiries. A
-five-minute TTL would have made the 5.5m-to-55m row cold; it is not. So
-`session_metrics.py` prices every write at the one-hour rate and sets
-`CACHE_TTL_SECONDS` to an hour: a **cold reload** is a request after a
-gap past it whose cache write is at least half its prefix, counted in
-every session's headline and priced at the write rate. A gap under the
-hour costs nothing in re-writes, so the digest needs no gap histogram.
-Re-measure when a substrate or the harness's cache settings change.
+The edge is sharp: no gap fell between 55 and 65 minutes, and only two
+writes inside the hour were cold (not inspected; a context change, such
+as a compaction, re-writes the same way). A five-minute TTL would have
+made the 5.5m-to-55m row cold; it is not. The test does not check for an
+intervening tool result: the half-prefix share stands in for it, since a
+warm turn after even a large tool result writes a small fraction of its
+prefix. So `session_metrics.py` prices every write at the one-hour rate
+and sets `CACHE_TTL_SECONDS` to an hour: a **cold reload** is a request
+after a gap past it whose cache write is at least half its prefix,
+counted in every session's headline and, wherever the line carries
+dollars, priced at the write rate (never on the subscription's cost
+line, nor when a model has no rate). A gap under the hour costs nothing
+in re-writes, so the digest needs no gap histogram. Re-measure when a
+substrate or the harness's cache settings change.
 
 ### The daily digest: the telemetry check-in
 

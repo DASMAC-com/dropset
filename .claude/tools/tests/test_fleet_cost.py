@@ -876,7 +876,6 @@ def hourly_page(hours: list[tuple[str, float]], token: str | None = None) -> dic
     return page
 
 
-@unittest.skipIf(PACIFIC is None, "no tz database")
 def prompt(text: str, cwd: str) -> str:
     """The user record a launch's bootstrap prompt is written as."""
     return json.dumps({"type": "user", "cwd": cwd, "message": {"content": text}})
@@ -991,6 +990,7 @@ class ByVerbTest(unittest.TestCase):
         self.assertNotIn("by verb", run(False))
 
 
+@unittest.skipIf(PACIFIC is None, "no tz database")
 class LocalDayTest(unittest.TestCase):
     def test_windows_keep_each_days_own_offset_across_dst(self) -> None:
         # 2026-11-01 is the fall-back day: 25 hours long in Pacific time.

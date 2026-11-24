@@ -1646,6 +1646,20 @@ class ColdReloadTests(unittest.TestCase):
         self.assertIn("· 1 cold reload, d", line)
         self.assertNotIn("$", line)
 
+    def test_an_older_stamp_never_winds_the_clock_back(self):
+        # A spliced transcript: 10:00, then 12:00, then a stray 09:00, then
+        # 12:30 re-writing. Measured from 12:00 the last gap is 30 minutes.
+        report = self._finish(
+            [
+                cache_request("2026-11-20T10:00:00Z", 90_000, 0, "m1"),
+                cache_request("2026-11-20T12:00:00Z", 1_000, 90_000, "m2"),
+                cache_request("2026-11-20T09:00:00Z", 1_000, 90_000, "m3"),
+                cache_request("2026-11-20T12:30:00Z", 91_000, 0, "m4"),
+            ]
+        )
+        # m2 is past the TTL but warm; m4 is inside it from 12:00.
+        self.assertEqual(report["cold_reloads"].count, 0)
+
     def test_json_carries_the_count(self):
         report = self._finish(
             [

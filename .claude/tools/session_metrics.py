@@ -488,7 +488,9 @@ class ColdReloads:
             return
         at = datetime.datetime.fromisoformat(stamp)
         gap = None if self._last is None else (at - self._last).total_seconds()
-        self._last = at
+        # A spliced or resumed transcript can carry an older stamp after a
+        # newer one; the clock never runs back, or the next gap would inflate.
+        self._last = at if self._last is None else max(self._last, at)
         if gap is not None and gap > CACHE_TTL_SECONDS:
             if written >= COLD_WRITE_SHARE * prefix:
                 self.count += 1
