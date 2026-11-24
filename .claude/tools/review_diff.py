@@ -56,7 +56,9 @@ An ``--only`` run (a ``subdivide`` group) prints just ``diff_path``,
 ``diff_lines``, ``files``, ``ready`` and ``blockers`` — the full verdict was
 read on the first run — unless ``--full`` is passed. A **stale** verdict (a
 rebase is due) prints the ``--gate-only`` projection whatever was asked, since
-its inventory would list the base's own commits. ``--gate-only`` wins over all.
+its inventory would list the base's own commits. ``--gate-only`` wins over all,
+then ``--paths-only``, then the ``--only`` projection. ``--spawn-check`` takes
+the same ``--only`` globs to check a subdivision diff's scope.
 
 The captured diff's first line records the fingerprint it was taken at
 (``# review-diff fingerprint=<sha256> head=<sha>``, not counted in
@@ -110,7 +112,9 @@ Prints JSON::
       "added_shape": {"added": 412, "comment": 250, "ratio": 0.607},
       "prose_heavy": true,         // added lines are mostly comment prose
       "ready": true,               // exactly `not blockers`
-      "blockers": []               // why ready is false, if it is
+      "blockers": [],              // why ready is false, if it is
+      "stale": false               // a rebase is due; the CLI then prints
+                                   //   only the --gate-only projection
     }
 
 ``ready: false`` means **do not fan out**. It is defined as ``not blockers``, so
@@ -138,8 +142,8 @@ freshness check passes rather than trusted to be read in order.
 (``runs_rust_suites`` / ``rust_reachable`` / ``rust_fixture_hits`` /
 ``runs_artifact_gates``), ``prose_heavy`` and ``targets``, which together answer
 "what may I skip?" — and drops the unbounded inventory (``commits``, ``files``,
-``diff_path``, ``diff_lines``) and the fan-out fields (``tier``, ``lenses``,
-``gates``, ``integrity``). ``added_shape`` is dropped too, but for a
+``diff_path``, ``diff_lines``) and every fan-out field (``tier`` through
+``integrity`` in the shape above). ``GATE_ONLY_FIELDS`` is the allowlist. ``added_shape`` is dropped too, but for a
 different reason: three integers are bounded by construction, so it is not
 inventory — it merely *justifies* a fan-out choice, and a fan-out reads the full
 verdict anyway. The full payload is what a
@@ -950,8 +954,9 @@ def write_diff(
     ``header`` (see :func:`diff_header`) is written first and not counted; a
     diff with no body is left an empty file.
 
-    The diff is streamed straight to the file — it never passes through this
-    process's memory, and never through the model's context.
+    The diff is streamed straight to the file, never through the model's
+    context. (``review_shape`` later reads it back whole to classify it; a
+    review diff is megabytes at most.)
 
     ``only`` restricts the diff to the given path globs. That is how an oversized
     slice gets subdivided: the review step asks for slices past ~1k lines to be
@@ -1018,15 +1023,23 @@ def write_diff(
 DIFF_HEADER_PREFIX = "# review-diff fingerprint="
 
 
-def diff_header(fingerprint: str | None, head: str) -> str | None:
-    """The header line for a captured diff, or ``None`` with no fingerprint."""
+def diff_header(
+    fingerprint: str | None, head: str, only: list[str] | None = None
+) -> str | None:
+    """The header line for a captured diff, or ``None`` with no fingerprint.
+
+    An ``--only`` diff records its globs as ``only=…``, so a scoped diff that
+    lands on the shared ``--out`` path cannot pass the spawn check as the
+    whole diff: the fingerprint is always the whole branch's.
+    """
     if fingerprint is None:
         return None
-    return f"{DIFF_HEADER_PREFIX}{fingerprint} head={head}\n"
+    scope = f" only={','.join(only)}" if only else ""
+    return f"{DIFF_HEADER_PREFIX}{fingerprint} head={head}{scope}\n"
 
 
-def read_diff_fingerprint(path: Path) -> str | None:
-    """The fingerprint a captured diff's header records, or ``None``."""
+def read_diff_header(path: Path) -> dict | None:
+    """``{"fingerprint", "head", "only"}`` from a captured diff's header, or ``None``."""
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             first = fh.readline()
@@ -1034,7 +1047,21 @@ def read_diff_fingerprint(path: Path) -> str | None:
         return None
     if not first.startswith(DIFF_HEADER_PREFIX):
         return None
-    return first[len(DIFF_HEADER_PREFIX) :].split()[0] or None
+    fields = first[len(DIFF_HEADER_PREFIX) :].split()
+    if not fields:
+        return None
+    rest = dict(f.split("=", 1) for f in fields[1:] if "=" in f)
+    return {
+        "fingerprint": fields[0],
+        "head": rest.get("head"),
+        "only": rest["only"].split(",") if "only" in rest else [],
+    }
+
+
+def read_diff_fingerprint(path: Path) -> str | None:
+    """The fingerprint a captured diff's header records, or ``None``."""
+    header = read_diff_header(path)
+    return header["fingerprint"] if header else None
 
 
 # The fingerprint's diff form, pinned against user config: one context line
@@ -1266,10 +1293,6 @@ def _scan_braces(line: str, depth: int) -> tuple[int, bool]:
             depth -= 1
         i += 1
     return depth, opened
-
-
-def _in_any_range(line_no: int, ranges: list[tuple[int, int]]) -> bool:
-    return any(start <= line_no <= end for start, end in ranges)
 
 
 def _read_post_image(path: str) -> str | None:
@@ -1738,18 +1761,23 @@ def review_shape(
             post = _read_post_image(fd.path)
             if post is not None:
                 test_ranges[fd.path] = rust_test_ranges(post)
-    gate_set = review_tier.gates(reviewed, kinds, trees, prose_heavy)
-    tier = review_tier.classify_tier(reviewed, kinds, diffs, test_ranges, code_crates)
+    added = {fd.path for fd in diffs if fd.new_file}
+    gate_set = review_tier.gates(reviewed, kinds, trees, prose_heavy, added)
+    tier = review_tier.classify_tier(
+        reviewed, kinds, diffs, test_ranges, code_crates, inventory=files
+    )
     return {
         "tier": tier,
         "lenses": review_tier.lenses_for(tier["name"], gate_set),
         "gates": gate_set,
-        "abridged_eligible": review_tier.abridged_eligible(reviewed, code_crates),
+        # The inventory, lock files included: the entry gate's threshold is
+        # about the whole change.
+        "abridged_eligible": review_tier.abridged_eligible(files, code_crates),
         "test_shape": review_tier.test_shape(diffs, kinds, test_ranges),
         "generated_share": round(generated / total, 3) if total else 0.0,
         "subdivide": review_tier.subdivision(reviewed, diff_lines),
         "integrity": review_tier.integrity_summary(
-            review_tier.integrity_hits(diffs, kinds)
+            review_tier.integrity_hits(diffs, kinds, test_ranges)
         ),
     }
 
@@ -1793,7 +1821,7 @@ def gate(
         fingerprint = None
     head = _git(["rev-parse", "HEAD"]).strip()
     diff_lines = write_diff(
-        base_ref, out, only=only, header=diff_header(fingerprint, head)
+        base_ref, out, only=only, header=diff_header(fingerprint, head, only)
     )
     # `--only` narrows the INVENTORY as well as the diff. Letting git apply the
     # same limiters keeps one owner for the glob semantics — a second matcher
@@ -2107,7 +2135,11 @@ def project(verdict: dict, fields) -> dict:
 
 
 def spawn_check(
-    verdict: dict, diff: Path, briefs: list[str], facts: str | None
+    verdict: dict,
+    diff: Path,
+    briefs: list[str],
+    facts: str | None,
+    only: list[str] | None = None,
 ) -> dict:
     """The spawn gate in one answer: is every input to the fan-out in place?
 
@@ -2115,6 +2147,12 @@ def spawn_check(
     fingerprint the live branch has (a stale or foreign diff is the failure a
     shared scratchpad invites); every brief and the facts file present and
     non-empty. ``missing`` names each failure.
+
+    Fails CLOSED on the fingerprint: an unreadable branch fingerprint, or a
+    diff with no header, can prove nothing, and two ``None`` values matching
+    would pass any file. The header's ``--only`` scope must equal ``only``
+    (pass the same ``--only`` globs to check a subdivision diff), so a scoped
+    diff never passes as the whole one, nor the reverse.
     """
     missing = []
     if not verdict["ready"]:
@@ -2127,16 +2165,31 @@ def spawn_check(
         p = Path(path)
         if not p.is_file() or p.stat().st_size == 0:
             missing.append(f"{label} {path} is missing or empty")
-    if facts is None:
+    if not facts:
         missing.append("no --facts file named")
     if not briefs:
         missing.append("no --brief file named")
-    recorded = read_diff_fingerprint(diff)
-    if diff.is_file() and recorded != verdict["fingerprint"]:
+    header = read_diff_header(diff)
+    live = verdict["fingerprint"]
+    if live is None:
         missing.append(
-            f"diff {diff} was captured at fingerprint {recorded}, the branch is "
-            f"at {verdict['fingerprint']} — re-run review_diff.py --out"
+            "the branch fingerprint could not be computed, so the captured diff "
+            "cannot be proven current"
         )
+    elif diff.is_file() and header is None:
+        missing.append(
+            f"diff {diff} has no review-diff header — re-run review_diff.py --out"
+        )
+    elif header is not None and header["fingerprint"] != live:
+        missing.append(
+            f"diff {diff} was captured at fingerprint {header['fingerprint']}, the "
+            f"branch is at {live} — re-run review_diff.py --out"
+        )
+    expected = list(only or [])
+    if header is not None and header["only"] != expected:
+        got = ",".join(header["only"]) or "the whole diff"
+        want = ",".join(expected) or "the whole diff"
+        missing.append(f"diff {diff} is scoped to {got}, expected {want}")
     return {"spawn_ok": not missing, "missing": missing}
 
 
@@ -2232,7 +2285,9 @@ def run(argv: list[str]) -> int:
         # rewrite the file it is checking.
         with tempfile.TemporaryDirectory() as tmp:
             verdict = run_gate(Path(tmp) / "spawn-probe.diff")
-        result = spawn_check(verdict, Path(args.out), args.brief, args.facts)
+        result = spawn_check(
+            verdict, Path(args.out), args.brief, args.facts, only=args.only
+        )
         json.dump(result, sys.stdout, indent=2)
         sys.stdout.write("\n")
         return 0 if result["spawn_ok"] else 1

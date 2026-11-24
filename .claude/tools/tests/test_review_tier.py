@@ -353,5 +353,162 @@ class IntegrityTests(unittest.TestCase):
         self.assertEqual(summary["by_kind"], {"placeholder": rt.INTEGRITY_SHOWN + 5})
 
 
+class UnderTieringRegressionTests(unittest.TestCase):
+    """The review's own probes: each once tiered a real change too narrowly."""
+
+    def test_new_logic_around_a_few_indented_lines_is_not_a_move(self):
+        moved = [f"value_{i} = compute(x, {i})" for i in range(20)]
+        new = [f"if guard_{i}(x): return grant(x, {i})" for i in range(300)]
+        fl = files(("bots/src/a.py", 340))
+        text = diff("bots/src/a.py", ["    " + m for m in moved] + new, moved)
+        self.assertNotEqual(tier_of(fl, text, code_crates=1), "reduced-move")
+
+    def test_filler_lines_alone_do_not_make_a_move(self):
+        old = ["    }", "    )", "    Ok(())", "    return"] * 10
+        new = ["    }", "    )", "    Ok(())", "    return"] * 10
+        self.assertEqual(
+            rt.moved_share(
+                rt.parse_diff(diff("tui/src/a.rs", new, old)),
+                {"tui/src/a.rs": "source"},
+            ),
+            0.0,
+        )
+
+    def test_deleting_a_guard_is_not_trivial(self):
+        fl = files(("feeds/src/auth.rs", 2))
+        text = diff(
+            "feeds/src/auth.rs",
+            removed=["if !authorized(u) {", "    return Err(Denied);"],
+        )
+        self.assertNotEqual(tier_of(fl, text), "trivial")
+
+    def test_a_dependency_bump_with_its_lockfile_is_not_trivial(self):
+        reviewed = files(("Cargo.toml", 2))
+        inventory = reviewed + files(("Cargo.lock", 40))
+        tier = rt.classify_tier(
+            reviewed,
+            kinds_of(["Cargo.toml"]),
+            rt.parse_diff(
+                diff("Cargo.toml", ['serde = "1.0.200"'], ['serde = "1.0.199"'])
+            ),
+            {},
+            1,
+            inventory=inventory,
+        )
+        self.assertNotEqual(tier["name"], "trivial")
+
+    def test_a_root_manifest_fires_the_security_gate(self):
+        g = rt.gates(files(("Cargo.toml", 2)), kinds_of(["Cargo.toml"]), None, False)
+        self.assertTrue(g["security"]["fires"])
+
+    def test_a_python_dedent_is_not_a_reformat(self):
+        old = [f"        total += item_{i}" for i in range(25)]
+        new = [f"    total += item_{i}" for i in range(25)]
+        fl = files((".claude/tools/a.py", 50))
+        self.assertFalse(
+            rt.is_reformat(
+                rt.parse_diff(diff(".claude/tools/a.py", new, old)),
+                {".claude/tools/a.py": "source"},
+            )
+        )
+        self.assertNotEqual(
+            tier_of(fl, diff(".claude/tools/a.py", new, old)), "reduced-reformat"
+        )
+
+    def test_an_arithmetic_edit_is_not_rewiring(self):
+        old = [f"let fee_{i} = a * b / c;" for i in range(40)]
+        new = [f"let fee_{i} = a * b / d;" for i in range(40)]
+        fl = files(("bots/src/fee.rs", 80))
+        self.assertNotEqual(
+            tier_of(fl, diff("bots/src/fee.rs", new, old)), "reduced-rewiring"
+        )
+
+    def test_one_test_line_beside_new_logic_is_not_small_single_crate(self):
+        src = [f"if a{i} {{ b(); }}" for i in range(200)]
+        fl = files(("tui/src/a.rs", 200), ("tui/tests/a.rs", 2))
+        text = diff("tui/src/a.rs", src) + diff(
+            "tui/tests/a.rs", ["assert!(x);"], ["assert!(y);"]
+        )
+        self.assertNotEqual(tier_of(fl, text), "small-single-crate")
+
+    def test_a_production_change_with_no_hunk_blocks_test_only(self):
+        added = [f"    if x {{ assert!(y{i}); }}" for i in range(40)]
+        fl = files(("tui/tests/a.rs", 40), ("tui/run.sh", 0))
+        text = diff("tui/tests/a.rs", added) + (
+            "diff --git a/tui/run.sh b/tui/run.sh\nold mode 100644\nnew mode 100755\n"
+        )
+        self.assertNotEqual(tier_of(fl, text), "reduced-test-only")
+
+    def test_an_added_build_manifest_fires_the_new_tree_gate(self):
+        text = diff(
+            "tui/vault/Cargo.toml", ["[package]", 'name = "vault"'], new_file=True
+        )
+        (fd,) = rt.parse_diff(text)
+        self.assertTrue(fd.new_file)
+        g = rt.gates(
+            files(("tui/vault/Cargo.toml", 2)),
+            kinds_of(["tui/vault/Cargo.toml"]),
+            {"tui"},
+            False,
+            {"tui/vault/Cargo.toml"},
+        )
+        self.assertEqual(g["new_tree"]["path"], "tui/vault/Cargo.toml")
+
+
+class ParseDiffEdgeTests(unittest.TestCase):
+    def test_a_form_feed_in_a_changed_line_keeps_the_numbering(self):
+        text = "diff --git a/x.c b/x.c\n--- a/x.c\n+++ b/x.c\n@@ -1,0 +1,2 @@\n+a\x0cb\n+c\n"
+        (fd,) = rt.parse_diff(text)
+        self.assertEqual(fd.hunks[0].added, [(1, "a\x0cb"), (2, "c")])
+
+    def test_a_quoted_header_is_recognized(self):
+        self.assertEqual(
+            rt.diff_header_path('diff --git "a/caf\\303\\251.md" "b/caf\\303\\251.md"'),
+            "caf\\303\\251.md",
+        )
+
+
+class IntegrityAdditionsTests(unittest.TestCase):
+    def kinds(self, text, ranges=None):
+        diffs = rt.parse_diff(text)
+        return [
+            h["kind"]
+            for h in rt.integrity_hits(diffs, kinds_of([d.path for d in diffs]), ranges)
+        ]
+
+    def test_a_deleted_assertion_in_a_kept_test(self):
+        text = diff(
+            "tui/tests/a.rs", ["let x = f();"], ["let x = f();", "assert_eq!(x, 3);"]
+        )
+        self.assertEqual(self.kinds(text), ["assertion-removed"])
+
+    def test_a_deleted_assertion_in_an_inline_rust_test(self):
+        text = diff("tui/src/a.rs", removed=["        assert!(ok);"], start=20)
+        self.assertIn(
+            "assertion-removed", self.kinds(text, {"tui/src/a.rs": [(10, 40)]})
+        )
+
+    def test_gate_bypass_spellings(self):
+        for line in (
+            "git commit --no-verify",
+            "msg = '[skip ci]'",
+            "run: make || true",
+        ):
+            self.assertIn("gate-bypass", self.kinds(diff("tui/src/a.sh", [line])), line)
+
+    def test_a_two_line_swallowed_exception(self):
+        text = diff("tui/a.py", ["try:", "    f()", "except Exception:", "    pass"])
+        self.assertIn("swallowed-exception", self.kinds(text))
+
+    def test_relaxed_retry_and_tolerance(self):
+        for old, new in (
+            ("max_retries = 3", "max_retries = 9"),
+            ("tolerance = 0.01", "tolerance = 0.5"),
+        ):
+            self.assertIn(
+                "relaxed-bound", self.kinds(diff("tui/a.py", [new], [old])), new
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

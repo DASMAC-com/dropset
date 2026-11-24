@@ -87,6 +87,12 @@ SECURITY_SURFACE = (
     "infra/**",
     ".github/workflows/**",
     ".claude/hooks/**",
+    # Dependency manifests: a version bump is a supply-chain change, and its
+    # lockfile is excluded from the diff, so the manifest is the only trace.
+    "**/Cargo.toml",
+    "**/package.json",
+    "pnpm-workspace.yaml",
+    "rust-toolchain.toml",
 )
 
 # What the two freshness lenses (doc-freshness, ci-skip-list) check against:
@@ -140,6 +146,18 @@ ABRIDGED_MAX_CHANGES = 60
 
 # Small single-crate: "even at a couple hundred lines".
 SMALL_CRATE_MAX_CHANGES = 300
+
+# ...and "self-contained": its own tests are a real share of the change, not
+# one touched assertion beside 300 lines of new logic.
+SMALL_CRATE_TEST_SHARE = 0.25
+
+# Files whose ADDITION declares a new build unit (a crate, a package), which
+# the new-tree gate treats like a new top-level tree.
+BUILD_MANIFESTS = (
+    "**/Cargo.toml",
+    "**/package.json",
+    "**/pyproject.toml",
+)
 
 # Rewiring: in-place value edits only, and bounded.
 REWIRING_MAX_CHANGES = 200
@@ -219,6 +237,8 @@ class Hunk:
 class FileDiff:
     path: str
     hunks: list[Hunk] = field(default_factory=list)
+    # The file is ADDED by the diff (a `new file mode` preamble line).
+    new_file: bool = False
 
 
 def diff_header_path(line: str) -> str | None:
@@ -229,11 +249,17 @@ def diff_header_path(line: str) -> str | None:
     for a deletion, so there is no ``/dev/null`` case here.
 
     Paths may contain spaces, so the pair is split on the first ``" b/"``; a
-    path itself containing that sequence mis-splits, which is accepted.
+    path itself containing that sequence mis-splits, which is accepted. A
+    quoted pair (``core.quotePath`` on a non-ASCII path) is split on
+    ``" "b/`` and returned still escaped: a header must never go unrecognized,
+    or its hunks are credited to the previous file.
     """
     if not line.startswith("diff --git "):
         return None
     rest = line[len("diff --git ") :].rstrip("\n")
+    marker = rest.find(' "b/')
+    if marker != -1:
+        return rest[marker + 4 :].rstrip('"') or None
     marker = rest.find(" b/")
     if marker == -1:
         return None
@@ -244,17 +270,25 @@ _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
 def parse_diff(text: str) -> list[FileDiff]:
-    """Split a unified diff into files and hunks."""
+    """Split a unified diff into files and hunks.
+
+    Split on ``\\n`` only: ``str.splitlines`` also breaks on form feeds and
+    other separators a changed line can carry, which would turn one added line
+    into a phantom context line and misnumber the rest of its hunk.
+    """
     files: list[FileDiff] = []
     current: FileDiff | None = None
     hunk: Hunk | None = None
     line_no = 0
-    for line in text.splitlines():
+    for line in text.split("\n"):
         path = diff_header_path(line)
         if path is not None:
             current = FileDiff(path)
             files.append(current)
             hunk = None
+            continue
+        if hunk is None and current is not None and line.startswith("new file mode"):
+            current.new_file = True
             continue
         match = _HUNK_RE.match(line)
         if match and current is not None:
@@ -337,27 +371,39 @@ def _code_lines(diffs, kinds):
         yield fd
 
 
-def adds_control_flow(diffs, kinds) -> bool:
-    """Whether any added non-docs line carries a control-flow token."""
+def changes_control_flow(diffs, kinds) -> bool:
+    """Whether any added OR removed non-docs line carries a control-flow token.
+
+    Both sides: deleting a guard (``-if not authorized(u):``) changes control
+    flow as surely as adding one, and is the riskier of the two.
+    """
     return any(
         _CONTROL_FLOW_RE.search(text)
         for fd in _code_lines(diffs, kinds)
         for h in fd.hunks
-        for _, text in h.added
+        for text in [t for _, t in h.added] + h.removed
     )
+
+
+# Indentation is semantics in these, so a whitespace-only change is not a
+# reformat: a dedent can move a `return` out of its loop.
+INDENT_SIGNIFICANT = (".py", ".yml", ".yaml")
 
 
 def is_reformat(diffs, kinds) -> bool:
     """Every code file's added text equals its removed text, whitespace aside.
 
     A mechanical reformat: the bytes moved, the tokens did not. Raw lines must
-    differ somewhere, or this is a no-op diff, not a reformat.
+    differ somewhere, or this is a no-op diff, not a reformat. Never true when
+    an indentation-significant file changed.
     """
     total = 0
     differs = False
     for fd in _code_lines(diffs, kinds):
         added = [t for h in fd.hunks for _, t in h.added]
         removed = [t for h in fd.hunks for t in h.removed]
+        if (added or removed) and fd.path.endswith(INDENT_SIGNIFICANT):
+            return False
         if "".join("".join(added).split()) != "".join("".join(removed).split()):
             return False
         total += len(added) + len(removed)
@@ -365,29 +411,62 @@ def is_reformat(diffs, kinds) -> bool:
     return differs and total >= SHAPE_MIN_LINES
 
 
+def _substantive(text: str) -> bool:
+    """A line that can carry a move: not blank, not a lone bracket or keyword.
+
+    Filler (``}``, ``)``, ``Ok(())``, ``return``) appears on both sides of any
+    rewrite, so counting it would let an in-place rewrite read as a move.
+    """
+    stripped = text.strip()
+    return len(stripped) > 6 and any(ch.isalnum() for ch in stripped)
+
+
 def moved_share(diffs, kinds) -> float:
-    """Share of removed non-blank code lines that reappear as added lines."""
+    """Matched substantive lines over the LARGER side, removed or added.
+
+    The larger side is the denominator so that new logic dilutes the share: a
+    few re-indented deletions beside hundreds of new lines is not a move.
+    """
     removed = Counter()
     added = Counter()
     for fd in _code_lines(diffs, kinds):
         for h in fd.hunks:
-            removed.update(t.strip() for t in h.removed if t.strip())
-            added.update(t.strip() for _, t in h.added if t.strip())
-    total = sum(removed.values())
-    if total < SHAPE_MIN_LINES:
+            removed.update(t.strip() for t in h.removed if _substantive(t))
+            added.update(t.strip() for _, t in h.added if _substantive(t))
+    total = max(sum(removed.values()), sum(added.values()))
+    if sum(removed.values()) < SHAPE_MIN_LINES:
         return 0.0
     return sum((removed & added).values()) / total
 
 
+_LITERAL_RE = re.compile(
+    r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|\b\d[\d_.xXa-fA-F]*\b"
+)
+
+
+def _skeleton(text: str) -> str:
+    """A line with its string and numeric literals replaced by ``#``."""
+    return _LITERAL_RE.sub("#", text.strip())
+
+
 def is_rewiring(diffs, kinds) -> bool:
-    """In-place value edits: every hunk swaps N lines for N, no new control flow."""
+    """In-place VALUE edits: each removed line pairs with an added line that
+    differs only in its literals, and no control flow changes.
+
+    The literal-skeleton check is what makes this "rewiring" rather than any
+    N-for-N edit: ``a * b / c`` → ``a * b / d`` keeps its line count and still
+    changes the arithmetic, so it fails here and is reviewed as code.
+    """
     seen = False
     for fd in _code_lines(diffs, kinds):
         for h in fd.hunks:
-            if not h.added or len(h.added) != len(h.removed):
+            added = [t for _, t in h.added]
+            if not added or len(added) != len(h.removed):
+                return False
+            if any(_skeleton(a) != _skeleton(r) for a, r in zip(added, h.removed)):
                 return False
             seen = True
-    return seen and not adds_control_flow(diffs, kinds)
+    return seen and not changes_control_flow(diffs, kinds)
 
 
 # --------------------------------------------------------------------------
@@ -399,12 +478,19 @@ def _first(paths, predicate):
 
 
 def gates(
-    files: list[dict], kinds: dict, base_trees: set[str] | None, prose_heavy: bool
+    files: list[dict],
+    kinds: dict,
+    base_trees: set[str] | None,
+    prose_heavy: bool,
+    added_paths: set[str] | None = None,
 ) -> dict:
     """Each lens gate, ``{"fires": bool, "path": <triggering path or null>}``.
 
     ``base_trees`` is the base's top-level directory set; ``None`` (not
     measured) leaves the new-tree gate unfired rather than guessing.
+    ``added_paths`` are the files the diff ADDS: a new build manifest is a new
+    subsystem the registry and the CI skip-list must learn about, even inside
+    an existing top-level tree, so it fires the new-tree gate too.
     """
     paths = [f["path"] for f in files]
     security = _first(
@@ -416,6 +502,10 @@ def gates(
     if base_trees is not None:
         new_tree = _first(
             paths, lambda p: "/" in p and p.partition("/")[0] not in base_trees
+        )
+    if new_tree is None and added_paths:
+        new_tree = _first(
+            paths, lambda p: p in added_paths and matches_any(p, BUILD_MANIFESTS)
         )
     return {
         "security": {"fires": security is not None, "path": security},
@@ -430,7 +520,12 @@ def gates(
 
 
 def abridged_eligible(files: list[dict], code_crates: int) -> bool:
-    """The entry gate's small-diff threshold: offer the abridged tier at all?"""
+    """The entry gate's small-diff threshold: offer the abridged tier at all?
+
+    ``files`` is the WHOLE inventory, generated families included: a
+    dependency bump's lockfile is part of its size, and dropping it made a
+    manifest-plus-lockfile change read as a two-line config tweak.
+    """
     return (
         len(files) <= ABRIDGED_MAX_FILES
         and sum(f["changes"] for f in files) <= ABRIDGED_MAX_CHANGES
@@ -445,25 +540,31 @@ def classify_tier(
     diffs: list[FileDiff],
     test_ranges: dict,
     code_crates: int,
+    inventory: list[dict] | None = None,
 ) -> dict:
     """``{"name": <tier>, "reason": <one line>}``, the first tier that fits.
 
     Ordered narrowest-claim first; the full tier is the default, so a diff
-    that fits nothing below it is fully reviewed.
+    that fits nothing below it is fully reviewed. ``files`` is the reviewed
+    set; ``inventory`` (default ``files``) is the whole branch, generated
+    families included — the trivial tier needs both small and free of any
+    generated change.
     """
+    inventory = files if inventory is None else inventory
     paths = [f["path"] for f in files]
     changes = sum(f["changes"] for f in files)
     code = [p for p in paths if kinds.get(p) != "docs"]
     meta_only = all(matches_any(p, META_SURFACE) for p in paths)
+    generated = len(inventory) > len(files)
 
-    if abridged_eligible(files, code_crates):
+    if not generated and abridged_eligible(inventory, code_crates):
         nature = None
         if not code:
             nature = "docs only"
         elif all(matches_any(p, CONFIG_SURFACE) for p in code):
             nature = "config only"
-        elif not adds_control_flow(diffs, kinds):
-            nature = "no new control flow"
+        elif not changes_control_flow(diffs, kinds):
+            nature = "no control-flow change"
         if nature:
             return {
                 "name": "trivial",
@@ -489,7 +590,7 @@ def classify_tier(
     if changes <= REWIRING_MAX_CHANGES and is_rewiring(diffs, kinds):
         return {
             "name": "reduced-rewiring",
-            "reason": "every hunk swaps N lines for N, no new control flow",
+            "reason": "every hunk changes only literals, no control-flow change",
         }
     production = [
         (fd.path, h)
@@ -500,13 +601,23 @@ def classify_tier(
             or _inside(_span(h), test_ranges.get(fd.path, ()))
         )
     ]
-    if code and diffs and not production:
+    # A changed production file with no hunk at all (a mode change, a binary,
+    # a pure rename) is still a production change.
+    with_hunks = {fd.path for fd in diffs if fd.hunks}
+    no_hunk = [p for p in code if kinds.get(p) != "tests" and p not in with_hunks]
+    if code and diffs and not production and not no_hunk:
         return {"name": "reduced-test-only", "reason": "every code hunk is test code"}
     tests = test_shape(diffs, kinds, test_ranges)
-    if code_crates == 1 and changes <= SMALL_CRATE_MAX_CHANGES and tests["hunks"]:
+    if (
+        code_crates == 1
+        and changes <= SMALL_CRATE_MAX_CHANGES
+        and tests["lines"] >= SMALL_CRATE_TEST_SHARE * changes
+    ):
         return {
             "name": "small-single-crate",
-            "reason": f"one crate, {changes} changed lines, carries its own tests",
+            "reason": (
+                f"one crate, {changes} changed lines, {tests['lines']} of them tests"
+            ),
         }
     if meta_only:
         return {"name": "meta", "reason": "confined to .claude, CLAUDE.md, docs, cfg"}
@@ -633,8 +744,14 @@ _RANGE_ASSERT_RE = re.compile(
 )
 _SNAPSHOT_PATTERNS = ("**/*.snap", "**/__snapshots__/**", "**/snapshots/**")
 
+_ASSERT_RE = re.compile(
+    r"\b(debug_)?assert(_eq|_ne)?!\s*\(|^\s*assert\s|\bself\.assert\w*\(|"
+    r"\bexpect\s*\("
+)
+
 INTEGRITY_KINDS = (
     "test-removed",
+    "assertion-removed",
     "test-skipped",
     "snapshot-without-test",
     "placeholder",
@@ -653,8 +770,13 @@ def _hit(kind, path, line, text):
     return {"kind": kind, "path": path, "line": line, "text": text.strip()[:120]}
 
 
-def integrity_hits(diffs: list[FileDiff], kinds: dict) -> list[dict]:
+def integrity_hits(
+    diffs: list[FileDiff], kinds: dict, test_ranges: dict | None = None
+) -> list[dict]:
     """Every hunk-level gate-integrity hit, in diff order.
+
+    ``test_ranges`` (inline ``#[cfg(test)]`` regions) lets an assertion
+    removed from an inline Rust test count as a test change.
 
     Deterministic and deliberately over-inclusive: a hit is a question for the
     operator (restore, keep as justified, keep for another reason, leave open),
@@ -679,6 +801,19 @@ def integrity_hits(diffs: list[FileDiff], kinds: dict) -> list[dict]:
         if len(removed_tests) > added_tests:
             for text in removed_tests[added_tests:]:
                 hits.append(_hit("test-removed", fd.path, None, text))
+        # Deleting an assertion from a test that stays is the commonest way to
+        # weaken one, and no test marker moves when it happens.
+        test_hunks = [
+            h for h in fd.hunks if is_test_hunk(fd.path, kind, h, test_ranges or {})
+        ]
+        removed_asserts = [
+            t for h in test_hunks for t in h.removed if _ASSERT_RE.search(t)
+        ]
+        added_asserts = sum(
+            1 for h in test_hunks for _, t in h.added if _ASSERT_RE.search(t)
+        )
+        for text in removed_asserts[added_asserts:]:
+            hits.append(_hit("assertion-removed", fd.path, None, text))
         if kind == "docs":
             continue
         for h in fd.hunks:

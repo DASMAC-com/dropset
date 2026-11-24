@@ -50,12 +50,13 @@ migrations or generation inputs, and whether it spans crates.
   offered first and labeled recommended, never inline, never silently
   reduced. An unanswered gate proceeds at the regular tier; it does not
   wait.
-- **Offer the abridged tier only under the small-diff threshold**: ≤ 5
-  files, ≤ 60 changed lines, none of those four surfaces, one crate. It
-  is a starting calibration (drawn from a four-line single-file fix
-  whose full suite the operator had to talk down), so state the signals
-  in the question. Above the threshold there is nothing to offer, so
-  ask nothing and proceed.
+- **Offer the abridged tier only when the verdict's
+  `abridged_eligible` is true**: ≤ 5 files, ≤ 60 changed lines
+  (lock files included), none of those four surfaces, one crate; the
+  threshold lives in `review_tier.py`. It is a starting calibration
+  (drawn from a four-line single-file fix whose full suite the operator
+  had to talk down), so state the signals in the question. When false
+  there is nothing to offer, so ask nothing and proceed.
 - The abridged tier still runs at least one independent sub-agent;
   zero-agent inline is a stop condition (step 5), not a tier.
 - Tier scoping changes how many lenses run on a trivially small diff.
@@ -414,7 +415,11 @@ migrations or generation inputs, and whether it spans crates.
    - **Generated families excluded** (`DIFF_EXCLUDES`;
      `--print-grep-excludes` lists them); step 9 regenerates and
      gate-checks them. `files` stays **unfiltered**, which is how step
-     9 sees it must run, and `generated_share` reports their share.
+     9 sees it must run, and `generated_share` reports their share. A
+     generated family **not yet listed** is added to `DIFF_EXCLUDES` in
+     this PR; until then, name its paths in the material so completeness
+     and the cross-check skim past them (`history.md` → "Generated
+     output dominating the diff").
 
    **Finish your own edits before capturing the diff.** Composing the
    briefs is when you notice your own stale prose: one read-through for
@@ -439,6 +444,7 @@ migrations or generation inputs, and whether it spans crates.
    | `gates`                           | `security`, `freshness`, `new_tree`, `prose_heavy`, each with its trigger path |
    | `test_shape`                      | test hunks and lines, inline `#[cfg(test)]` included                           |
    | `generated_share`, `subdivide`    | excluded share; `--only` groups for an oversized diff                          |
+   | `abridged_eligible`               | the entry gate's opt-down offer (above)                                        |
    | `integrity`                       | gate-integrity hits (below)                                                    |
    | `commits`, `files`, `code_crates` | sizing, inline in the material                                                 |
 
@@ -458,8 +464,8 @@ migrations or generation inputs, and whether it spans crates.
    (in `review_tier.py`) the security, freshness, meta and infra
    surfaces. Change them there, never in prose. `--out` is required
    (except with `--gate-only`) and not validated against the scratchpad
-   root, so substitute the real path; it is rewritten every run,
-   owner-only.
+   root, so substitute the real path; it is rewritten every full run,
+   owner-only (`--gate-only` and `--spawn-check` never write it).
 
    **Echo the tier, or override it with a stated reason.** The tier is
    a proposal from paths and shapes: `trivial`, `reduced-infra`,
@@ -485,8 +491,9 @@ migrations or generation inputs, and whether it spans crates.
    `security` on the trust surface (an off-tier security lens is
    justified, not a trim target; `history.md` → "Security lens on
    tooling", "Off-tier security lenses"); `doc-freshness` and
-   `ci-skip-list` on the freshness surface or a new top-level tree
-   (`history.md` → "Freshness lens yield"); `comment-accuracy` on
+   `ci-skip-list` on the freshness surface, a new top-level tree or an
+   added build manifest (`history.md` → "Freshness lens yield");
+   `comment-accuracy` on
    `prose_heavy`, handed the diff's added comments and the items they
    document — a **quality** gate, never a token lever (`history.md` →
    "The prose-heavy gate"). Never drop a listed lens on judgment.
@@ -548,15 +555,17 @@ migrations or generation inputs, and whether it spans crates.
    for a key or wire format hoist **both ends**.
 
    **The integrity hits are facts and an operator question, never a
-   fix.** Each `integrity` hit (a removed or skipped test, a snapshot
-   changed without its test, a placeholder, a suppression pragma, a
-   gate bypass, a relaxed timeout / retry / tolerance / exact count, a
-   swallowed exception) goes into `facts.md` for completeness and the
-   cross-check. After the catalogue, raise each one the diff did not
-   already justify through `AskUserQuestion` with four options —
-   **restore**, **keep as justified**, **keep for another reason**,
-   **leave open** — and record the answer in the catalogue. Never
-   auto-fix one, and never dismiss one on a commit message's say-so.
+   fix.** Each `integrity` hit (a removed or skipped test, a deleted
+   assertion, a snapshot changed without its test, a placeholder, a
+   suppression pragma, a gate bypass, a relaxed timeout / retry /
+   tolerance / exact count, a swallowed exception) goes into `facts.md`
+   for completeness and the cross-check. After the catalogue, raise
+   **every** hit — grouped by kind, one question per group, the
+   session's own read stated as context but never as a filter —
+   through `AskUserQuestion` with four options: **restore**, **keep as
+   justified**, **keep for another reason**, **leave open**. Record each
+   answer in the catalogue. Never auto-fix one, and never dismiss one
+   on the session's or a commit message's say-so.
 
    **The spawn gate is one call, immediately before spawning.** A
    session resume can strip a file emitted earlier, and the fan-out
@@ -571,8 +580,13 @@ migrations or generation inputs, and whether it spans crates.
 
    Pass every brief (`--brief` repeats). It checks `ready`, that the
    diff, each brief and the facts file exist and are non-empty, and
-   that the diff's header fingerprint is the branch's; it writes
-   nothing and exits non-zero naming each miss — re-emit and re-check.
+   that the diff's header fingerprint is the branch's and its scope the
+   one asked for (a `subdivide` group's diff is checked with the same
+   `--only` globs); it fails closed when the fingerprint cannot be
+   computed, writes nothing, and exits non-zero naming each miss —
+   re-emit and re-check. Run it **alone**, and spawn only once it has
+   returned clean: batched with the spawn, a refusal arrives after the
+   agents are already reading.
 
    **The per-lens material travels by file too**:
    `<scratchpad>/lens-<name>.md` holds handler semantics, fixture

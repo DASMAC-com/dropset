@@ -1082,6 +1082,54 @@ class GateTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("captured at fingerprint", "\n".join(parsed["missing"]))
 
+    def _verdict(self, **over):
+        v = {"ready": True, "blockers": [], "fingerprint": "f" * 64}
+        v.update(over)
+        return v
+
+    def test_the_spawn_check_fails_closed_without_a_fingerprint(self):
+        # Two `None`s matching would pass any file without a header.
+        self.out.write_text("diff --git a/x b/x\n", encoding="utf-8")
+        result = rd.spawn_check(
+            self._verdict(fingerprint=None),
+            self.out,
+            [self._write("b.md")],
+            self._write("f.md"),
+        )
+        self.assertFalse(result["spawn_ok"])
+        self.assertIn("could not be computed", "\n".join(result["missing"]))
+
+    def test_the_spawn_check_refuses_a_diff_without_a_header(self):
+        self.out.write_text("diff --git a/x b/x\n", encoding="utf-8")
+        result = rd.spawn_check(
+            self._verdict(), self.out, [self._write("b.md")], self._write("f.md")
+        )
+        self.assertIn("no review-diff header", "\n".join(result["missing"]))
+
+    def test_the_spawn_check_tells_a_subdivision_from_the_whole_diff(self):
+        self.out.write_text(
+            rd.diff_header("f" * 64, "h", ["tui/**"]) + "x\n", encoding="utf-8"
+        )
+        args = (self.out, [self._write("b.md")], self._write("f.md"))
+        whole = rd.spawn_check(self._verdict(), *args)
+        self.assertIn("scoped to tui/**", "\n".join(whole["missing"]))
+        self.assertTrue(
+            rd.spawn_check(self._verdict(), *args, only=["tui/**"])["spawn_ok"]
+        )
+
+    def test_the_spawn_check_names_each_unnamed_input_and_an_unready_verdict(self):
+        self.out.write_text(rd.diff_header("f" * 64, "h") + "x\n", encoding="utf-8")
+        result = rd.spawn_check(
+            self._verdict(ready=False, blockers=["stale"]), self.out, [], None
+        )
+        joined = "\n".join(result["missing"])
+        for needle in ("verdict not ready: stale", "no --brief", "no --facts"):
+            self.assertIn(needle, joined)
+
+    def test_a_bare_header_prefix_reads_as_no_header(self):
+        self.out.write_text(rd.DIFF_HEADER_PREFIX + "\n", encoding="utf-8")
+        self.assertIsNone(rd.read_diff_header(self.out))
+
     def test_the_spawn_check_never_rewrites_the_diff(self):
         self.commit("tui/src/ui.rs", "fn ui() {}\n", "TUI")
         self.out.write_text("the diff the lenses read\n", encoding="utf-8")
@@ -1415,12 +1463,12 @@ class RustTestRangeTests(unittest.TestCase):
         )
         ranges = rd.rust_test_ranges(text)
         self.assertEqual(ranges, [(1, 2)])
-        self.assertFalse(rd._in_any_range(4, ranges))
+        self.assertFalse(rd.review_tier._intersects((4, 4), ranges))
 
     def test_a_braceless_cfg_test_use_does_not_swallow_the_next_item(self):
         text = "#[cfg(test)]\nuse std::sync::Arc;\n\npub fn production() {\n}\n"
         ranges = rd.rust_test_ranges(text)
-        self.assertFalse(rd._in_any_range(4, ranges))
+        self.assertFalse(rd.review_tier._intersects((4, 4), ranges))
 
     def test_a_trailing_comment_does_not_defeat_the_braceless_terminator(self):
         # `mod test_support; // helpers only` does not END with `;`, so the
@@ -1437,7 +1485,7 @@ class RustTestRangeTests(unittest.TestCase):
         )
         ranges = rd.rust_test_ranges(text)
         self.assertEqual(ranges, [(1, 2)])
-        self.assertFalse(rd._in_any_range(4, ranges))
+        self.assertFalse(rd.review_tier._intersects((4, 4), ranges))
 
     def test_a_lifetime_does_not_close_the_range_early(self):
         # `&'static str` is a lifetime, not a char literal. Treating it as an
@@ -1457,8 +1505,8 @@ class RustTestRangeTests(unittest.TestCase):
         )
         ranges = rd.rust_test_ranges(text)
         self.assertEqual(ranges, [(1, 9)])
-        self.assertTrue(rd._in_any_range(8, ranges))
-        self.assertFalse(rd._in_any_range(10, ranges))
+        self.assertTrue(rd.review_tier._intersects((8, 8), ranges))
+        self.assertFalse(rd.review_tier._intersects((10, 10), ranges))
 
     def test_a_where_clause_lifetime_bound_is_also_not_a_literal(self):
         text = "#[cfg(test)]\nmod tests {\n    fn f<T>() where T: 'static {\n    }\n}\n"
