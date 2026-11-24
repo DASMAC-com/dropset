@@ -860,7 +860,10 @@ def apply_fields(
                 # issue whose cancel then failed would record a kill that did
                 # not happen. A failed append after a landed state write is
                 # reported on this issue's line and stops the batch, so the
-                # caller knows exactly which reason to re-append.
+                # caller knows exactly which reason to re-append. The append
+                # does not dedup, so a re-run of the WHOLE file would append
+                # every earlier entry's reason a second time — the error says
+                # so rather than leaving the natural recovery to double them.
                 try:
                     linear_issue.append_body(
                         api_key, issue["identifier"], reason, dry_run=False
@@ -869,7 +872,10 @@ def apply_fields(
                     emit(f"{line} — but the reason append failed: {exc}")
                     raise BoardBatchError(
                         f"{issue['identifier']}: state set, reason not appended "
-                        "— re-append it with linear_issue.py append"
+                        "— re-append it with linear_issue.py append; every entry "
+                        "printed SET above is done, so re-run only the entries "
+                        "after this one, never the whole file (it would append "
+                        "their reasons twice)"
                     ) from exc
                 line += " | reason appended"
         emit(line)

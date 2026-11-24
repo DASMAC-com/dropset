@@ -472,14 +472,17 @@ python3 .claude/tools/ratify_staged.py review --pool operator --ids <id>
 - **A priority**: `board_batch.py priorities --updates <file>`,
   rehearsed with `--dry-run` first, under the agreement rule.
 - **The kills**: cancel them all first, in one call that keeps the
-  pool guard (`approve --pool inbox --cancel <id> <id> …`), then
-  append every killed issue's evidence in **one**
+  pool guard (`approve --pool inbox --cancel <id> <id> …`). The
+  guard refuses the **whole** call, writing nothing, when any id is
+  out of the pool or holds an open thread: drop the ids it names
+  and re-run. Then append every killed issue's evidence in **one**
   `board_batch.py fields --updates <file>` call, each entry
   `{"state": "Canceled", "reason": "<evidence>"}` (the state
   re-write is a no-op; the reasons land after it, zero-echo), never
-  an append per issue. A kill the guard refuses (out of the pool,
-  or holding an open thread) is not executed: it is left out of the
-  reasons file, and the batch message hands it to the scheduler.
+  an append per issue. **That call has no pool guard and writes the
+  cancel itself**, so build its file only from the ids `approve`
+  reported canceled. A kill the guard refused is not executed: no
+  reason, and the batch message hands it to the scheduler.
 - **A merge**: only when every id is in the last pool listing — a
   merge never closes a Todo or dispatched issue from this tab. Run
   `merge-tasks` over its ids; the label names the survivor. A merge

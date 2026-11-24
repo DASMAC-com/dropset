@@ -1097,8 +1097,11 @@ class CancelWithReasonTests(unittest.TestCase):
         self.by_number = index_by_number([_issue(10), _issue(11)])
         self.order = []
 
+        self.inputs = []
+
         def fake_post(api_key, query, variables):
             self.order.append(("state", variables["id"]))
+            self.inputs.append(variables["input"])
             return {"issueUpdate": {"success": True}}
 
         def fake_append(api_key, identifier, text, *, dry_run):
@@ -1129,7 +1132,7 @@ class CancelWithReasonTests(unittest.TestCase):
         self.assertEqual(self.order[1][2], "dup of a sibling")
         self.assertTrue(all(line.endswith("reason appended") for line in lines))
         # The reason never reaches the issueUpdate input.
-        self.assertNotIn("reason", lines[0].split("|")[1].split(",")[0])
+        self.assertEqual(self.inputs, [{"stateId": self.STATE_ID}] * 2)
 
     def test_dry_run_names_the_reason_per_issue_and_writes_nothing(self):
         lines = self._apply(
@@ -1167,6 +1170,7 @@ class CancelWithReasonTests(unittest.TestCase):
                 }
             )
         self.assertIn("ENG-10", str(ctx.exception))
+        self.assertIn("never the whole file", str(ctx.exception))
         self.assertEqual(self.order, [("state", _issue(10)["id"])])
 
 

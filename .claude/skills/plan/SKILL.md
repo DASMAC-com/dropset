@@ -487,7 +487,8 @@ writing back has dropped its main deliverable — the board shows
 **checkpoints**, not once per incoming peer message: a dispatch
 wave, a hold placed or lifted, and the close-out. Buffer the
 decisions in between and land them in one patch at the next
-checkpoint, as terse lines rather than prose paragraphs the
+checkpoint (at the close-out, folded into the sections it
+rewrites), as terse lines rather than prose paragraphs the
 close-out will delete. One measured day wrote about 25 patches,
 one per peer message, each a turn at a 200k-plus prefix. A
 decision another seat must see **at once** (a curator ruling

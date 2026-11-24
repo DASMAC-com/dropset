@@ -443,6 +443,40 @@ class PatchRun(unittest.TestCase):
         self.assertNotIn("feeds", err)
         self.assertNotIn("never hardcode", err)
 
+    def test_two_concurrent_edits_in_a_row_refuse_before_any_write(self):
+        with self.assertRaisesRegex(pd.PlanningDocError, "changing under this write"):
+            self._run(
+                [self.doc(DOC), self.doc(DOC + "\nx\n"), self.doc(DOC + "\ny\n")],
+                "--ops",
+                "@OPS",
+            )
+
+    def test_a_concurrent_edit_that_moved_the_anchor_says_so(self):
+        moved = DOC.replace("| seam | 09-01 | 8 |", "| seam | 09-02 | 8 |")
+        with self.assertRaisesRegex(pd.PlanningDocError, "concurrent edit landed"):
+            self._run([self.doc(DOC), self.doc(moved)], "--ops", "@OPS")
+
+    def test_a_concurrent_edit_that_already_made_the_change_writes_nothing(self):
+        # A range rewrite whose target text the concurrent writer already
+        # produced: it changes the first read, and is a no-op on the fresh one.
+        region = "# Audit state\n\nfresh table\n\n| seam | 09-01 | 8 |"
+        ops = [
+            {
+                "op": "replace_range",
+                "start": "# Audit state",
+                "end": "| seam | 09-01 | 8 |",
+                "text": region,
+            }
+        ]
+        fresh = DOC.replace(
+            "# Audit state\n\n| unit | last | findings |\n| ---- | ---- | -------- |\n"
+            "| seam | 09-01 | 8 |",
+            region,
+        )
+        self.assertNotEqual(fresh, DOC)
+        with self.assertRaisesRegex(pd.PlanningDocError, "already made this change"):
+            self._run([self.doc(DOC), self.doc(fresh)], "--ops", "@OPS", ops=ops)
+
     def test_ops_re_apply_over_a_concurrent_edit(self):
         appended = DOC + "\n\n# Late note\n\nfrom another session\n"
         composed = pd.linear_patch.apply_ops(appended, OPS)

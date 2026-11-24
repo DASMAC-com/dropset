@@ -503,9 +503,10 @@ def run_patch(argv: list[str]) -> int:
 
     def summarize(before: str, after: str, note: str = "") -> str:
         heads = changed_headings(before, after)
+        named = "; ".join(heads) or "(blank lines only)"
         return (
             f"{title} | {len(ops)} op(s), {len(before)} -> {len(after)} chars{note} "
-            f"| changed: {'; '.join(heads)}"
+            f"| changed: {named}"
         )
 
     if args.dry_run:
@@ -518,7 +519,17 @@ def run_patch(argv: list[str]) -> int:
     _, fresh = fetch(api_key, doc_id)
     note = ""
     if fresh != stored:
-        composed = linear_patch.apply_ops(fresh, ops)
+        try:
+            composed = linear_patch.apply_ops(fresh, ops)
+        except linear_patch.LinearPatchError as exc:
+            raise PlanningDocError(
+                f"a concurrent edit landed since the first read and the ops no "
+                f"longer apply ({exc}) — re-read the section and re-anchor"
+            ) from exc
+        if composed == fresh:
+            raise PlanningDocError(
+                "a concurrent edit already made this change — nothing to write"
+            )
         _, again = fetch(api_key, doc_id)
         if again != fresh:
             raise PlanningDocError(

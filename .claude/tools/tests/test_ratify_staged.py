@@ -1186,10 +1186,11 @@ class OperatorRunTests(unittest.TestCase):
 class FakeThreads:
     """Answers the ``resolve`` queries: comment reads, replies, resolves."""
 
-    def __init__(self, threads, resolve_ok=True):
+    def __init__(self, threads, resolve_ok=True, reply_ok=True):
         # Thread id -> {"parentId", "resolvedAt"}; every thread is on ENG-7.
         self.threads = threads
         self.resolve_ok = resolve_ok
+        self.reply_ok = reply_ok
         self.calls = []
 
     def __call__(self, api_key, query, variables):
@@ -1201,6 +1202,8 @@ class FakeThreads:
             return {"comment": {"id": variables["id"], "issue": issue, **node}}
         if query == rs._REPLY_MUTATION:
             self.calls.append(("reply", variables["parentId"], variables["body"]))
+            if not self.reply_ok:
+                return {"commentCreate": {"success": False, "comment": None}}
             reply = f"r-{variables['parentId']}"
             return {"commentCreate": {"success": True, "comment": {"id": reply}}}
         if query == rs._RESOLVE_MUTATION:
@@ -1272,6 +1275,19 @@ class ResolveThreadsTests(_RunBase):
         fake = FakeThreads({"c-1": self.OPEN, "c-2": self.OPEN}, resolve_ok=False)
         with self.assertRaisesRegex(RatifyError, "linear_gate.py resolve c-1 r-c-1"):
             self._resolve(fake)
+
+    def test_a_failed_reply_stops_before_its_resolve(self):
+        fake = FakeThreads({"c-1": self.OPEN, "c-2": self.OPEN}, reply_ok=False)
+        with self.assertRaisesRegex(RatifyError, "the reply into c-1 failed"):
+            self._resolve(fake)
+        self.assertEqual([c[0] for c in fake.calls], ["reply"])
+
+    def test_a_padded_duplicate_thread_is_still_a_duplicate(self):
+        pairs = [{"thread": "c-1", "reply": "a"}, {"thread": " c-1 ", "reply": "b"}]
+        fake = FakeThreads({"c-1": self.OPEN})
+        with self.assertRaisesRegex(RatifyError, "named twice"):
+            self._resolve(fake, pairs)
+        self.assertEqual(fake.calls, [])
 
     def test_the_pairs_file_is_validated_whole(self):
         for bad in (

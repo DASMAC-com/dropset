@@ -301,10 +301,11 @@ def parse_pairs(raw: object) -> list[tuple[str, str]]:
             raise RatifyError(f"entry {n}: thread must be a comment id")
         if not isinstance(reply, str) or not reply.strip():
             raise RatifyError(f"entry {n}: reply must be non-empty text")
+        thread = thread.strip()  # before the dedup, so " c-1" is c-1 again
         if thread in seen:
             raise RatifyError(f"entry {n}: thread {thread} is named twice")
         seen.add(thread)
-        pairs.append((thread.strip(), reply))
+        pairs.append((thread, reply))
     return pairs
 
 
