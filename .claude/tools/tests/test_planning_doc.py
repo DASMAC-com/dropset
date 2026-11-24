@@ -372,7 +372,11 @@ class ReplaceRun(unittest.TestCase):
 
 
 OPS = [
-    {"op": "insert_after", "anchor": "| seam | 09-01 | 8 |", "text": "\n| feeds | 11-22 | 3 |"}
+    {
+        "op": "insert_after",
+        "anchor": "| seam | 09-01 | 8 |",
+        "text": "\n| feeds | 11-22 | 3 |",
+    }
 ]
 
 
@@ -476,7 +480,9 @@ class PatchRun(unittest.TestCase):
             self._run([self.doc(DOC)], "--ops", "@OPS", ops=bad)
 
     def test_a_no_op_patch_is_refused(self):
-        same = [{"op": "replace", "anchor": "read this first", "text": "read this first"}]
+        same = [
+            {"op": "replace", "anchor": "read this first", "text": "read this first"}
+        ]
         with self.assertRaises(pd.PlanningDocError):
             self._run([self.doc(DOC)], "--ops", "@OPS", ops=same)
 
@@ -510,7 +516,9 @@ class PatchRun(unittest.TestCase):
         self.assertNotIn("SEAM", err)
 
     def test_verify_mismatch_exits_one(self):
-        code, _, err, _ = self._run([self.doc(DOC + "\nx")], "--verify", pd.content_hash(DOC))
+        code, _, err, _ = self._run(
+            [self.doc(DOC + "\nx")], "--verify", pd.content_hash(DOC)
+        )
         self.assertEqual(code, 1)
         self.assertIn("MISMATCH", err)
 

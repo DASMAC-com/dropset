@@ -509,7 +509,9 @@ def run_patch(argv: list[str]) -> int:
         )
 
     if args.dry_run:
-        print(f"planning-doc | WOULD PATCH {summarize(stored, composed)}", file=sys.stderr)
+        print(
+            f"planning-doc | WOULD PATCH {summarize(stored, composed)}", file=sys.stderr
+        )
         return 0
     # The same one-round-trip race guard as `replace-sections`: ops re-applied
     # over an edit that landed since the first fetch, or a refusal on two.

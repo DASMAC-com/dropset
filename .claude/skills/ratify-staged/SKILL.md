@@ -154,17 +154,22 @@ to follow). Fold each held one by the fold protocol (`plan` step 1): the fold
 lands in the task's **body**. Then **reply in that comment's thread**,
 saying what changed and **naming the part of the body where it
 landed**, and resolve the thread with the reply as its resolving
-comment, so the operator reads the resolution where it took effect:
+comment, so the operator reads the resolution where it took effect.
+**Do every held thread of the round in one call**, never a reply
+call and a resolve call per thread: one file of
+`{"thread": <thread-id>, "reply": <text>}` pairs, rehearsed with
+`--dry-run` first:
 
 ```sh
-python3 .claude/tools/linear_patch.py comment <id> \
-  --body <scratchpad>/reply.md --reply-to <thread-id>
-python3 .claude/tools/linear_gate.py resolve <thread-id> \
-  <reply-id>
+python3 .claude/tools/ratify_staged.py resolve \
+  --pairs <scratchpad>/folds.json
 ```
 
-A fold whose reply fails leaves the thread **open**. A comment
-asking to drop a task marks it a **reject**.
+Every thread is checked before any write, a thread already resolved
+reports `ALREADY` and is skipped, and the replies are never echoed.
+A fold whose reply fails leaves the thread **open**; a resolve that
+fails after its reply names the `linear_gate.py resolve` that
+finishes it. A comment asking to drop a task marks it a **reject**.
 
 Then ask again over the **held and unticked alone**. Repeat until no
 task is held. An unticked task, or silence with no ask answered,

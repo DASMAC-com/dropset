@@ -35,6 +35,13 @@ sub-issues of its governing issue (``--parent``, see "The parent switch"):
   skipped, so the same command re-runs cleanly.
 * ``gate --ids …`` — the close gate: exits 1, naming them, while any of the
   ids is still open under ``Session pending``.
+* ``resolve --pairs FILE [--dry-run]`` — the fold's thread write: ``FILE`` is a
+  JSON list of ``{"thread": <comment id>, "reply": <text>}``; each reply is
+  posted into its thread and the thread resolved by it, one line per thread
+  and no body echoed. Every thread is checked before any write (exists, is
+  top-level); one already resolved reports ``ALREADY`` and is skipped, so a
+  partly failed run re-runs cleanly. One architect session's seven folds cost
+  fourteen calls (a reply, then a resolve, each) at a 200k-plus prefix.
 
 **The pool switch.** Every subcommand takes ``--pool staged|inbox``.
 ``staged`` (the default, so every existing caller is unchanged) is the
@@ -152,6 +159,7 @@ Usage:
         --operator ENG-9 --notes notes.json --out ask.json
     python3 .claude/tools/ratify_staged.py approve --pool operator --ids ENG-9
     python3 .claude/tools/ratify_staged.py approve --chore ENG-9
+    python3 .claude/tools/ratify_staged.py resolve --pairs folds.json
 """
 
 from __future__ import annotations
@@ -252,8 +260,106 @@ query($id: String!, $first: Int!) {
 """
 
 
+_THREAD_QUERY = """
+query($id: String!) {
+  comment(id: $id) { id parentId resolvedAt issue { id identifier } }
+}
+"""
+
+_REPLY_MUTATION = """
+mutation($issueId: String!, $body: String!, $parentId: String) {
+  commentCreate(input: { issueId: $issueId, body: $body, parentId: $parentId }) {
+    success
+    comment { id }
+  }
+}
+"""
+
+_RESOLVE_MUTATION = """
+mutation($id: String!, $resolvingCommentId: String) {
+  commentResolve(id: $id, resolvingCommentId: $resolvingCommentId) { success }
+}
+"""
+
+
 class RatifyError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
+
+
+def parse_pairs(raw: object) -> list[tuple[str, str]]:
+    """``(thread, reply)`` pairs from the ``resolve`` file, validated whole."""
+    if not isinstance(raw, list) or not raw:
+        raise RatifyError(
+            'resolve expects a non-empty JSON list of {"thread", "reply"}'
+        )
+    pairs, seen = [], set()
+    for n, entry in enumerate(raw):
+        if not isinstance(entry, dict) or set(entry) != {"thread", "reply"}:
+            raise RatifyError(f'entry {n}: exactly the keys "thread" and "reply"')
+        thread, reply = entry["thread"], entry["reply"]
+        if not isinstance(thread, str) or not thread.strip():
+            raise RatifyError(f"entry {n}: thread must be a comment id")
+        if not isinstance(reply, str) or not reply.strip():
+            raise RatifyError(f"entry {n}: reply must be non-empty text")
+        if thread in seen:
+            raise RatifyError(f"entry {n}: thread {thread} is named twice")
+        seen.add(thread)
+        pairs.append((thread.strip(), reply))
+    return pairs
+
+
+def resolve_threads(
+    api_key: str, pairs: list[tuple[str, str]], *, dry_run: bool = False
+) -> list[str]:
+    """Reply into each thread and resolve it by that reply; one line each.
+
+    Every thread is read before any write, so a mistyped id or a reply (not a
+    thread) fails with nothing posted. The reply lands before the resolve: a
+    thread resolved with no reply would hide the fold's answer from the
+    operator, while a reply left unresolved only shows the thread still open.
+    """
+    planned = []
+    for thread, reply in pairs:
+        node = board_batch._post(api_key, _THREAD_QUERY, {"id": thread}).get("comment")
+        if not isinstance(node, dict) or not (node.get("issue") or {}).get("id"):
+            raise RatifyError(f"thread {thread} did not resolve to a comment")
+        if node.get("parentId"):
+            raise RatifyError(
+                f"{thread} is a reply, not a thread — name its top-level comment"
+            )
+        planned.append((thread, reply, node))
+    lines = []
+    for thread, reply, node in planned:
+        ident = node["issue"]["identifier"]
+        if node.get("resolvedAt"):
+            line = f"ALREADY {ident} thread {thread} | resolved, nothing posted"
+        elif dry_run:
+            line = f"WOULD RESOLVE {ident} thread {thread} | reply {len(reply)} char(s)"
+        else:
+            data = board_batch._post(
+                api_key,
+                _REPLY_MUTATION,
+                {"issueId": node["issue"]["id"], "body": reply, "parentId": thread},
+            )
+            created = data.get("commentCreate") or {}
+            reply_id = (created.get("comment") or {}).get("id")
+            if not created.get("success") or not reply_id:
+                raise RatifyError(f"{ident}: the reply into {thread} failed")
+            data = board_batch._post(
+                api_key,
+                _RESOLVE_MUTATION,
+                {"id": thread, "resolvingCommentId": reply_id},
+            )
+            if not (data.get("commentResolve") or {}).get("success"):
+                raise RatifyError(
+                    f"{ident}: replied ({reply_id}) but resolving {thread} failed "
+                    f"— finish it with linear_gate.py resolve {thread} {reply_id}, "
+                    "never a re-run of this pair (it would reply twice)"
+                )
+            line = f"RESOLVED {ident} thread {thread} | reply {len(reply)} char(s)"
+        print(line)
+        lines.append(line)
+    return lines
 
 
 def parse_ids(raw: list[str]) -> list[str]:
@@ -944,6 +1050,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="every open issue carrying it: the close and bootstrap sweeps",
     )
     unmark.add_argument("--dry-run", action="store_true")
+    resolve = sub.add_parser(
+        "resolve", help="reply into and resolve each folded thread, in one run"
+    )
+    resolve.add_argument(
+        "--pairs",
+        required=True,
+        help='JSON list of {"thread": <comment id>, "reply": <text>}, inline or a '
+        "file path",
+    )
+    resolve.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -972,6 +1088,12 @@ def run_mark(args: argparse.Namespace, key: str, project: str) -> int:
 
 def run(argv: list[str]) -> int:
     args = _parse_args(argv)
+    if args.cmd == "resolve":
+        pairs = parse_pairs(load_json_arg(args.pairs))
+        resolve_threads(
+            board_batch.env_var("LINEAR_API_KEY"), pairs, dry_run=args.dry_run
+        )
+        return 0
     if args.cmd in ("mark", "unmark"):
         return run_mark(
             args,

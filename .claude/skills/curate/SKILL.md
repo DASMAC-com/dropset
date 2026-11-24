@@ -403,13 +403,14 @@ follow. Then, per ticked task:
   three below: fold by the fold protocol. The fold lands in the task's
   **body**. Then **reply in the operator's thread**, naming what
   changed and the part of the body where it landed, and resolve the
-  thread with your reply as the resolving comment:
+  thread with your reply as the resolving comment. Every thread of
+  the batch goes in **one** call, a file of
+  `{"thread": <thread-id>, "reply": <text>}` pairs, never a reply
+  and a resolve per thread:
 
   ```sh
-  python3 .claude/tools/linear_patch.py comment <id> \
-    --body <scratchpad>/reply.md --reply-to <thread-id>
-  python3 .claude/tools/linear_gate.py resolve <thread-id> \
-    <reply-id>
+  python3 .claude/tools/ratify_staged.py resolve \
+    --pairs <scratchpad>/folds.json
   ```
 
   If the reply fails, leave the thread **open**: a resolved thread
@@ -470,11 +471,15 @@ python3 .claude/tools/ratify_staged.py review --pool operator --ids <id>
   with `--dry-run` first.
 - **A priority**: `board_batch.py priorities --updates <file>`,
   rehearsed with `--dry-run` first, under the agreement rule.
-- **A kill**: cancel it first (`approve --pool inbox --cancel <id>`),
-  then append the evidence to the body (`linear_issue.py append`).
-  A kill the tool refuses (out of the pool, or holding an open
-  thread) is not executed: no append, and the batch message hands
-  it to the scheduler.
+- **The kills**: cancel them all first, in one call that keeps the
+  pool guard (`approve --pool inbox --cancel <id> <id> …`), then
+  append every killed issue's evidence in **one**
+  `board_batch.py fields --updates <file>` call, each entry
+  `{"state": "Canceled", "reason": "<evidence>"}` (the state
+  re-write is a no-op; the reasons land after it, zero-echo), never
+  an append per issue. A kill the guard refuses (out of the pool,
+  or holding an open thread) is not executed: it is left out of the
+  reasons file, and the batch message hands it to the scheduler.
 - **A merge**: only when every id is in the last pool listing — a
   merge never closes a Todo or dispatched issue from this tab. Run
   `merge-tasks` over its ids; the label names the survivor. A merge

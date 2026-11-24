@@ -604,7 +604,12 @@ ask, never this one.
 time**: each bootstrap promotes what it holds, or lists it for a
 kill by ruling 3's necessity test, closing each `Canceled` with
 its reason on the operator's yes; the milestone leaves the parking
-set once empty. List
+set once empty. **Every kill, and every relayed cancel, is one
+`board_batch.py fields --updates <file>` call** whose entries carry
+`{"state": "Canceled", "reason": "<why>"}`: it writes each state,
+then appends each reason zero-echo, never a state write and an
+append per issue (`--dry-run` first names the reason per issue).
+List
 it **field-selected** (title, priority); promote by **clearing
 the milestone** in one `board_batch.py fields` write, never by
 closing and refiling. **Do not re-adjudicate a finding** —
