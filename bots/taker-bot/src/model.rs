@@ -14,6 +14,15 @@
 //!    shock each order — giving autocorrelated runs of buys or sells that
 //!    revert rather than a fixed 50/50 split.
 //!
+//! On top of the per-order coin sits an **inventory skew**: the flow tracks
+//! its cumulative net take (quote notional bought minus sold, fed back by the
+//! caller through [`Flow::record_take`]) and shifts the coin toward the
+//! correcting side in logit space, `P(buy) = σ(logit(buy_bias) − k · net)`.
+//! The `buy_bias` walk alone is unbiased, so its cumulative net grows without
+//! bound and a long demo eats one side of the book; the skew makes net
+//! mean-revert while every side is still a random draw. `k = 0` recovers the
+//! pure walk.
+//!
 //! Everything here is deterministic given the seed: same seed ⇒ same flow,
 //! which is what makes `--dry-run` a faithful preview of the order flow and
 //! the unit tests reproducible. Sizes are emitted as a **quote-denominated
@@ -55,8 +64,12 @@ pub struct Flow {
     rng: StdRng,
     cfg: FlowConfig,
     regime: Regime,
-    /// Current `P(buy)` for the next order, in `(0, 1)`.
+    /// Current `P(buy)` for the next order, in `(0, 1)`, before the
+    /// inventory skew.
     buy_bias: f64,
+    /// Cumulative net quote notional taken: bought minus sold, as recorded
+    /// through [`Flow::record_take`].
+    net_taken: f64,
 }
 
 impl Flow {
@@ -73,7 +86,37 @@ impl Flow {
             cfg,
             regime: Regime::Quiet,
             buy_bias,
+            net_taken: 0.0,
         }
+    }
+
+    /// The cumulative net quote notional taken (for logging / inspection).
+    pub fn net_taken(&self) -> f64 {
+        self.net_taken
+    }
+
+    /// Record a take that actually executed, as its quote notional, so the
+    /// inventory skew acts on what traded rather than on the raw draws (a live
+    /// take may be depth-capped or skipped after it is sampled).
+    pub fn record_take(&mut self, side: SwapSide, quote_notional: f64) {
+        match side {
+            SwapSide::Buy => self.net_taken += quote_notional,
+            SwapSide::Sell => self.net_taken -= quote_notional,
+        }
+    }
+
+    /// The `P(buy)` the next side draw uses: the walk's `buy_bias` shifted in
+    /// logit space by `-inventory_skew · net_taken`, then clamped to the
+    /// configured bounds (which double as the skew's cap). A zero skew
+    /// returns `buy_bias` exactly.
+    pub fn effective_buy_prob(&self) -> f64 {
+        let k = self.cfg.inventory_skew;
+        if k == 0.0 {
+            return self.buy_bias;
+        }
+        let logit = (self.buy_bias / (1.0 - self.buy_bias)).ln();
+        let p = 1.0 / (1.0 + (k * self.net_taken - logit).exp());
+        p.clamp(self.cfg.buy_bias_min, self.cfg.buy_bias_max)
     }
 
     /// The current regime (for logging / inspection).
@@ -114,11 +157,12 @@ impl Flow {
         n as u32
     }
 
-    /// Sample one order: its side from the current buy-bias, then nudge the
-    /// bias back toward 0.5 with a Gaussian shock (so flow is autocorrelated
-    /// but mean-reverting), and its notional from the LogNormal size law.
+    /// Sample one order: its side from the inventory-skewed buy-bias, then
+    /// nudge the bias back toward 0.5 with a Gaussian shock (so flow is
+    /// autocorrelated but mean-reverting), and its notional from the
+    /// LogNormal size law.
     fn next_order(&mut self) -> Order {
-        let side = if self.rng.gen::<f64>() < self.buy_bias {
+        let side = if self.rng.gen::<f64>() < self.effective_buy_prob() {
             SwapSide::Buy
         } else {
             SwapSide::Sell
@@ -303,5 +347,102 @@ mod tests {
         // One order steps the bias once; full reversion lands it on 0.5.
         while flow.tick().is_empty() {}
         assert!((flow.buy_bias() - 0.5).abs() < 1e-12);
+    }
+
+    /// Run `ticks` ticks, recording every draw as executed (the dry-run
+    /// model), and return the largest |net take| seen and the order count.
+    fn max_abs_net(c: FlowConfig, ticks: u32) -> (f64, u32) {
+        let mut flow = Flow::new(c);
+        let (mut max, mut orders) = (0.0f64, 0u32);
+        for _ in 0..ticks {
+            for o in flow.tick() {
+                orders += 1;
+                flow.record_take(o.side, o.notional);
+                max = max.max(flow.net_taken().abs());
+            }
+        }
+        (max, orders)
+    }
+
+    /// Over ~50k orders (about eleven hours of default demo flow) the default
+    /// skew holds the *peak* |net take| under one side of the ~$100 seeded
+    /// book, where the pure walk (`k = 0`, same seed) wanders into the
+    /// thousands. Measured peaks sit near $60 for any `k` in 0.05..=0.1 and
+    /// rise past it, the clamp and the size tail then setting the peak.
+    #[test]
+    fn inventory_skew_bounds_net_take() {
+        let ticks = 20_000;
+        let (skewed, orders) = max_abs_net(cfg(), ticks);
+        let (walk, _) = max_abs_net(
+            FlowConfig {
+                inventory_skew: 0.0,
+                ..cfg()
+            },
+            ticks,
+        );
+        assert!(orders > 10_000, "only {orders} orders sampled");
+        assert!(skewed < 80.0, "skewed max |net| {skewed} too large");
+        assert!(
+            walk > 10.0 * skewed,
+            "pure walk {walk} should wander far past skewed {skewed}",
+        );
+    }
+
+    /// A zero skew leaves the side draw on the walk's own bias whatever the
+    /// net, so `k = 0` is exactly today's pure random walk.
+    #[test]
+    fn zero_skew_ignores_net() {
+        let mut flow = Flow::new(FlowConfig {
+            inventory_skew: 0.0,
+            ..cfg()
+        });
+        flow.record_take(SwapSide::Buy, 1_000.0);
+        assert_eq!(flow.effective_buy_prob(), flow.buy_bias());
+    }
+
+    /// Net buying pushes `P(buy)` below the walk's bias and net selling above
+    /// it, never past the clamp bounds.
+    #[test]
+    fn skew_favors_the_correcting_side_within_bounds() {
+        let c = cfg();
+        let (min, max) = (c.buy_bias_min, c.buy_bias_max);
+        let mut flow = Flow::new(c);
+        let base = flow.buy_bias();
+        flow.record_take(SwapSide::Buy, 20.0);
+        let after_buys = flow.effective_buy_prob();
+        assert!(after_buys < base, "{after_buys} should be under {base}");
+        flow.record_take(SwapSide::Sell, 40.0);
+        let after_sells = flow.effective_buy_prob();
+        assert!(after_sells > base, "{after_sells} should exceed {base}");
+        flow.record_take(SwapSide::Buy, 1e9);
+        assert_eq!(flow.effective_buy_prob(), min);
+        flow.record_take(SwapSide::Sell, 2e9);
+        assert_eq!(flow.effective_buy_prob(), max);
+    }
+
+    /// The skewed flow stays a coin, not a schedule: under the default skew
+    /// the side still changes on a large share of consecutive orders and
+    /// repeats on a large share too.
+    #[test]
+    fn skewed_flow_stays_stochastic() {
+        let mut flow = Flow::new(cfg());
+        let (mut prev, mut switches, mut pairs) = (None, 0u32, 0u32);
+        for _ in 0..20_000 {
+            for o in flow.tick() {
+                flow.record_take(o.side, o.notional);
+                if let Some(p) = prev {
+                    pairs += 1;
+                    if p != o.side {
+                        switches += 1;
+                    }
+                }
+                prev = Some(o.side);
+            }
+        }
+        let frac = switches as f64 / pairs as f64;
+        assert!(
+            (0.3..0.7).contains(&frac),
+            "side switched on {frac} of consecutive orders",
+        );
     }
 }

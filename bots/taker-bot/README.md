@@ -29,6 +29,16 @@ dropset-alpha's `services/taker-bot/src/taker.rs`):
    autocorrelated runs of buys or sells that revert rather than a fixed
    50/50 split.
 
+That walk alone is unbiased, so its cumulative net take grows without bound
+and a long demo eats through one side of the book. An **inventory skew**
+sits on top: the bot tracks the quote notional it has actually taken (bought
+minus sold, depth-capped sizes, skipped takes excluded) and draws each side
+from `P(buy) = σ(logit(buy_bias) − k · net)`, clamped to the bias bounds. A
+run of buying makes selling progressively likelier, so net mean-reverts and
+both sides of the book stay quoted, while every side is still a coin flip.
+`inventory_skew` (`k`, default `0.05` logits per quote unit) set to `0.0`
+recovers the pure walk.
+
 The whole process is deterministic given its RNG seed: a fixed seed replays
 the same flow, so `--dry-run` is a faithful preview of the order flow a live
 run would submit.
@@ -126,8 +136,9 @@ Flags:
 ## Configuration
 
 Every knob — tick interval, the quiet / burst intensities and transition
-probabilities, the median order size and spread, the buy-bias dynamics, the
-slippage tolerance, the depth cap, and the funding thresholds — lives in
+probabilities, the median order size and spread, the buy-bias dynamics and
+inventory skew, the slippage tolerance, the depth cap, and the funding
+thresholds — lives in
 `config::BotConfig` with MVP defaults. The passive / retail / aggressive
 presets from dropset-alpha are optional re-parameterizations, not a required
 deliverable.

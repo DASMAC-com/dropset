@@ -305,6 +305,19 @@ pub struct SizedSwap {
     pub depth_capped: bool,
 }
 
+impl SizedSwap {
+    /// The take's quote-leg size in human units — the input for a Buy, the
+    /// expected output for a Sell — which is what the flow's inventory skew
+    /// accrues ([`crate::model::Flow::record_take`]).
+    pub fn quote_notional(&self, quote_decimals: u8) -> f64 {
+        let atoms = match self.side {
+            SwapSide::Buy => self.amount_in,
+            SwapSide::Sell => self.expected_out,
+        };
+        atoms as f64 / 10f64.powi(quote_decimals as i32)
+    }
+}
+
 /// The market's current reference price as a float atoms ratio (quote atoms
 /// per base atom, not a display price), taken from the first active,
 /// validly-priced vault. `None` if no vault is quoting.

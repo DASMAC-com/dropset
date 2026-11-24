@@ -48,21 +48,30 @@ fn tick(ctx: &mut Context, cfg: &BotConfig) -> Result<()> {
         return Ok(());
     }
     println!(
-        "[tick] {} order(s) ({:?}, buy_bias {:.2})",
+        "[tick] {} order(s) ({:?}, buy_bias {:.2}, P(buy) {:.2}, net {:+.2})",
         orders.len(),
         ctx.flow.regime(),
         ctx.flow.buy_bias(),
+        ctx.flow.effective_buy_prob(),
+        ctx.flow.net_taken(),
     );
     for order in &orders {
-        if let Err(e) = submit(ctx, cfg, order) {
-            eprintln!("[order] {} skipped: {e}", describe(order));
+        match submit(ctx, cfg, order) {
+            // Feed only what was sent back into the inventory skew, at its
+            // depth-capped size, so a skipped take does not count as traded.
+            Ok(Some(swap)) => ctx
+                .flow
+                .record_take(swap.side, swap.quote_notional(ctx.market.quote_decimals)),
+            Ok(None) => {}
+            Err(e) => eprintln!("[order] {} skipped: {e}", describe(order)),
         }
     }
     Ok(())
 }
 
 /// Size one order against the live book and send it, logging the fill.
-fn submit(ctx: &Context, cfg: &BotConfig, order: &Order) -> Result<()> {
+/// Returns the sent swap, or `None` when the book could not fill it.
+fn submit(ctx: &Context, cfg: &BotConfig, order: &Order) -> Result<Option<chain::SizedSwap>> {
     let Some(swap) = chain::size_order(
         &ctx.client,
         &ctx.market,
@@ -72,7 +81,7 @@ fn submit(ctx: &Context, cfg: &BotConfig, order: &Order) -> Result<()> {
     )?
     else {
         println!("[order] {} unfillable — skipped", describe(order));
-        return Ok(());
+        return Ok(None);
     };
     let sig = chain::send_swap(&ctx.client, &ctx.taker, &ctx.market, &swap)?;
     println!(
@@ -87,7 +96,7 @@ fn submit(ctx: &Context, cfg: &BotConfig, order: &Order) -> Result<()> {
         swap.min_out,
         swap.expected_out,
     );
-    Ok(())
+    Ok(Some(swap))
 }
 
 /// A short human label for an order, for the log line.

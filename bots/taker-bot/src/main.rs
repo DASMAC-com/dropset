@@ -149,6 +149,9 @@ fn dry_run(cfg: &BotConfig, ticks: u32) -> Result<()> {
             burst_ticks += 1;
         }
         for order in &tick_orders {
+            // A dry run has no book to cap or skip a take, so every draw
+            // counts as executed toward the inventory skew.
+            flow.record_take(order.side, order.notional);
             orders += 1;
             notional_sum += order.notional;
             if order.side == SwapSide::Buy {
@@ -172,6 +175,7 @@ fn dry_run(cfg: &BotConfig, ticks: u32) -> Result<()> {
             100.0 * buys as f64 / orders as f64
         );
         println!("  mean size:   {:.2} quote", notional_sum / orders as f64);
+        println!("  net taken:   {:+.2} quote", flow.net_taken());
         // The sizes above are the flow's own draws. A live run additionally
         // clamps each take to a share of the book resting at the time it is
         // sent (`BotConfig::max_depth_fraction`), which no dry run can know —
