@@ -475,7 +475,9 @@ migrations or generation inputs, and whether it spans crates.
    only for genuinely new additions (`history.md` → "Straggler grep
    into build output"). A meta-tier Python helper with real logic is
    still reviewed under correctness / completeness; the security gate
-   adds security back for a `.claude/hooks/**` guard. **A reduced tier
+   adds security back for a `.claude/hooks/**` guard, and the session
+   adds it (an upward override) for a helper that reads untrusted
+   input. **A reduced tier
    is sufficient BECAUSE of the excerpt rule, not instead of it**
    (`history.md` → "Reduced tiers that held").
 
