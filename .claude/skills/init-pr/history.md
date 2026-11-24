@@ -101,6 +101,12 @@ is not repeated here.
   linter included), `make test`, CI and a five-lens review all passed it;
   a post-rebase dry-run caught it, at one extra commit, lint pass and
   CI cycle.
+- **Late overlap.** 2026-10-20 (\$15, 149 turns): a session exposed a
+  vault fee rate through the WASM reader and its summary type, then
+  regenerated the WASM, while an open PR already added the same fields
+  under the same names. `review-pr` step 5's overlap probe found 11
+  shared files after implementation, lint and commit; dropping the SDK
+  edits and reworking the branch cost ≈25 turns at a 200k+ prefix.
 
 ## Steps
 
@@ -111,6 +117,10 @@ is not repeated here.
 - **Missing program (step 3).** A cold worktree fails every litesvm
   test with a 125-line tail; the branch that measured it changed only
   `programs/dropset/tests/**`.
+- **Cold first build (step 0).** With no `target/`, a first
+  `cargo test -p dropset-tui --lib` through `run_quiet.py` blocked the
+  session for the full 600 s foreground cap before the harness moved
+  it to the background.
 - **Bare-tag PR title (step 8).** Every PR this skill created failed
   its `opened` Semantic PR run; on PR #329 the residue read as a check
   bypass and cost an operator investigation.
@@ -142,3 +152,9 @@ is not repeated here.
   returned 85 files from main's own commits (≈2.0k) against a 6-file
   branch diff; a premature "delivered" note was invalidated by the
   adversarial pass, forcing a second corrections append.
+- **Review on a long prefix (step 3).** A Bedrock session (\$20, 169
+  turns) grew its prefix 49.3k → 411.0k, and the review ran on top of
+  the whole implement phase. Main moved four times, forcing three
+  rebases (one re-running both full Rust suites), and every lens
+  hand-off, CI wait and rebase turn replayed ≈66k of implement-phase
+  file slices a fresh session would not have carried.

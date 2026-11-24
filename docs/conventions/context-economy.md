@@ -1067,6 +1067,20 @@ Two rules keep the cap from turning into deletion:
     helps — each suppresses a *diff*, never a blob dump. Take a size
     from `show_at_ref.py --count` (or `wc -c` on the worktree file),
     and a region from its `--grep` / `--section` / `--slice`.
+  - **`git diff` on a generated artifact** asks a content question its
+    generator already owns. One session ran `git diff -U0` on
+    `sdk/conformance/simulate_swap_vectors.json`, a one-number-per-line
+    byte array: ~6.8k tokens of bare digits, the largest result of the
+    session, replayed on ~380 later turns, to learn what a stat already
+    said (the vectors embed raw market bytes, so any header relayout
+    moves all of them). For the families `review_diff.py`'s
+    `DIFF_EXCLUDES` names (the lock files, `sdk/*/src/generated`, the
+    IDL, `sdk/conformance`, the Grafana SQL mirror) the only question
+    is "did it change, and by how much": take `git diff --stat` and
+    stop. Where the content has a gate, the gate owns it
+    (`make check-conformance-vectors` and `sdk.yml` for the vectors and
+    clients, `make dashboard-sql-check` for the SQL mirror); a lock
+    file has none and wants only the stat.
   - **`git ls-files '*.json' -- sdk idl target`** returned ~2.2k to
     locate one known file. `git ls-files sdk/idl` was the question.
   - **`gh cache list --limit 30`** cost ~1.1k and answered nothing;

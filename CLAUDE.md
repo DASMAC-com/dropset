@@ -38,7 +38,8 @@ Skill-to-skill handoffs prompt via `AskUserQuestion` with the
 recommended default **first** — except that an **in-band Todo task**
 enters `review-pr` and the enqueue unasked, its ratification being
 the pre-approval (the abridged-tier opt-down, a diff over the
-1,000-line split, an open design question or a locked signer at the
+1,000-line split, an open design question, a prefix past ~250k —
+which recommends a fresh review session — or a locked signer at the
 enqueue still asks). Full detail:
 `docs/conventions/commits-and-prs.md`.
 
