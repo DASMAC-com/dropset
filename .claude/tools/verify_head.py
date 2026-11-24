@@ -382,8 +382,11 @@ def unreached_targets(rows: list[ci_mirror.Row], files: list[str]) -> list[str]:
     """The local targets CI would skip for ``files``: every row naming one
     is a ``test.yml`` job, gated on the workflow's ``code`` path filter, and
     no file passes that filter (``review_diff.touches_ci_code``, which holds
-    the filter's one mirror and its parity test)."""
-    if review_diff.touches_ci_code(files):
+    the filter's one mirror and its parity test). This assumes every
+    ``test.yml`` job with a local mirror is gated on ``code``, as all are
+    today. An empty diff skips nothing: it is HEAD on its base, the tree a
+    ``merge_group`` or ``main`` run checks in full."""
+    if not files or review_diff.touches_ci_code(files):
         return []
     gated = Path(review_diff.TESTS_WORKFLOW).name
     return [

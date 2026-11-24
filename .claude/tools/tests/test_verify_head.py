@@ -14,11 +14,12 @@ import io
 import os
 import re
 import signal
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import ci_mirror
@@ -500,9 +501,72 @@ class FullModeTest(unittest.TestCase):
         mixed = [*MANIFEST, ci_mirror.Row("SDK", "sdk.yml", (), ("test",))]
         self.assertNotIn("test", vh.unreached_targets(mixed, tools_only))
         self.assertEqual(vh.unreached_targets(mixed, tools_only), ["test-postgres"])
+        # An empty diff is HEAD on its base: skip nothing, as merge_group does.
+        self.assertEqual(vh.unreached_targets(rows, []), [])
         r = vh.Race(sha=SHA, outcome="GREEN", ci_note="consulted", mode="full")
         r.order, r.skipped = ["lint"], skipped[:2]
         self.assertIn(" skipped=test,test-no-teardown wall=", vh.render(r, 1))
+
+    def test_diff_files_unions_branch_uncommitted_and_untracked(self):
+        repo = Path(tempfile.mkdtemp())
+        here = os.getcwd()
+        self.addCleanup(os.chdir, here)
+        os.chdir(repo)
+
+        def git(*args):
+            subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", *args],
+                check=True,
+                capture_output=True,
+            )
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.invalid")
+        git("config", "user.name", "t")
+        (repo / "a.md").write_text("a")
+        (repo / "old.rs").write_text("o")
+        git("add", ".")
+        git("commit", "-q", "-m", "base")
+        git("checkout", "-q", "-b", "feature")
+        git("mv", "old.rs", "new.rs")
+        git("commit", "-q", "-m", "rename")
+        (repo / "a.md").write_text("changed")
+        (repo / "c.txt").write_text("untracked")
+        self.assertEqual(vh.diff_files("main"), ["a.md", "c.txt", "new.rs", "old.rs"])
+        # No merge base to diff from: unknown, so nothing is skipped.
+        self.assertIsNone(vh.diff_files("no-such-ref"))
+
+    def test_main_full_prints_the_skips_and_races_only_the_rest(self):
+        handlers = {
+            s: signal.getsignal(s)
+            for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+        }
+        for sig, handler in handlers.items():
+            self.addCleanup(signal.signal, sig, handler)
+        raced = {}
+
+        def race(sha, *_a, order, mode, **_k):
+            raced["order"] = order
+            return vh.Race(
+                sha=sha, outcome="GREEN", ci_note="consulted", order=[], mode=mode
+            )
+
+        out = io.StringIO()
+        with mock.patch.object(ci_mirror, "load", return_value=MANIFEST), \
+            mock.patch.object(vh, "diff_files", return_value=[".claude/x.py"]), \
+            mock.patch.object(vh, "race", side_effect=race), \
+            mock.patch.object(vh, "read_head", return_value=SHA), \
+            mock.patch.object(vh, "local_only_reason", return_value=""), \
+            mock.patch.object(vh, "sample_fleet"), \
+            mock.patch.object(vh, "_git", return_value="dirty"), \
+            redirect_stdout(out):  # fmt: skip
+            self.assertEqual(vh.main(["--full"]), 0)
+        self.assertEqual(raced["order"], ["lint", "tools-tests"])
+        lines = out.getvalue().splitlines()
+        self.assertEqual(
+            lines[0], "verify-head: skipped (no diff reach): test, test-postgres"
+        )
+        self.assertIn(" skipped=test,test-postgres ", lines[1])
 
     def test_the_committed_manifest_loads_into_a_plan(self):
         stages, buckets = vh.full_plan(ci_mirror.load())

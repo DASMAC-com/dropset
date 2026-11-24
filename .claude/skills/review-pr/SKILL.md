@@ -1444,7 +1444,8 @@ migrations or generation inputs, and whether it spans crates.
 1. **Gate.** Mark the PR ready only when **every** local CI-mirroring
    check is green: **zero blocking issues** (every Linear checklist
    item addressed); a `verify_head.py --full` verdict (backgrounded,
-   as in step 4: the CI-mirror manifest's local targets) is `GREEN` for
+   as in step 4: the CI-mirror manifest's local targets, less any its
+   `skipped=` names as out of the diff's reach) is `GREEN` for
    HEAD's `sha`, any hook `lint_paths.py` printed
    `UNVERIFIABLE` noted, not gated; the generated artifacts
    are fresh and committed (every `regen_artifacts.py` family fresh,
