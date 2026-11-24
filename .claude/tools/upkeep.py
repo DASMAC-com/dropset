@@ -97,8 +97,8 @@ threads are dismissible on sight, and a dismissal destroys nothing; the lane
 wipe is a cache clean, not a destructive item (plan ruling 16), and a lane
 with a build on it is held by the process table. The open-PR guard holds
 even when armed, and the purge never arms — its apply stays an operator
-approval at the analyst's prune ask. ``prune`` arms both steps only under
-``--apply``.
+approval at the analyst's prune ask. ``prune`` arms steps 6 and 7 only
+under ``--apply``; it never runs step 8.
 
 **Report.** One section of the Planning document — from ``REPORT_HEADING``
 through its ``REPORT_END`` line — is replaced wholesale each run, bounded to
