@@ -41,9 +41,11 @@ from pathlib import Path
 
 DEFAULT_MIN_INTERVAL_HOURS = 20.0
 MARKER_NAME = ".memory-staleness-scan.json"
-# The analyst's staleness judge — a sub-agent reading every memory against
-# HEAD and the board — runs weekly, on its own marker beside the scan's.
-JUDGE_INTERVAL_HOURS = 168.0
+# The analyst's memory judge — a sub-agent giving every memory one of two
+# verdicts, memorialize or drop — runs daily, on its own marker beside the
+# scan's: the store is a daily-expiring scratch store, so every morning empties
+# it. The same 20h floor as the scan, so an early next-day run still judges.
+JUDGE_INTERVAL_HOURS = DEFAULT_MIN_INTERVAL_HOURS
 JUDGE_MARKER_NAME = ".memory-staleness-judge.json"
 
 
@@ -162,10 +164,10 @@ def decide_judge(
     now: datetime,
     min_interval_hours: float = JUDGE_INTERVAL_HOURS,
 ) -> tuple[bool, bool, str]:
-    """Pure decision for the analyst's staleness judge: ``(judge, first,
-    reason)``. Time alone gates it — a memory saved yesterday must not buy a
-    full read of the store every morning — and ``first`` (no usable prior run)
-    makes it the uncapped full cull."""
+    """Pure decision for the analyst's memory judge: ``(judge, first,
+    reason)``. Time alone gates it — once a day, so a same-day relaunch never
+    judges twice. Every run reads the whole store; ``first`` only says no
+    usable prior run was recorded."""
     last = _parse_iso(marker.get("last_judged")) if isinstance(marker, dict) else None
     if last is None:
         return True, True, "no prior judge run recorded"
@@ -220,11 +222,10 @@ Usage:
       Record that a scan just ran (marker = current signature + now).
   memory_scan_gate.py judge-check MEMORY_DIR [--min-interval-hours H]
       Print {judge, first, reason, last_judged} — whether the analyst's
-      weekly staleness judge is due, and whether it is the first (full) cull.
+      daily memory judge is due, and whether no prior run is recorded.
   memory_scan_gate.py judge-record MEMORY_DIR
       Record that a judge run just finished.
-  --min-interval-hours H  Floor for `check` (default 20) or `judge-check`
-                          (default 168)."""
+  --min-interval-hours H  Floor for `check` or `judge-check` (default 20)."""
 
 MODES = ("check", "record", "judge-check", "judge-record")
 

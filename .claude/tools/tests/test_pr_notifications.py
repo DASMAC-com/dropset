@@ -110,13 +110,14 @@ class SettledTests(unittest.TestCase):
         # Only PR threads on this repository count, and the open PR's never.
         self.assertEqual(out["threads"], 5)
         self.assertEqual(sorted(gh.deletes()), ["c1", "m1", "m2", "x1"])
-        # Unsubscribe only on merge: the closed PR's c1 is marked done only.
-        self.assertEqual(sorted(gh.unsubscribes()), ["m1", "m2", "x1"])
+        # One call per settled thread: the merge tail already unsubscribed.
+        self.assertEqual(gh.unsubscribes(), [])
+        self.assertEqual(len(gh._writes()), 4)
         self.assertEqual(out["dismissed"], 4)
-        self.assertEqual(out["unsubscribed"], 3)
+        self.assertEqual(out["unsubscribed"], 0)
         self.assertEqual(out["unresolved"], [])
 
-    def test_a_closed_pr_keeps_its_subscription_so_a_reopen_resurfaces(self):
+    def test_a_closed_pr_is_marked_done_only(self):
         gh = FakeGh(pages=[[THREADS[2]]])  # c1, on closed #660
         _, out = dismiss(gh, None, apply=True)
         self.assertEqual(gh.deletes(), ["c1"])
@@ -179,11 +180,18 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(gh._writes(), [])
         self.assertTrue(out["dry_run"])
-        # m1, m2 (merged) and c1 (closed, kept subscribed).
+        # m1, m2 (merged) and c1 (closed); settled mode unsubscribes none.
+        self.assertEqual(
+            summary(out),
+            "would dismiss 3 notification(s); 1 PR(s) unresolved, left",
+        )
+
+    def test_a_pr_mode_dry_run_names_the_kept_subscriptions(self):
+        _, out = dismiss(FakeGh(), {663, 677}, apply=False, keep_subscription={677})
         self.assertEqual(
             summary(out),
             "would dismiss 3 notification(s), unsubscribing 2 (1 kept subscribed:"
-            " not merged); 1 PR(s) unresolved, left",
+            " not merged)",
         )
 
     def test_each_thread_is_ignored_then_marked_done_never_a_mark_all(self):
@@ -308,7 +316,8 @@ class CliTests(unittest.TestCase):
         def fake_dismiss(gh, prs, apply, keep_subscription=frozenset()):
             seen.append((prs, apply, set(keep_subscription)))
             return 0, {
-                "mode": "settled", "dry_run": not apply, "threads": 0,
+                "mode": "settled" if prs is None else "pr",
+                "dry_run": not apply, "threads": 0,
                 "selected": [], "dismissed": 0, "unsubscribed": 0,
                 "failed": [], "unsubscribe_failed": [], "error": None,
                 "unresolved": [], "notice": None,

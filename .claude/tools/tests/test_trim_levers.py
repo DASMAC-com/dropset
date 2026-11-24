@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -310,6 +311,57 @@ GROUPS = [
     {"title": "Claude: context economy", "parts": ["a:first", "a:second"]},
     {"title": "Claude: filing conventions", "parts": ["b:third"]},
 ]
+
+
+class SkillSizeTests(unittest.TestCase):
+    def test_a_subject_key_becomes_a_dotless_lowercase_fingerprint(self):
+        cases = {
+            ".claude/skills/audit-scope/SKILL.md": "skill-size:audit-scope",
+            ".claude/skills/curate/SKILL.md#description": (
+                "skill-size:curate-description"
+            ),
+            "CLAUDE.md": "skill-size:claude-md",
+        }
+        for key, want in cases.items():
+            with self.subTest(key=key):
+                self.assertEqual(tl.skill_size_fingerprint(key), want)
+
+    def _tree(self, tmp, sizes):
+        root = Path(tmp)
+        for name, size in sizes.items():
+            skill = root / ".claude" / "skills" / name
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(
+                "---\ndescription: short\n---\n" + "x" * size
+            )
+        (root / "cfg").mkdir()
+        (root / "cfg" / "skill-size-baseline.json").write_text("{}")
+        return root
+
+    def test_only_subjects_past_the_watch_percent_are_candidates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._tree(tmp, {"big": 31_900, "small": 1_000})
+            got = tl.skill_size_candidates(root)
+        self.assertEqual([fp for fp, _ in got], ["skill-size:big"])
+        self.assertIn(".claude/skills/big/SKILL.md", got[0][1])
+        self.assertFalse(got[0][1].startswith("!"))
+
+    def test_the_cli_appends_each_key_to_the_probe_keys_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._tree(tmp, {"big": 31_900})
+            keys = os.path.join(tmp, "keys.txt")
+            with open(keys, "w", encoding="utf-8") as fh:
+                fh.write("a:first\n")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = run(
+                    ["prog", "skill-size", "--root", str(root), "--append-to", keys]
+                )
+            with open(keys, encoding="utf-8") as fh:
+                written = fh.read()
+        self.assertEqual(rc, 0)
+        self.assertEqual(written, "a:first\nskill-size:big\n")
+        self.assertIn("1 cap-flagged subject(s)", out.getvalue())
 
 
 class SplitPartsTests(unittest.TestCase):

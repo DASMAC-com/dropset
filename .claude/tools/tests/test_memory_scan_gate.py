@@ -97,11 +97,12 @@ class DecideJudgeTests(unittest.TestCase):
         self.assertEqual(decide_judge(None, NOW)[:2], (True, True))
         self.assertEqual(decide_judge({"last_judged": "x"}, NOW)[:2], (True, True))
 
-    def test_weekly_and_time_only(self):
-        recent = {"last_judged": (NOW - timedelta(days=3)).isoformat()}
+    def test_daily_and_time_only(self):
+        recent = {"last_judged": (NOW - timedelta(hours=6)).isoformat()}
         self.assertEqual(decide_judge(recent, NOW)[:2], (False, False))
-        old = {"last_judged": (NOW - timedelta(days=8)).isoformat()}
-        self.assertEqual(decide_judge(old, NOW)[:2], (True, False))
+        # An early next-day run, inside 24h but past the 20h floor, judges.
+        yesterday = {"last_judged": (NOW - timedelta(hours=21)).isoformat()}
+        self.assertEqual(decide_judge(yesterday, NOW)[:2], (True, False))
 
     def test_judge_check_and_record_round_trip(self):
         with tempfile.TemporaryDirectory() as d:
@@ -150,8 +151,8 @@ class ParseArgsTests(unittest.TestCase):
         _, _, hours = _parse_args(["check", "/tmp/mem", "--min-interval-hours", "6"])
         self.assertEqual(hours, 6.0)
 
-    def test_judge_check_defaults_to_weekly(self):
-        self.assertEqual(_parse_args(["judge-check", "/tmp/mem"])[2], 168.0)
+    def test_judge_check_defaults_to_daily(self):
+        self.assertEqual(_parse_args(["judge-check", "/tmp/mem"])[2], 20.0)
 
     def test_missing_dir_raises(self):
         with self.assertRaises(MemoryScanGateError):

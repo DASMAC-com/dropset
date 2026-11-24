@@ -1703,17 +1703,19 @@ new, since cargo never removes what it no longer needs. Measured
 (`.claude/tools/cargo_lanes.py`) lists each lane and every non-lane entry
 under the target root, with its size and whether a cargo build is running
 on it right now. The build-queue read is the load probe's own, each
-cargo root attributed to the entry its `CARGO_TARGET_DIR` names. When
-upkeep is armed (`DS_UPKEEP_ARMED=1`), it removes every lane with no build
-running, and every non-lane entry: the stale two-hex-character
-directories of an older layout, a lane above the current count, any stray
-per-issue directory, a `.wipe-` tombstone left by an interrupted wipe. A
-lane with a build running is skipped and the line says so. A session that
-opened before the pre-launch and started a build is the usual cause, and
-that lane waits for the next day. Unarmed, the step is a dry run, as the
-prune is. The `plan` pre-launch runs upkeep, so on a machine whose
-runtime config exports `DS_UPKEEP_ARMED=1` a bare `plan` triggers the
-wipe each morning. The first build on each lane that day pays a cold
+cargo root attributed to the entry its `CARGO_TARGET_DIR` names. It
+removes every lane with no build running, and every non-lane entry: the
+stale two-hex-character directories of an older layout, a lane above the
+current count, any stray per-issue directory, a `.wipe-` tombstone left
+by an interrupted wipe. A lane with a build running is skipped and the
+line says so. A session that opened before the pre-launch and started a
+build is the usual cause, and that lane waits for the next day. **The
+wipe applies whether or not upkeep is armed** (operator direction,
+2026-10-30; `plan` ruling 16's carve-out): it is a cache clean, not a
+destructive item, so `DS_UPKEEP_ARMED` gates only the worktree prune. A
+build the process table missed fails and reruns; the lane is a cache.
+The `plan` pre-launch runs upkeep, so a bare `plan` triggers the wipe
+each morning. The first build on each lane that day pays a cold
 dependency build of about five minutes, and every later build is
 incremental. The localnet program keypair in the lane's `deploy/` is
 re-staged from the committed file by `make program-keypair`, which
@@ -2868,8 +2870,8 @@ a terminal closed outright, is covered by the next morning's digest.
   canceled issues' worktrees (a dry run unless the runtime config
   exports `DS_UPKEEP_ARMED=1`), the dismissal of every merged or
   closed PR's notifications (always armed — it destroys nothing),
-  the cargo-lane report and wipe (armed with the prune; see "The
-  cargo pool"), the settings checks and the purge dry-run.
+  the cargo-lane report and wipe (always armed — a cache clean; see
+  "The cargo pool"), the settings checks and the purge dry-run.
   The pass prints a line to stderr as each step starts (its name,
   what it does, the timeout bounding its slowest call) and ends (the
   elapsed seconds, or `crashed`), then a total, so a hung step names
@@ -3013,7 +3015,7 @@ a terminal closed outright, is covered by the next morning's digest.
   the transcript purge, the upkeep report's other destructive items
   (allowlist cruft, permission-refresh candidates) and the judged
   memories, each applied only where the operator ticks it. Two acts
-  sit outside the ask: the unasked prune and the weekly memory
+  sit outside the ask: the unasked prune and the daily memory
   judge, below.
 
   **Done means prune.** An issue marked Done or Canceled releases
@@ -3036,21 +3038,24 @@ a terminal closed outright, is covered by the next morning's digest.
   in a tree still present on a Done issue are lost; Done is the
   operator's own word.
 
-  **The memory posture is minimal.** The mechanical
-  `memory_audit.py` stays in the upkeep pass as a pre-filter, and the
-  report's `memory` line says the `MEMORY.md` line count on every
-  run whose gate answers — it should fall. Weekly, on its own gate
+  **The memory store expires daily** (operator direction,
+  2026-10-30). It is a per-machine scratch store the fleet cannot
+  read, so nothing in it is kept — `feedback` memories included: a
+  how-to-work rule that matters is a skill or convention line, not a
+  note no review reads. The mechanical `memory_audit.py` stays in the
+  upkeep pass as a pre-filter, and the report's `memory` line says
+  the `MEMORY.md` line count. Daily, on its own gate
   (`memory_scan_gate.py judge-check`, a time-only marker beside the
-  scan's), the analyst spawns one read-only sub-agent that reads
-  every memory against HEAD and the board and returns a verdict and
-  a fact per file: **stale** (disproved), **superseded** (a named
-  sibling), **repo-bound** (a durable project or convention fact
-  that belongs in a committed doc) or **keep** (about the operator
-  or how to work, not derivable from the repo; `feedback` memories
-  stay). The first run is a full cull, uncapped; later runs are
-  capped at ten. A ticked memory is deleted with its index line; a
-  repo-bound one only once its fact is queued for a committed doc,
-  in the one `Claude:` docs task each run files.
+  scan's, the same 20-hour floor), the analyst spawns one read-only
+  sub-agent that reads every memory against HEAD and returns one of
+  two verdicts and a fact per file: **memorialize** (the fact belongs
+  in a committed doc, skill or convention; filed as the one `Claude:`
+  docs task each run files) or **drop**. The deletes ride the
+  destructive ask with "delete all N" the recommended first option;
+  a memorialized memory is deleted only once its fact is queued. A
+  memorialize task the curator kills loses the fact, by a judgement
+  that it did not matter; a failed judge carries no memory section,
+  and the store grows one more day.
 
 - **`architect <n>`** — start **or resume** an **architect** session on
   the design thread governed by issue `<n>`, its only argument: the CEO
@@ -3167,7 +3172,12 @@ a terminal closed outright, is covered by the next morning's digest.
   is load-bearing" rule that this doc, the `plan` skill and the tool's
   own docstring all used to state. The reversal retired
   `iterm_api.open_window` outright, since the dispatcher was its only
-  caller and the launcher already opened tabs.
+  caller and the launcher already opened tabs. **A dispatched `fleet`
+  opens no tab at all**: the dispatcher runs `fleet_resume.py` in
+  process, so its roll-call prints into the scheduler's own session and
+  the sessions it resumes open as tabs beside it — the tab driver's
+  window-create fallback once put a dispatched `fleet go` in a window of
+  its own. The operator's own typed `fleet go` is unchanged.
 
   Two properties worth keeping when editing it. It takes **several verbs
   in one call**, separated by a bare `+`, for one driver round trip

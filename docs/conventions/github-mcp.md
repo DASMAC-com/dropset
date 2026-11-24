@@ -159,14 +159,17 @@ which drifted behind it twice:
   code), never an open PR's. `dismiss --pr N` instead dismisses every
   thread on the named PRs **whatever their state**, unsubscribing unless
   `--keep-subscription` says they are not merged. **Unsubscribe only on
-  merge**: a merged PR's thread is two calls, never mark-all — ignore
-  it, then mark it done — while a closed PR's (which can be reopened,
-  and must resurface) is marked done only; dry run unless `--apply`.
-  The ignore is
-  a `PUT` with `ignored=true`, never a `DELETE` on the subscription,
-  which GitHub documents as not holding for a watcher of the
-  repository. Dismissal waits for the PR to settle, so the merge or
-  close is the earliest point. The upkeep pass
+  merge, on the `--pr` path**: there a merged PR's thread is two calls,
+  never mark-all — ignore it, then mark it done — while a PR not merged
+  is marked done only; dry run unless `--apply`. The ignore is a `PUT`
+  with `ignored=true`, never a `DELETE` on the subscription, which
+  GitHub documents as not holding for a watcher of the repository.
+  **`--settled` is one call per thread**, the mark-done alone: the
+  merge tail already unsubscribed each merged PR's thread and `init-pr`
+  muted it at creation, so the sweep's second, sequential call per
+  thread was doubled work (a 128-thread backlog ran 220 seconds).
+  Dismissal waits for the PR to settle, so the merge or close is the
+  earliest point. The upkeep pass
   runs `--settled` armed every morning, the planning close-out runs it,
   and `close_session.py` calls
   the `--pr` path in-process for its branch's PRs (having already

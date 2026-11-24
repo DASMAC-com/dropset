@@ -65,15 +65,19 @@ bootstrap read does not). Weigh in this order:
 - **Recurrence across sessions.** The same sink in three blocks is one
   lever with three occurrences, not three levers — this is what the
   per-session filing never saw.
+
 - **Turns before payload.** A lever that collapses a judgment-free
   multi-turn flow into one tool run outranks one that shrinks a result
   (same doc → "Session length is itself a cost lever"). Rank by
   estimated dollars, not tokens.
+
 - **A hardening candidate** with measured recurrence names `/harden`
   as its edit; state its cost kind, since a `wall-clock` or
   `prompt-churn` candidate is not a context saving.
+
 - **A flagged CI line** is a candidate like any other: name the
   workflow or job it would change.
+
 - **A ranked section is read one way, whichever currency it ranks.**
   The token blocks rank sinks, and the `## Wait` section ranks
   causes of waiting in hours. A **wait lever** is a change that
@@ -86,6 +90,12 @@ bootstrap read does not). Weigh in this order:
   digest's section too), never a one-day spike. A line marked "no
   nameable cause" is reported in the close-out, never filed.
 
+- **A cap-flagged file** — a skill entry, description or `CLAUDE.md`
+  past 95% of its byte cap — is a prose-subtracting lever without
+  further evidence. Step 4's `trim_levers.py skill-size` lists them
+  under `skill-size:<name>` fingerprints; file each into a batch like
+  any other lever, naming its size and cap in the part.
+
 An account's suggestion is evidence, not a verdict — reject one that
 the numbers do not support. Drop below-bar noise silently.
 
@@ -97,9 +107,12 @@ one scoped search); a landed candidate is dropped.
 
 **4. Dedup every candidate twice.** Give each a fingerprint
 `<domain-token>:<slug>` (dotless domain; a resident-prose lever keys on
-the line it names, `claude-skills:resident-<slug>`). Then:
+the line it names, `claude-skills:resident-<slug>`). Append the
+cap-flagged files' keys to the same file, then probe:
 
 ```sh
+python3 .claude/tools/trim_levers.py skill-size \
+  --append-to <scratchpad>/keys.txt
 python3 .claude/tools/trim_levers.py probe \
   --fingerprints-file <scratchpad>/keys.txt
 ```
