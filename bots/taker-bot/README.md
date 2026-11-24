@@ -39,9 +39,11 @@ both sides of the book stay quoted, while every side is still a coin flip.
 `inventory_skew` (`k`, default `0.05` logits per quote unit) set to `0.0`
 recovers the pure walk.
 
-The whole process is deterministic given its RNG seed: a fixed seed replays
-the same flow, so `--dry-run` is a faithful preview of the order flow a live
-run would submit.
+The whole process is deterministic given its RNG seed and the takes recorded
+against it: a fixed seed replays the same flow while every draw executes as
+sampled, which is what `--dry-run` assumes. A live run's depth-capped or
+skipped takes feed a different net into the skew, so from the first such take
+its sides diverge from the preview as well as its sizes.
 
 ## How an order becomes a swap
 

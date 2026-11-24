@@ -23,9 +23,11 @@
 //! mean-revert while every side is still a random draw. `k = 0` recovers the
 //! pure walk.
 //!
-//! Everything here is deterministic given the seed: same seed ⇒ same flow,
-//! which is what makes `--dry-run` a faithful preview of the order flow and
-//! the unit tests reproducible. Sizes are emitted as a **quote-denominated
+//! Everything here is deterministic given the seed and the takes recorded
+//! against it: same seed and same recorded takes ⇒ same flow, which keeps the
+//! unit tests reproducible and makes `--dry-run` (which records every draw as
+//! executed) a faithful preview until a live take is depth-capped or skipped.
+//! Sizes are emitted as a **quote-denominated
 //! notional** (a float in human units, e.g. USDC); turning that into an
 //! `amount_in` for a given side and into the swap's `min_out` is the chain
 //! layer's job ([`crate::chain`]), so this module stays free of decimals,
@@ -80,7 +82,9 @@ impl Flow {
             Some(seed) => StdRng::seed_from_u64(seed),
             None => StdRng::from_entropy(),
         };
-        let buy_bias = cfg.buy_bias_init;
+        // Clamp the start like every later step, so the skew's logit is
+        // finite from the first draw whatever `buy_bias_init` says.
+        let buy_bias = cfg.buy_bias_init.clamp(cfg.buy_bias_min, cfg.buy_bias_max);
         Self {
             rng,
             cfg,
