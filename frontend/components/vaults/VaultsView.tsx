@@ -1,11 +1,8 @@
 "use client";
 
-import NumberFlow from "@number-flow/react";
 import { useWalletConnection } from "@solana/react-hooks";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { Crosshair, RefreshCw, X } from "@/components/icons";
-import { FlagPair } from "@/components/ui/Flag";
 import { SearchBox } from "@/components/ui/SearchBox";
 import {
   compareSortValues,
@@ -13,14 +10,18 @@ import {
   type SortDir,
   type SortState,
 } from "@/components/ui/SortableHeader";
-import { TokenIcon } from "@/components/ui/TokenIcon";
-import { VaultActionDialog } from "@/components/vaults/VaultActionDialog";
+import { VaultActionDialog } from "@/components/vaults/dialog/VaultActionDialog";
+import { FilterChip } from "@/components/vaults/FilterChip";
+import { VaultRow } from "@/components/vaults/VaultRow";
+import {
+  FxGroupHeading,
+  MessageRow,
+} from "@/components/vaults/VaultTableHeadings";
 import { shortenMint } from "@/lib/data/currencies";
-import { allTimePnl, positionPnl } from "@/lib/data/pnl";
+import { positionPnl } from "@/lib/data/pnl";
 import type { VaultPosition } from "@/lib/data/positions";
 import {
   cmpPairCode,
-  contributeClosedReason,
   type FxPairGroup,
   findVaultBySeq,
   type GroupedVault,
@@ -38,14 +39,10 @@ import {
   vaultRefPrice,
 } from "@/lib/data/vaults";
 import { realizedVault } from "@/lib/eclob/vaultTx";
-import { emit, useAppEvent } from "@/lib/events";
-import { FORMATS } from "@/lib/format/formats";
+import { useAppEvent } from "@/lib/events";
 import { useChainVaults } from "@/lib/hooks/useChainVaults";
-import { groupedRowClassName } from "@/lib/ui/groupedRows";
-import { pnlTone } from "@/lib/ui/pnlTone";
 import {
   replaceUrlParams,
-  useGoToSwapPair,
   VAULT_SEQ_PARAM,
   vaultPinFromParams,
   vaultPinParams,
@@ -89,306 +86,6 @@ const matchesQuery = (
     entry.vault.leader,
   ].some((s) => s.toLowerCase().includes(q));
 };
-
-// Compact USD ("$1.2M") cell. `null` → em dash.
-function UsdCell({ value }: { value: number | null }) {
-  return (
-    <td className="border-border border-r px-3 py-2 text-right align-middle font-mono text-foreground tabular-nums last:border-r-0">
-      {value === null ? (
-        <span className="text-muted-fg">—</span>
-      ) : (
-        <NumberFlow value={value} format={FORMATS.usdCompact} />
-      )}
-    </td>
-  );
-}
-
-// The connected user's position value in a vault, marked at the vault's
-// reference price (vaultRefPrice), with the all-time return %
-// below it (same red/green as the dialog's headline). The basket breakdown
-// lives in the manage dialog.
-function PositionValue({
-  vault,
-  position,
-}: {
-  vault: Vault;
-  position: VaultPosition;
-}) {
-  const refNow = vaultRefPrice(vault) ?? position.entryRefPrice;
-  // Against the fee-realized share count, so it matches what a withdraw pays.
-  const realized = realizedVault(vault);
-  const { currentValue } = positionPnl(position, realized, refNow);
-  const at = allTimePnl(position, realized, refNow);
-  return (
-    <span className="flex flex-col items-end font-mono text-xs tabular-nums">
-      <span className="text-foreground">
-        <NumberFlow value={currentValue} format={FORMATS.usd} />
-      </span>
-      <span
-        className={`text-[10px] ${pnlTone(at.allTimePnl, "text-muted-fg")}`}
-      >
-        (<NumberFlow value={at.allTimePct} format={FORMATS.signedReturn} />)
-      </span>
-    </span>
-  );
-}
-
-// Two overlapping circular token icons (the stablecoin logos are round).
-// Named `*Symbol` because the sibling FlagPair on the same row takes URLs, and
-// a bare `base`/`quote` pair would make the two indistinguishable at the call
-// site; TokenIcon resolves each symbol's mirror and remote fallback itself.
-function TokenPair({
-  baseSymbol,
-  quoteSymbol,
-  size,
-}: {
-  baseSymbol: string;
-  quoteSymbol: string;
-  size: number;
-}) {
-  return (
-    <span className="flex shrink-0 items-center">
-      <TokenIcon symbol={baseSymbol} size={size} className="rounded-full" />
-      <TokenIcon
-        symbol={quoteSymbol}
-        size={size}
-        className="-ml-1.5 rounded-full ring-1 ring-background"
-      />
-    </span>
-  );
-}
-
-// FX-pair heading spanning the table, mirroring the per-currency headings on
-// /currencies: two flags + "EUR / USD", with the pair's summed TVL
-// and vault count to the right.
-function FxGroupHeading({
-  group,
-  colSpan,
-}: {
-  group: FxPairGroup;
-  colSpan: number;
-}) {
-  const count = group.vaults.length;
-  return (
-    <tr className="bg-background">
-      <td colSpan={colSpan} className="px-3 pt-8 pb-3">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <FlagPair
-            base={group.baseFlagUrl}
-            quote={group.quoteFlagUrl}
-            size={48}
-          />
-          <span className="font-semibold text-foreground text-xl">
-            {group.label}
-          </span>
-          <span className="flex items-center gap-3 font-mono text-muted-fg text-xs tabular-nums">
-            <span>
-              TVL <NumberFlow value={group.tvl} format={FORMATS.usdCompact} />
-            </span>
-            <span>
-              {count} {count === 1 ? "vault" : "vaults"}
-            </span>
-          </span>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-// One vault row. The action button is context-aware: connect a wallet first,
-// then deposit if you hold no position, or withdraw if you do.
-function VaultRow({
-  entry,
-  grouped,
-  connected,
-  position,
-  pinned,
-  rowIndex,
-  groupSize,
-  onManage,
-  onPin,
-}: {
-  entry: GroupedVault;
-  grouped: boolean;
-  connected: boolean;
-  position: VaultPosition | null;
-  // Whether the URL filter is pinned to exactly this vault.
-  pinned: boolean;
-  rowIndex: number;
-  groupSize: number;
-  onManage: (market: VaultMarket, vault: Vault) => void;
-  onPin: (entry: GroupedVault) => void;
-}) {
-  const { market, vault } = entry;
-  const goToSwapPair = useGoToSwapPair();
-  const closedReason = contributeClosedReason(market, vault);
-
-  const action = !connected
-    ? {
-        label: "Connect",
-        disabled: false,
-        onClick: () => emit("openWalletModal"),
-      }
-    : position
-      ? {
-          // A held position can be topped off or withdrawn, so the dialog is a
-          // general "Manage", not just "Withdraw".
-          label: "Manage",
-          disabled: false,
-          onClick: () => onManage(market, vault),
-        }
-      : {
-          label: "Deposit",
-          disabled: closedReason !== null,
-          onClick: () => onManage(market, vault),
-        };
-  const actionTitle =
-    action.label === "Deposit" && action.disabled
-      ? (closedReason ?? undefined)
-      : undefined;
-
-  return (
-    <tr className={groupedRowClassName(rowIndex, groupSize)}>
-      <td className="whitespace-nowrap border-border border-r px-3 py-2 align-middle last:border-r-0">
-        <div className="flex items-center gap-2">
-          {!grouped && (
-            <FlagPair
-              base={market.baseFlagUrl}
-              quote={market.quoteFlagUrl}
-              size={16}
-            />
-          )}
-          <TokenPair
-            baseSymbol={market.base}
-            quoteSymbol={market.quote}
-            size={28}
-          />
-          <span className="font-mono font-medium text-foreground">
-            {market.label}
-          </span>
-          {/* Jump to /swap with this pair loaded into the store. */}
-          <button
-            type="button"
-            onClick={() =>
-              goToSwapPair(
-                { currency: market.baseCurrency, stablecoin: market.base },
-                { currency: market.quoteCurrency, stablecoin: market.quote },
-              )
-            }
-            title={`Swap ${market.label}`}
-            aria-label={`Swap ${market.label}`}
-            className="ml-1 inline-flex shrink-0 items-center rounded p-1 text-muted-fg transition-colors hover:bg-muted hover:text-accent"
-          >
-            <RefreshCw size={14} />
-          </button>
-        </div>
-      </td>
-      <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 align-middle last:border-r-0">
-        <div className="flex items-center gap-1">
-          {/* For display the vault number is the identity, so it leads,
-              ahead of the leader-set name, which can't then pass for another
-              vault's number (the pin keys on the leader). The hover
-              keeps the full address; its copy and explorer links live in
-              the dialog. */}
-          <span
-            className="shrink-0 font-mono text-foreground text-xs"
-            title={`${vaultLabel(vault)} — Leader ${vault.leader}`}
-          >
-            {vaultNumberLabel(vault)}
-          </span>
-          {vault.name && (
-            <span className="max-w-48 truncate font-medium text-foreground text-sm">
-              {vault.name}
-            </span>
-          )}
-          {/* Pin the view to this exact vault — writes base/quote and the
-              leader's address into the URL (a shareable deep link); click
-              again to clear. */}
-          <button
-            type="button"
-            onClick={() => onPin(entry)}
-            aria-label={pinned ? "Clear vault filter" : "Pin this vault"}
-            title={
-              pinned
-                ? "Clear vault filter"
-                : "Pin this vault — filters the table and updates the shareable URL"
-            }
-            className={`inline-flex shrink-0 items-center rounded p-1 transition-colors hover:bg-muted ${
-              pinned ? "text-accent" : "text-muted-fg hover:text-accent"
-            }`}
-          >
-            <Crosshair size={12} />
-          </button>
-          {vault.frozen && (
-            <span className="rounded bg-accent-sell/15 px-1.5 py-0.5 font-medium text-[10px] text-accent-sell uppercase tracking-wide">
-              Frozen
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 text-right align-middle last:border-r-0">
-        {connected ? (
-          position ? (
-            <PositionValue vault={vault} position={position} />
-          ) : (
-            <span className="font-mono text-muted-fg text-xs">$-</span>
-          )
-        ) : (
-          <span className="font-mono text-muted-fg text-xs">—</span>
-        )}
-      </td>
-      <td className="w-px whitespace-nowrap border-border border-r px-3 py-2 text-right align-middle last:border-r-0">
-        <button
-          type="button"
-          onClick={action.onClick}
-          disabled={action.disabled}
-          title={actionTitle}
-          className="shrink-0 rounded border border-border bg-background px-3 py-1 font-medium text-foreground text-xs transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-fg disabled:hover:border-border disabled:hover:text-muted-fg"
-        >
-          {action.label}
-        </button>
-      </td>
-      <UsdCell value={vault.tvl} />
-    </tr>
-  );
-}
-
-// A removable filter chip for an active URL pin.
-function FilterChip({
-  label,
-  onClear,
-}: {
-  label: string;
-  onClear: () => void;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted py-1 pr-1 pl-2.5 font-mono text-foreground text-xs">
-      {label}
-      <button
-        type="button"
-        onClick={onClear}
-        aria-label={`Clear ${label} filter`}
-        className="inline-flex items-center rounded-full p-0.5 text-muted-fg transition-colors hover:bg-background hover:text-foreground"
-      >
-        <X size={12} />
-      </button>
-    </span>
-  );
-}
-
-// A full-width message row in the table body.
-function MessageRow({ colSpan, text }: { colSpan: number; text: string }) {
-  return (
-    <tr>
-      <td
-        colSpan={colSpan}
-        className="px-3 py-6 text-center text-muted-fg text-sm"
-      >
-        {text}
-      </td>
-    </tr>
-  );
-}
 
 // The table's rows, filtered and sorted both ways.
 type ArrangedSection = {
