@@ -165,9 +165,13 @@ Otherwise, the full bootstrap:
    state and parked counts from the reads above, the clusters, the
    audit table with the heartbeat's decision, the upkeep report
    verbatim through its `End of upkeep report.` line, and every
-   foreign or unconsolidated note swept into its section. **Read it
-   back** once: a write against a stale snapshot saves the stale
-   base. This is the curator's **only** document write; the
+   foreign or unconsolidated note swept into its section. **Compose
+   it in a file, and verify the write against that file**, never
+   by re-reading the document:
+   `planning_doc.py patch --verify-file <path>` prints `VERIFIED`
+   or the first differing line, never the body (a write against a
+   stale snapshot saves the stale base, which shows as a
+   mismatch). This is the curator's **only** document write; the
    incremental notes, the close-out and the day report are the
    scheduler's.
 

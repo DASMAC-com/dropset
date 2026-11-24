@@ -36,7 +36,7 @@ Usage::
 when several sections are wanted: slice that file with ``read_result.py``
 afterwards rather than re-fetching.
 
-One write mode, the scheduler's close-out::
+Two write modes. The scheduler's close-out::
 
     python3 .claude/tools/planning_doc.py replace-sections \
         --file <scratchpad>/changed.md [--drop '## Old addendum'] \
@@ -45,6 +45,21 @@ One write mode, the scheduler's close-out::
 Each top-depth section in the file replaces the stored section with the same
 heading text and depth (exactly one match, else nothing is written); every
 other section is carried byte for byte, and the result is read back.
+
+And an in-session anchored edit, in place of the MCP ``save_document``
+``patch``::
+
+    python3 .claude/tools/planning_doc.py patch --ops <scratchpad>/ops.json \
+        [--dry-run]
+    python3 .claude/tools/planning_doc.py patch --verify <hash>
+    python3 .claude/tools/planning_doc.py patch --verify-file <written.md>
+
+The ops are ``linear_patch.py``'s (same vocabulary, same atomic abort). The
+write is read back, and only the body's hash and the changed headings are
+printed; ``--verify`` later confirms the stored body still has that hash.
+``--verify-file`` is the curator's read-back after its wholesale write: the
+stored body is compared to the file it wrote, and only the first differing
+line number is printed.
 
 **A live scheduler is still the better source when there is one.** It
 answers the question rather than the text — one session that read the document
@@ -63,11 +78,18 @@ tooling"). Tests live in ``tests/test_planning_doc.py``, run via
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import sys
 
 import linear_api
+import linear_patch
 import read_result
+
+#: Hex digits of the sha256 printed as a body's hash — enough to tell two
+#: versions of one document apart, short enough to carry in a later command.
+HASH_LEN = 12
 
 _DOC_QUERY = """
 query Doc($id: String!) {
@@ -317,6 +339,13 @@ def run_replace(argv: list[str]) -> int:
             f"{title} | {count} section(s), {len(stored)} -> {len(composed)} chars "
             "(re-spliced over a concurrent edit)"
         )
+    return _write_and_read_back(api_key, doc_id, composed, "REPLACED", summary)
+
+
+def _write_and_read_back(
+    api_key: str, doc_id: str, composed: str, verb: str, summary: str
+) -> int:
+    """Write ``composed``, read it back, and print one line; 0 when identical."""
     data = linear_api.post(
         api_key,
         _UPDATE_MUTATION,
@@ -330,28 +359,186 @@ def run_replace(argv: list[str]) -> int:
     # mismatch. (One landing before ours is what the re-fetch above narrows.)
     _, after = fetch(api_key, doc_id)
     if after != composed:
-        old, new = composed.splitlines(), after.splitlines()
-        line = next(
-            (n + 1 for n, (a, b) in enumerate(zip(old, new)) if a != b),
-            min(len(old), len(new)) + 1,
-        )
         print(
-            f"planning-doc | REPLACED {summary} — but the read-back differs from "
-            f"line {line}: slice it (--grep / --section) before trusting it",
+            f"planning-doc | {verb} {summary} — but the read-back differs from "
+            f"line {_first_difference(composed, after)} (stored hash "
+            f"{content_hash(after)}): slice it "
+            "(--grep / --section) before trusting it",
             file=sys.stderr,
         )
         return 1
-    print(f"planning-doc | REPLACED {summary}; read-back identical", file=sys.stderr)
+    print(
+        f"planning-doc | {verb} {summary}; read-back identical, "
+        f"hash {content_hash(after)}",
+        file=sys.stderr,
+    )
     return 0
+
+
+def _first_difference(expected: str, actual: str) -> int:
+    """The 1-based line where ``actual`` first departs from ``expected``."""
+    old, new = expected.splitlines(), actual.splitlines()
+    return next(
+        (n + 1 for n, (a, b) in enumerate(zip(old, new)) if a != b),
+        min(len(old), len(new)) + 1,
+    )
+
+
+def content_hash(content: str) -> str:
+    """A short, stable digest of the stored body — the ``--verify`` key."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()[:HASH_LEN]
+
+
+def _own_texts(content: str) -> dict[tuple[str, int], str]:
+    """Each heading's *own* text (up to the next heading of any depth).
+
+    Keyed by the heading line and its occurrence count, so a repeated heading
+    is still told apart; the preamble before the first heading keys as ``""``.
+    """
+    lines = content.splitlines()
+    heads = list(read_result.iter_headings(lines))
+    bounds = [(0, "")] + [(i, f"{'#' * d} {t}") for i, d, t in heads]
+    seen: dict[str, int] = {}
+    out = {}
+    for n, (start, line) in enumerate(bounds):
+        end = bounds[n + 1][0] if n + 1 < len(bounds) else len(lines)
+        seen[line] = seen.get(line, 0) + 1
+        out[(line, seen[line])] = "\n".join(lines[start:end]).strip()
+    return out
+
+
+def changed_headings(before: str, after: str) -> list[str]:
+    """The heading lines whose own text a patch changed, added or removed.
+
+    Order follows ``after``, then any heading the patch removed. Text before
+    the first heading reports as ``(preamble)``.
+    """
+    old, new = _own_texts(before), _own_texts(after)
+    hits = [k for k in new if old.get(k) != new[k]]
+    hits += [k for k in old if k not in new]
+    return [line or "(preamble)" for line, _ in hits]
+
+
+def run_patch(argv: list[str]) -> int:
+    """``patch``: anchored ops on the Planning document, zero echo.
+
+    Measured (the 2026-11-22 scheduler session): the whole document was
+    re-read five times only to confirm a patch had landed, because the MCP
+    ``save_document`` response kept returning a stale timestamp. Here the ops
+    (``linear_patch.py``'s vocabulary and atomic abort) are applied in this
+    process, the write is read back, and only a hash plus the changed
+    headings are printed; ``--verify <hash>`` later confirms the stored body
+    is still that one, without reading it into the transcript.
+    """
+    parser = argparse.ArgumentParser(
+        prog="planning_doc.py patch",
+        description="Apply anchored ops to the Planning document, or verify one.",
+    )
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--ops", metavar="FILE", help="a JSON array of patch ops")
+    mode.add_argument(
+        "--verify",
+        metavar="HASH",
+        help="confirm the stored body still has this hash; write nothing",
+    )
+    mode.add_argument(
+        "--verify-file",
+        metavar="FILE",
+        help="confirm the stored body equals FILE (a wholesale write's source); "
+        "print only the first differing line",
+    )
+    parser.add_argument("--id", default=None, help="default $LINEAR_PLANNING_DOC_ID")
+    parser.add_argument("--dry-run", action="store_true", help="write nothing")
+    args = parser.parse_args(argv)
+
+    doc_id = args.id or linear_api.env_var(
+        "LINEAR_PLANNING_DOC_ID", error=PlanningDocError
+    )
+    api_key = linear_api.env_var("LINEAR_API_KEY", error=PlanningDocError)
+    if args.verify_file is not None:
+        try:
+            with open(args.verify_file, encoding="utf-8") as fh:
+                wanted = fh.read()
+        except OSError as exc:
+            raise PlanningDocError(f"cannot read {args.verify_file}: {exc}") from exc
+        title, stored = fetch(api_key, doc_id)
+        if stored.rstrip("\n") == wanted.rstrip("\n"):
+            print(
+                f"planning-doc | VERIFIED {title} | equals {args.verify_file}, "
+                f"hash {content_hash(stored)}",
+                file=sys.stderr,
+            )
+            return 0
+        print(
+            f"planning-doc | MISMATCH {title} | differs from {args.verify_file} "
+            f"at line {_first_difference(wanted, stored)}: slice it "
+            "(--grep / --section) before trusting it",
+            file=sys.stderr,
+        )
+        return 1
+    if args.verify is not None:
+        title, stored = fetch(api_key, doc_id)
+        actual = content_hash(stored)
+        if actual == args.verify.strip().lower():
+            print(f"planning-doc | VERIFIED {title} | hash {actual}", file=sys.stderr)
+            return 0
+        print(
+            f"planning-doc | MISMATCH {title} | stored hash {actual}, expected "
+            f"{args.verify} — another write landed since; slice before trusting it",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        with open(args.ops, encoding="utf-8") as fh:
+            ops = json.load(fh)
+    except OSError as exc:
+        raise PlanningDocError(f"cannot read {args.ops}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise PlanningDocError(f"decoding {args.ops}: {exc}") from exc
+    title, stored = fetch(api_key, doc_id)
+    composed = linear_patch.apply_ops(stored, ops)
+    if composed == stored:
+        raise PlanningDocError("the ops produced an identical body — nothing to write")
+
+    def summarize(before: str, after: str, note: str = "") -> str:
+        heads = changed_headings(before, after)
+        return (
+            f"{title} | {len(ops)} op(s), {len(before)} -> {len(after)} chars{note} "
+            f"| changed: {'; '.join(heads)}"
+        )
+
+    if args.dry_run:
+        print(f"planning-doc | WOULD PATCH {summarize(stored, composed)}", file=sys.stderr)
+        return 0
+    # The same one-round-trip race guard as `replace-sections`: ops re-applied
+    # over an edit that landed since the first fetch, or a refusal on two.
+    _, fresh = fetch(api_key, doc_id)
+    note = ""
+    if fresh != stored:
+        composed = linear_patch.apply_ops(fresh, ops)
+        _, again = fetch(api_key, doc_id)
+        if again != fresh:
+            raise PlanningDocError(
+                "the document is changing under this write (two concurrent edits "
+                "in a row) — wait for the other writer and re-run"
+            )
+        stored, note = fresh, " (re-applied over a concurrent edit)"
+    return _write_and_read_back(
+        api_key, doc_id, composed, "PATCHED", summarize(stored, composed, note)
+    )
 
 
 def run(argv: list[str]) -> int:
     if argv[1:2] == ["replace-sections"]:
         return run_replace(argv[2:])
+    if argv[1:2] == ["patch"]:
+        return run_patch(argv[2:])
     parser = argparse.ArgumentParser(
         prog="planning_doc.py",
         description="Read named sections of the Planning document, not all of it.",
-        epilog="The one write mode: planning_doc.py replace-sections --help",
+        epilog="The write modes: planning_doc.py replace-sections --help, "
+        "planning_doc.py patch --help",
     )
     parser.add_argument(
         "--id",
@@ -435,7 +622,11 @@ def run(argv: list[str]) -> int:
 def main() -> int:
     try:
         return run(sys.argv)
-    except (PlanningDocError, read_result.ReadResultError) as exc:
+    except (
+        PlanningDocError,
+        read_result.ReadResultError,
+        linear_patch.LinearPatchError,
+    ) as exc:
         print(f"planning-doc: {exc}", file=sys.stderr)
         return 2
 

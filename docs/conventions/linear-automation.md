@@ -1617,6 +1617,17 @@ unchanged `updatedAt`; the session concluded it hadn't landed and
 compensated with an append, which was that run's single largest
 avoidable cost. Never compensate — re-read.
 
+**For the Planning document, the re-read is the tool's, not yours.** One
+scheduler session re-read the whole document five times only to confirm
+a patch had landed, because the `save_document` response kept returning
+a stale timestamp. An in-session edit goes through
+`planning_doc.py patch --ops <file>`: it applies these same ops in
+process, reads the write back itself, and prints only the body's hash
+and the changed headings. `patch --verify <hash>` later confirms the
+stored body is still that one, and `patch --verify-file <path>` checks
+a wholesale write against the file it came from. Neither prints the
+body.
+
 **The op payload field is `text`, not `content`.** An invalid-input
 error naming the patch field is what a wrong field name looks like.
 

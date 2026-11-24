@@ -10,6 +10,7 @@ print **only** the requested sections, never the whole document. A
 from __future__ import annotations
 
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -368,6 +369,150 @@ class ReplaceRun(unittest.TestCase):
             self._run(
                 [self.doc(DOC), self.doc(DOC), {"documentUpdate": {"success": False}}]
             )
+
+
+OPS = [
+    {"op": "insert_after", "anchor": "| seam | 09-01 | 8 |", "text": "\n| feeds | 11-22 | 3 |"}
+]
+
+
+class ChangedHeadings(unittest.TestCase):
+    def test_only_the_touched_section_is_named(self):
+        after = pd.linear_patch.apply_ops(DOC, OPS)
+        self.assertEqual(pd.changed_headings(DOC, after), ["# Audit state"])
+
+    def test_a_subsection_edit_names_the_subsection_not_its_parent(self):
+        after = DOC.replace("is ratified", "is ratified and binding")
+        self.assertEqual(pd.changed_headings(DOC, after), ["## Program and timing"])
+
+    def test_added_and_removed_headings_are_both_named(self):
+        after = DOC.replace("# Board schema", "# Board map") + "\n\n# Late\n\nx\n"
+        self.assertEqual(
+            pd.changed_headings(DOC, after), ["# Board map", "# Late", "# Board schema"]
+        )
+
+    def test_the_hash_is_short_stable_and_content_keyed(self):
+        self.assertEqual(pd.content_hash(DOC), pd.content_hash(DOC))
+        self.assertEqual(len(pd.content_hash(DOC)), pd.HASH_LEN)
+        self.assertNotEqual(pd.content_hash(DOC), pd.content_hash(DOC + "\n"))
+
+
+class PatchRun(unittest.TestCase):
+    OK = {"documentUpdate": {"success": True}}
+
+    @staticmethod
+    def doc(content):
+        return {"document": {"title": "Planning", "content": content}}
+
+    def _run(self, responses, *args, ops=OPS):
+        calls = []
+
+        def post(api_key, query, variables, error):
+            calls.append((query, variables))
+            return responses.pop(0)
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "ops.json")
+            Path(path).write_text(json.dumps(ops), encoding="utf-8")
+            argv = [a.replace("@OPS", path) for a in args]
+            err = io.StringIO()
+            with mock.patch.object(pd.linear_api, "post", side_effect=post):
+                with mock.patch.dict(os.environ, ENV, clear=True):
+                    with redirect_stdout(io.StringIO()) as out, redirect_stderr(err):
+                        code = pd.run(["planning_doc.py", "patch", *argv])
+        return code, out.getvalue(), err.getvalue(), calls
+
+    def test_patch_writes_reads_back_and_prints_hash_and_headings_only(self):
+        composed = pd.linear_patch.apply_ops(DOC, OPS)
+        code, out, err, calls = self._run(
+            [self.doc(DOC), self.doc(DOC), self.OK, self.doc(composed)],
+            "--ops",
+            "@OPS",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(calls[2][1], {"id": "doc-1", "content": composed})
+        self.assertIn(f"hash {pd.content_hash(composed)}", err)
+        self.assertIn("changed: # Audit state", err)
+        self.assertEqual(out, "")
+        # Zero echo: neither the inserted row nor a carried section is printed.
+        self.assertNotIn("feeds", err)
+        self.assertNotIn("never hardcode", err)
+
+    def test_ops_re_apply_over_a_concurrent_edit(self):
+        appended = DOC + "\n\n# Late note\n\nfrom another session\n"
+        composed = pd.linear_patch.apply_ops(appended, OPS)
+        code, _, err, calls = self._run(
+            [
+                self.doc(DOC),
+                self.doc(appended),
+                self.doc(appended),
+                self.OK,
+                self.doc(composed),
+            ],
+            "--ops",
+            "@OPS",
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("from another session", calls[3][1]["content"])
+        self.assertIn("re-applied over a concurrent edit", err)
+
+    def test_a_differing_read_back_exits_one(self):
+        code, _, err, _ = self._run(
+            [self.doc(DOC), self.doc(DOC), self.OK, self.doc(DOC)], "--ops", "@OPS"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("read-back differs from line", err)
+
+    def test_dry_run_writes_nothing(self):
+        code, _, err, calls = self._run([self.doc(DOC)], "--ops", "@OPS", "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("WOULD PATCH", err)
+
+    def test_an_unmatched_anchor_aborts_before_any_write(self):
+        bad = [{"op": "replace", "anchor": "absent", "text": "x"}]
+        with self.assertRaises(pd.linear_patch.LinearPatchError):
+            self._run([self.doc(DOC)], "--ops", "@OPS", ops=bad)
+
+    def test_a_no_op_patch_is_refused(self):
+        same = [{"op": "replace", "anchor": "read this first", "text": "read this first"}]
+        with self.assertRaises(pd.PlanningDocError):
+            self._run([self.doc(DOC)], "--ops", "@OPS", ops=same)
+
+    def test_verify_matches_without_echo(self):
+        code, out, err, calls = self._run(
+            [self.doc(DOC)], "--verify", pd.content_hash(DOC)
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("VERIFIED", err)
+        self.assertEqual(out, "")
+        self.assertNotIn("read this first", err)
+
+    def _verify_file(self, stored, written):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "written.md")
+            Path(path).write_text(written, encoding="utf-8")
+            return self._run([self.doc(stored)], "--verify-file", path)
+
+    def test_verify_file_matches_without_echo(self):
+        code, out, err, _ = self._verify_file(DOC + "\n", DOC)
+        self.assertEqual(code, 0)
+        self.assertIn("VERIFIED", err)
+        self.assertEqual(out, "")
+        self.assertNotIn("read this first", err)
+
+    def test_verify_file_names_the_first_differing_line(self):
+        code, _, err, _ = self._verify_file(DOC.replace("seam", "SEAM"), DOC)
+        self.assertEqual(code, 1)
+        self.assertIn("at line 9", err)
+        self.assertNotIn("SEAM", err)
+
+    def test_verify_mismatch_exits_one(self):
+        code, _, err, _ = self._run([self.doc(DOC + "\nx")], "--verify", pd.content_hash(DOC))
+        self.assertEqual(code, 1)
+        self.assertIn("MISMATCH", err)
 
 
 class Failures(unittest.TestCase):
