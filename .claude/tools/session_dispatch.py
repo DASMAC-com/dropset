@@ -154,9 +154,10 @@ def validate(argv: list[str]) -> list[str]:
         # twin is retired, since `explore <n>` now resumes an existing session
         # itself — `explore 1196` lands in the `1196` worktree. The free-form
         # `explore <name>` is retired with it: a worktree is named for its
-        # issue, never a word. Either substrate word, in `task`'s position, so a
-        # `[Explore/Bedrock]` title types as `explore bedrock <n>` like every
-        # other token.
+        # issue, never a word. Both forms pass: the bare `explore <n>` the
+        # dispatch prose types, whose launcher reads the title's
+        # `[Explore/<Substrate>]` token, and either substrate word in `task`'s
+        # position, the override.
         word = [args[0]] if args and args[0] in _SUBSTRATES else []
         args = args[len(word) :]
         if args and args[0] == "resume":
