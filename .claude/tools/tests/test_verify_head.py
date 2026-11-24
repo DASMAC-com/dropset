@@ -676,6 +676,33 @@ test result: FAILED. 2 passed; 1 failed; 0 ignored
 error: doctest failed, to rerun pass `-p dropset-feeds --doc`
 """
 
+#: The crate-compile form, from the 2382 session's log tail: rustdoc failed
+#: compiling the crate itself, so no doctest ran and no failure block exists.
+CRATE_COMPILE_LOG = """\
+cargo_scope: cargo test -p dropset-indexer
+     Running lib target src/lib.rs (target/debug/deps/dropset_indexer-9f8e)
+
+running 40 tests
+test result: ok. 40 passed; 0 failed; 0 ignored
+
+   Doc-tests dropset_indexer
+error[E0463]: can't find crate for `dropset_sdk`
+  --> indexer/src/decode.rs:14:5
+   |
+14 | use dropset_sdk::generated::accounts;
+   |     ^^^^^^^^^^^ can't find crate
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0463`.
+error: doctest failed, to rerun pass `-p dropset-indexer --doc`
+"""
+
+LANE_ENV = {
+    "CARGO_TARGET_DIR": "/pool/lane-0",
+    "RUSTC_WORKSPACE_WRAPPER": "/repo/.claude/worktrees/2382/wrap",
+}
+
 
 class DoctestRaceTest(unittest.TestCase):
     def log(self, text: str) -> Path:
@@ -685,6 +712,65 @@ class DoctestRaceTest(unittest.TestCase):
 
     def test_the_race_shape_is_recognized(self):
         self.assertTrue(vh.is_doctest_race(self.log(RACE_LOG)))
+
+    def test_the_crate_compile_shape_is_recognized(self):
+        self.assertTrue(vh.is_doctest_race(self.log(CRATE_COMPILE_LOG)))
+
+    def test_another_error_code_in_the_crate_compile_shape_is_not_the_race(self):
+        text = CRATE_COMPILE_LOG.replace(
+            "error: aborting",
+            "error[E0425]: cannot find value `x` in this scope\n\nerror: aborting",
+        )
+        self.assertFalse(vh.is_doctest_race(self.log(text)))
+
+    def test_the_crate_compile_shape_after_a_red_binary_is_not_the_race(self):
+        text = CRATE_COMPILE_LOG.replace(
+            "test result: ok. 40 passed; 0 failed",
+            "test result: FAILED. 39 passed; 1 failed",
+        )
+        self.assertFalse(vh.is_doctest_race(self.log(text)))
+
+    def test_a_doctest_section_with_no_error_is_not_the_race(self):
+        text = CRATE_COMPILE_LOG.split("error[E0463]")[0] + "test result: ok.\n"
+        self.assertFalse(vh.is_doctest_race(self.log(text)))
+
+    def test_the_attribution_names_lane_key_and_crate(self):
+        self.assertEqual(
+            vh.race_attribution(self.log(CRATE_COMPILE_LOG), LANE_ENV),
+            "lane:/pool/lane-0,key:/repo/.claude/worktrees/2382/wrap,crate:dropset_sdk",
+        )
+
+    def test_the_attribution_marks_an_unset_variable(self):
+        self.assertEqual(
+            vh.race_attribution(self.log(RACE_LOG), {}),
+            "lane:-,key:-,crate:dropset_feeds",
+        )
+
+    def test_the_attribution_rides_the_recovery_path_only(self):
+        runs = {
+            "recovered": {
+                "lint": (1, 0, ""),
+                "test": (2, 101, CRATE_COMPILE_LOG),
+                vh.DOC_RETRY: (2, 0, "test result: ok.\n"),
+            },
+            "green": {"lint": (1, 0, ""), "test": (2, 0, "test result: ok.\n")},
+            "red": {
+                "lint": (1, 0, ""),
+                "test": (2, 101, "test result: FAILED. 1 failed\n"),
+            },
+        }
+        lines = {}
+        with mock.patch.dict(os.environ, LANE_ENV):
+            for name, stages in runs.items():
+                lines[name] = vh.render(Harness(stages, [ci()] * 10).run(), 1)
+        self.assertIn(
+            "recovered=doctest-e0463 race=lane:/pool/lane-0,"
+            "key:/repo/.claude/worktrees/2382/wrap,crate:dropset_sdk ci=",
+            lines["recovered"],
+        )
+        for name in ("green", "red"):
+            for needle in ("race=", "lane:", "key:", "crate:"):
+                self.assertNotIn(needle, lines[name], name)
 
     def test_a_real_doctest_failure_beside_it_is_not_the_race(self):
         text = RACE_LOG.replace(
@@ -740,6 +826,9 @@ class DoctestRaceTest(unittest.TestCase):
         self.assertIn(vh.DOC_RETRY, h.started)
         self.assertEqual(r.recovered, "")
         self.assertNotIn("recovered=", vh.render(r, 1))
+        # Attribution rides the retry's start, so a killed retry still names
+        # the lane and key it raced under.
+        self.assertIn("race=lane:", vh.render(r, 1))
 
     def test_the_retry_keeps_the_failed_run_scope(self):
         self.assertEqual(
@@ -774,7 +863,7 @@ class DoctestRaceTest(unittest.TestCase):
         self.assertEqual(r.outcome, "GREEN")
         self.assertEqual(r.recovered, vh.DOCTEST_RACE)
         self.assertEqual(list(h.started), ["lint", "test", vh.DOC_RETRY])
-        self.assertIn("recovered=doctest-e0463 ci=", vh.render(r, 1))
+        self.assertRegex(vh.render(r, 1), r"recovered=doctest-e0463 race=\S+ ci=")
 
     def test_a_second_race_is_reported_red(self):
         h = Harness(
