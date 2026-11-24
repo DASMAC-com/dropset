@@ -321,6 +321,7 @@ class SkillSizeTests(unittest.TestCase):
                 "skill-size:curate-description"
             ),
             "CLAUDE.md": "skill-size:claude-md",
+            ".claude/skills/Odd_Name/SKILL.md": "skill-size:odd-name",
         }
         for key, want in cases.items():
             with self.subTest(key=key):

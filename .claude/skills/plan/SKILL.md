@@ -570,9 +570,9 @@ python3 .claude/tools/pr_notifications.py dismiss --settled --apply
 
 It selects every thread whose PR is merged or closed, whatever
 its issue's state, never an open PR's, marks each done with one
-call (the merge tail already unsubscribed it), and prints counts,
-not threads; say its `summary` line in the close-out report. A
-failure is that line, never a blocker.
+call (the merge tail already unsubscribed each merged one), and
+prints counts, not threads; say its `summary` line in the
+close-out report. A failure is that line, never a blocker.
 
 **7. Run `/session-metrics` at close-out**, the shared tail,
 before the final document write. Its id comes from

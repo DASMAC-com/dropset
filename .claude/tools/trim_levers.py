@@ -626,7 +626,9 @@ def skill_size_fingerprint(key: str) -> str:
         slug = path.removeprefix(f"{skill_size.SKILLS_DIR}/").split("/")[0]
     if part:
         slug += f"-{part}"
-    return validate_fingerprint(f"{SKILL_SIZE_DOMAIN}:{slug.lower()}")
+    # A skill directory may carry `_`, which the slug pattern refuses.
+    slug = slug.lower().replace("_", "-")
+    return validate_fingerprint(f"{SKILL_SIZE_DOMAIN}:{slug}")
 
 
 def skill_size_candidates(root) -> list[tuple[str, str]]:
