@@ -59,7 +59,11 @@ bucketed by the machine's own day:
     lags by hours, so the heading names the last hour billed. The meter is
     only as complete as the transcripts on disk, and the purge ages them out,
     so an older day can meter low where its bill does not. The settled
-    ``reconcile`` stays UTC; this view is never reconciled.
+    ``reconcile`` stays UTC; this view is never reconciled. ``--by verb``
+    adds a row under each day: its spend by session verb (``task``,
+    ``chore``, ``explore``, ``architect``, ``plan``, ``curate``, ``analyze``),
+    Bedrock and subscription together at Bedrock rates, read off each session's
+    bootstrap prompt — ``unattributed`` when its head names none.
 
 **Substrate classes.** ``bedrock`` and ``subscription`` come from a marker: the
 session's own record (``sessions/<id>``, written when the launch creates
@@ -104,7 +108,7 @@ Usage::
     python3 .claude/tools/fleet_cost.py reconcile [--day YYYY-MM-DD]...
     python3 .claude/tools/fleet_cost.py spend-cap [--day YYYY-MM-DD]...
     python3 .claude/tools/fleet_cost.py rates YYYY-MM-DD
-    python3 .claude/tools/fleet_cost.py local [--json]
+    python3 .claude/tools/fleet_cost.py local [--json] [--by verb]
 
 The AWS reads run the CLI under ``DS_AWS_PROFILE`` when it is set, else the
 CLI's own default. Stdlib only; a Python skill-tool under ``.claude/tools/`` —
@@ -278,6 +282,36 @@ def verb_of_prompt(text: str) -> str | None:
     return RENAMED_VERBS.get(verb, verb)
 
 
+# The bootstrap prompt each session verb types (`.claude/shell/init.zsh`):
+# `task` passes `/init-pr`, `explore` writes its prompt out, and every other
+# verb types its own slash command; the analyst's old `/launch` groups under
+# `analyze` (`RENAMED_VERBS`).
+_SESSION_COMMANDS = (
+    "init-pr|chore|architect|explore|plan|curate|analyze|launch|housekeeping"
+)
+PROMPT_SESSION_VERB_RE = re.compile(
+    rf"<command-name>/({_SESSION_COMMANDS})</command-name>"
+    rf"|^/({_SESSION_COMMANDS})(?:\s|$)"
+    r"|^(Bootstrap this explore task)\b",
+    re.IGNORECASE,
+)
+# A session whose verb its head does not name: resumed past its bootstrap, or
+# started by hand.
+UNATTRIBUTED_VERB = "unattributed"
+
+
+def session_verb_of_prompt(text: str) -> str | None:
+    """The session verb a launch ran as, from its bootstrap prompt — the key
+    of `local --by verb`, the breakdown a process change moves."""
+    match = PROMPT_SESSION_VERB_RE.search(text.strip())
+    if not match:
+        return None
+    if match.group(3):
+        return "explore"
+    command = (match.group(1) or match.group(2)).lower()
+    return "task" if command == "init-pr" else RENAMED_VERBS.get(command, command)
+
+
 def service_for_model(model: str) -> str | None:
     """The Cost Explorer service a transcript model id bills under.
 
@@ -318,6 +352,10 @@ class Meter:
     # (day, substrate, issue) -> session ids
     issue_sessions: dict[tuple[str, str, str], set[str]] = field(default_factory=dict)
     sessions: dict[tuple[str, str], set[str]] = field(default_factory=dict)
+    # (day, verb, model) over the priced substrates, Bedrock and subscription,
+    # and (day, verb) -> session ids: `local --by verb`.
+    by_verb: dict[tuple[str, str, str], sm.Tokens] = field(default_factory=dict)
+    verb_sessions: dict[tuple[str, str], set[str]] = field(default_factory=dict)
     seen: set[str] = field(default_factory=set)
     parse_errors: int = 0
     # Transcripts that vanished or became unreadable mid-walk (a purge running
@@ -339,7 +377,12 @@ class Meter:
     day_of: Callable[[str], str] = lambda stamp: stamp[:10]
 
     def ingest(
-        self, line: str, substrate: str, issue: str | None, session: str
+        self,
+        line: str,
+        substrate: str,
+        issue: str | None,
+        session: str,
+        verb: str | None = None,
     ) -> dict | None:
         """Meter one line; returns the parsed record for any further reader."""
         if not line.strip():
@@ -351,7 +394,7 @@ class Meter:
             return None
         if not isinstance(rec, dict):
             return None
-        self._ingest_record(rec, substrate, issue, session)
+        self._ingest_record(rec, substrate, issue, session, verb)
         return rec
 
     def add_friction(self, friction: sm.Friction, substrate: str, session: str) -> None:
@@ -380,7 +423,12 @@ class Meter:
             acc.cache_read += tokens.cache_read
 
     def _ingest_record(
-        self, rec: dict, substrate: str, issue: str | None, session: str
+        self,
+        rec: dict,
+        substrate: str,
+        issue: str | None,
+        session: str,
+        verb: str | None = None,
     ) -> None:
         msg = rec.get("message")
         if not isinstance(msg, dict) or not isinstance(msg.get("usage"), dict):
@@ -403,6 +451,11 @@ class Meter:
         self.by_issue.setdefault(key, sm.Tokens()).add(msg["usage"])
         self.issue_sessions.setdefault((day, substrate, issue), set()).add(session)
         self.sessions.setdefault((day, substrate), set()).add(session)
+        # An unattributed substrate is never priced, so it joins no verb row.
+        if substrate in (BEDROCK, SUBSCRIPTION):
+            verb = verb or UNATTRIBUTED_VERB
+            self.by_verb.setdefault((day, verb, model), sm.Tokens()).add(msg["usage"])
+            self.verb_sessions.setdefault((day, verb), set()).add(session)
 
 
 NO_ISSUE = "(no issue)"
@@ -421,13 +474,15 @@ def _prompt_text(rec: dict) -> str:
     return ""
 
 
-def _read_head(path: Path) -> tuple[str | None, str | None]:
-    """``(cwd, issue or verb from the bootstrap prompt)`` — the prompt names
-    the issue a base-checkout launch ran for, where no worktree tag does, or
-    the verb of one with no issue (``plan``). The first few user records are
-    tried, not only the first: a caveat or hook record can precede the
+def _read_head(path: Path) -> tuple[str | None, str | None, str | None]:
+    """``(cwd, issue or verb from the bootstrap prompt, session verb)`` — the
+    prompt names the issue a base-checkout launch ran for, where no worktree
+    tag does, or the verb of one with no issue (``plan``), and every launch's
+    session verb (:func:`session_verb_of_prompt`). The first few user records
+    are tried, not only the first: a caveat or hook record can precede the
     command."""
     cwd = None
+    issue = verb = None
     users = 0
     for line in sm._read_lines(path):
         try:
@@ -440,11 +495,13 @@ def _read_head(path: Path) -> tuple[str | None, str | None]:
             cwd = rec["cwd"].strip()
         if rec.get("type") == "user":
             text = _prompt_text(rec)
-            issue = issue_of_prompt(text) or verb_of_prompt(text)
+            issue = issue or issue_of_prompt(text) or verb_of_prompt(text)
+            verb = verb or session_verb_of_prompt(text)
             users += 1
-            if issue or users >= HEAD_USER_RECORDS:
-                return cwd, issue
-    return cwd, None
+            # The bootstrap prompt carries both, so the verb ends the read.
+            if verb or users >= HEAD_USER_RECORDS:
+                return cwd, issue, verb
+    return cwd, issue, verb
 
 
 # How many leading user records may hold the bootstrap prompt.
@@ -505,7 +562,7 @@ def walk(
             except OSError:
                 continue
             try:
-                cwd, prompted = _read_head(transcript)
+                cwd, prompted, verb = _read_head(transcript)
             except OSError:
                 meter.unreadable += 1
                 continue
@@ -520,7 +577,7 @@ def walk(
             for path in files:
                 try:
                     for line in sm._read_lines(path):
-                        rec = meter.ingest(line, substrate, issue, session)
+                        rec = meter.ingest(line, substrate, issue, session, verb)
                         if rec is not None and path == transcript:
                             friction.observe(rec)
                 except OSError:
@@ -1311,28 +1368,81 @@ def bucket_hours(
     return days, through
 
 
-def local_report(meter: Meter, windows, billed, through, billed_state: str, tz=None):
-    """The ``local`` subcommand's structured result."""
+def verb_breakdown(meter: Meter, day: str) -> list[dict]:
+    """One day's spend by session verb, Bedrock and subscription at Bedrock
+    rates, costliest first. Priced as :func:`day_summary` prices a substrate:
+    a zero-usage record (``<synthetic>``) is skipped, and a model with no rate
+    is named in ``unpriced`` and left out of the dollars."""
+    out = []
+    for verb in sorted({v for d, v in meter.verb_sessions if d == day}):
+        dollars = 0.0
+        unpriced: list[str] = []
+        for (d, v, model), tokens in sorted(meter.by_verb.items()):
+            if d != day or v != verb or not tokens.billable():
+                continue
+            priced = price(tokens, model)
+            if priced is None:
+                unpriced.append(model)
+            else:
+                dollars += priced
+        out.append(
+            {
+                "verb": verb,
+                "dollars": dollars,
+                "sessions": len(meter.verb_sessions[(day, verb)]),
+                "unpriced": unpriced,
+            }
+        )
+    out.sort(key=lambda r: (-r["dollars"], r["verb"]))
+    return out
+
+
+def render_verbs(rows: list[dict]) -> str:
+    """``by verb: task $310 (6) · plan $42 (1)``. Shared with upkeep."""
+    parts = [
+        "{} {} ({}){}".format(
+            r["verb"],
+            money(r["dollars"]),
+            r["sessions"],
+            " + unpriced " + ", ".join(r["unpriced"]) if r.get("unpriced") else "",
+        )
+        for r in rows
+    ]
+    return "by verb: " + (" · ".join(parts) or "no session")
+
+
+def local_report(
+    meter: Meter,
+    windows,
+    billed,
+    through,
+    billed_state: str,
+    tz=None,
+    by_verb: bool = False,
+):
+    """The ``local`` subcommand's structured result; ``by_verb`` adds each
+    day's :func:`verb_breakdown` as its ``by_verb`` list."""
     today = windows[-1][0]
     rows = []
     for day, _, _ in windows:
         subs = day_summary(meter, day)["substrates"]
         bedrock, subscription = subs.get(BEDROCK) or {}, subs.get(SUBSCRIPTION) or {}
-        rows.append(
-            {
-                "day": day,
-                "label": "today so far"
-                if day == today
-                else "yesterday"
-                if day == windows[-2][0]
-                else datetime.date.fromisoformat(day).strftime("%a"),
-                "billed": None if billed is None else billed.get(day, 0.0),
-                "metered": bedrock.get("dollars", 0.0),
-                "sessions": bedrock.get("sessions", 0),
-                "subscription": subscription.get("dollars", 0.0),
-                "subscription_sessions": subscription.get("sessions", 0),
-            }
-        )
+        row = {
+            "day": day,
+            "label": "today so far"
+            if day == today
+            else "yesterday"
+            if day == windows[-2][0]
+            else datetime.date.fromisoformat(day).strftime("%a"),
+            "billed": None if billed is None else billed.get(day, 0.0),
+            "metered": bedrock.get("dollars", 0.0),
+            "sessions": bedrock.get("sessions", 0),
+            "subscription": subscription.get("dollars", 0.0),
+            "subscription_sessions": subscription.get("sessions", 0),
+        }
+        if by_verb:
+            row["by_verb"] = verb_breakdown(meter, day)
+        rows.append(row)
     week = rows[:-1]
     return {
         "zone": windows[-1][2].astimezone(tz).tzname(),
@@ -1381,9 +1491,15 @@ def local_week(report: dict) -> str:
     )
 
 
-def local_main(as_json: bool, tz=None, now: datetime.datetime | None = None) -> int:
-    """Spend per local day. A failed billed read is a column state, not an
-    exit: the metered side still prints."""
+def local_main(
+    as_json: bool,
+    tz=None,
+    now: datetime.datetime | None = None,
+    by_verb: bool = False,
+) -> int:
+    """Spend per local day, each day's verb breakdown under its line when
+    ``by_verb``. A failed billed read is a column state, not an exit: the
+    metered side still prints."""
     now = now or datetime.datetime.now(datetime.timezone.utc)
     windows = local_windows(now, tz)
     meter = walk(
@@ -1397,12 +1513,15 @@ def local_main(as_json: bool, tz=None, now: datetime.datetime | None = None) -> 
         billed, through = bucket_hours(fetch_hourly(windows[0][1], now), tz)
     except AwsError as exc:
         state = HOURLY_OFF if hourly_off(exc) else f"billed read failed: {exc}"
-    report = local_report(meter, windows, billed, through, state, tz)
+    report = local_report(meter, windows, billed, through, state, tz, by_verb)
     if as_json:
         print(json.dumps(report, indent=2))
         return 0
     lines = [local_heading(report)]
-    lines += [f"  {local_row(row, report['billed'])}" for row in report["days"]]
+    for row in report["days"]:
+        lines.append(f"  {local_row(row, report['billed'])}")
+        if "by_verb" in row:
+            lines.append(f"    {render_verbs(row['by_verb'])}")
     lines.append(f"  {local_week(report)}")
     if meter.unreadable:
         lines.append(f"skipped {meter.unreadable} unreadable transcript(s)")
@@ -1428,9 +1547,14 @@ def main(argv: list[str] | None = None) -> int:
     cmd.add_argument("--json", action="store_true", help="emit the full breakdown")
     cmd = sub.add_parser("local")
     cmd.add_argument("--json", action="store_true", help="emit the full breakdown")
+    cmd.add_argument(
+        "--by",
+        choices=["verb"],
+        help="add one breakdown row per day under its line",
+    )
     args = parser.parse_args(argv)
     if args.command == "local":
-        return local_main(args.json)
+        return local_main(args.json, by_verb=args.by == "verb")
 
     today = datetime.datetime.now(datetime.timezone.utc).date()
     try:

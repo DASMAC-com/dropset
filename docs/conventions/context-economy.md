@@ -259,15 +259,24 @@ itself, and a scheduler session, with no issue, carries it under the
 Planning document's `Session-metrics state` heading. An unresolvable
 session id skips the line and says so. For a Bedrock session:
 
-```text
-**Cost actual**: $72 estimate, 140 turns, peak prefix 310k, 2026-10-15
-```
-
-and for a subscription session:
+<!-- markdownlint-disable MD013 -->
 
 ```text
-**Token profile**: 41M cache-read, 119 turns, peak prefix 319k, 2026-10-14
+**Cost actual**: $72 estimate · 140 turns · cache-hit 96% · 2 cold reloads ($9.10), 2026-10-15
 ```
+
+and for a subscription session, whose cold reloads are counted but not
+priced:
+
+```text
+**Token profile**: 41M cache-read · 119 turns · cache-hit 95% · 1 cold reload, 2026-10-14
+```
+
+<!-- markdownlint-enable MD013 -->
+
+The headline follows the money: cache-hit rate and cold reloads (see
+"The prompt-cache TTL" below), not peak prefix, which is right only
+while the cache is warm and stays in the full report.
 
 **Only Bedrock bands verify in dollars**: deduplicated transcript
 pricing tracks the Bedrock bill, about 8% under it — the classifier's
@@ -335,13 +344,40 @@ all measured 2026-10-14/15 over the Opus 5.5 fleet days 10-08 to 10-13
   session in the base checkout is keyed `plan`, so each Bedrock
   planning cycle is a priced line of the per-issue table.
 - **It runs daily, unprompted.** The `upkeep` pass the `plan` launcher
-  runs calls `reconcile`, and the bootstrap says its day lines out loud,
-  so a rate change or a metering bug is flagged as soon as its day
-  settles (D-2). The same step prints `fleet_cost.py local`, the last
-  seven days and today by the machine's local midnight: billed from Cost
-  Explorer's hourly buckets (it needs the payer account's hourly
-  preference, and says so when it is off), beside the meter. Only the
+  runs leads its cost section with `fleet_cost.py local --by verb`, the
+  last seven days and today by the machine's local midnight: billed from
+  Cost Explorer's hourly buckets (it needs the payer account's hourly
+  preference, and says so when it is off), beside the meter, with
+  yesterday's spend by session verb under its line. Then it calls
+  `reconcile`, one line per UTC day (`10-28: $463 billed, drift +4.5%`),
+  and the bootstrap says those lines out loud, so a rate change or a
+  metering bug is flagged as soon as its day settles (D-2). The day's
+  friction goes to the digest, where the fold acts on it. Only the
   settled reconcile is judged; the local view is for reading.
+
+### The prompt-cache TTL
+
+**Both substrates hold the one-hour cache tier**, measured over 30 days
+of transcripts on 2026-11-23 rather than assumed. Each gap between two
+billed main-loop requests was bucketed, and the next request counted
+cold when it wrote at least half its prefix to the cache:
+
+| gap         | Bedrock pairs | cold | subscription pairs | cold |
+| ----------- | ------------: | ---: | -----------------: | ---: |
+| under 5.5m  |         4,866 |    0 |                362 |    1 |
+| 5.5m to 55m |           157 |    1 |                 20 |    0 |
+| 65m to 3h   |             8 |    8 |                  2 |    2 |
+| over 3h     |            21 |   21 |                  1 |    1 |
+
+The edge is sharp: no gap fell between 55 and 65 minutes, and the two
+stray cold writes inside the hour are context changes, not expiries. A
+five-minute TTL would have made the 5.5m-to-55m row cold; it is not. So
+`session_metrics.py` prices every write at the one-hour rate and sets
+`CACHE_TTL_SECONDS` to an hour: a **cold reload** is a request after a
+gap past it whose cache write is at least half its prefix, counted in
+every session's headline and priced at the write rate. A gap under the
+hour costs nothing in re-writes, so the digest needs no gap histogram.
+Re-measure when a substrate or the harness's cache settings change.
 
 ### The daily digest: the telemetry check-in
 

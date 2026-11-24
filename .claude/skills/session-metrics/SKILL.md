@@ -81,10 +81,15 @@ That is the whole skill.
 - **A scheduler session** has no issue: its close-out rewrite carries
   the line under `Session-metrics state`.
 
-The line is `**Cost actual**: $<usd> estimate, …` on Bedrock and a
-`**Token profile**` on the subscription (`docs/conventions/context-economy.md`
-→ "Cost bands"). An id that resolves to no transcript skips the line
-and says so.
+The line is `**Cost actual**: $<usd> estimate` on Bedrock and a
+`**Token profile**` on the subscription, each followed by the headline
+`N turns · cache-hit Y% · Z cold reloads ($W)` and the day, the
+subscription's cold reloads unpriced
+(`docs/conventions/context-economy.md` → "Cost bands"); the brief leads
+with the same headline. A cold reload is a turn after a gap past the
+one-hour cache TTL that re-wrote at least half its prefix. Peak prefix
+is the full report's. An id that resolves to no transcript skips the
+line and says so.
 
 ## Notes
 
