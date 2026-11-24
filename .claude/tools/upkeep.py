@@ -1673,6 +1673,11 @@ def run(argv: list[str]) -> int:
     p_prune.add_argument(
         "--json", action="store_true", help="print the structured result"
     )
+    p_prune.add_argument(
+        "--no-notifications",
+        action="store_true",
+        help="skip the notifications dismissal (the morning pass already ran it)",
+    )
     args = parser.parse_args(argv[1:])
 
     base, trees, why = check_base(real_run, os.getcwd())
@@ -1717,7 +1722,15 @@ def run(argv: list[str]) -> int:
         )
         ctx.data["trees"] = trees
         wire_terminal(ctx, base)
-        result = run_pass(ctx, PRUNE_STEPS)
+        # The analyst's prune follows the morning pass, which already
+        # dismissed: re-walking every settled PR there cost minutes for a
+        # 0.2s prune, so it opts the step out.
+        steps = tuple(
+            s
+            for s in PRUNE_STEPS
+            if not (args.no_notifications and s == "notifications")
+        )
+        result = run_pass(ctx, steps)
         print(json.dumps(result, indent=2) if args.json else render(result))
         return 0
 

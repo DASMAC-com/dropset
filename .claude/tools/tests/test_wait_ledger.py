@@ -481,6 +481,31 @@ class Digest(unittest.TestCase):
         self.assertIn("no nameable cause", "\n".join(lines))
         self.assertIsNone(twin["causes"][0]["fingerprint"])
 
+    def test_one_session_short_causes_fold_into_a_count_line(self):
+        ledgers = [
+            [
+                wl.DimensionLine(wl.LOCK, 900, 1, {"make-lint": 300, "cargo": 600}),
+                wl.DimensionLine(wl.IDLE, 420, 1, {"ask-a": 120, "ask-b": 300}),
+            ],
+            [wl.DimensionLine(wl.LOCK, 60, 1, {"make-lint": 60})],
+        ]
+        lines, twin = wl.digest_section(ledgers, [], {})
+        text = "\n".join(lines)
+        # Recurring (two sessions) and long (at the threshold) causes stay.
+        self.assertIn("pool lock · make-lint: 0.10h over 2 session(s)", text)
+        self.assertIn("pool lock · cargo: 0.17h over 1 session(s)", text)
+        self.assertNotIn("ask-a", text)
+        self.assertNotIn("ask-b", text)
+        self.assertIn(
+            "- 2 one-session cause(s) under 10m, 0.12h total — see `--wait-full`",
+            lines,
+        )
+        # The twin keeps every cause, folded or not.
+        self.assertEqual(len(twin["causes"]), 4)
+        full, _ = wl.digest_section(ledgers, [], {}, full=True)
+        self.assertIn("ask-a", "\n".join(full))
+        self.assertFalse(any("one-session cause" in line for line in full))
+
     def test_an_empty_day(self):
         lines, _ = wl.digest_section([], [], {}, None)
         self.assertEqual(lines[0], "**Daily**: no waiting measured")

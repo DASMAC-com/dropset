@@ -403,12 +403,16 @@ gate's run. Its stages are the distinct local targets of the CI-mirror
 manifest, `cfg/ci-mirror.json`, which maps each required context to
 the `make` targets its job runs and the local targets that mirror it,
 in manifest order: `make lint` first, then `tools-tests`,
-`decks-build`, `test` and the rest. CI settles a stage only when every
-context that target mirrors is green, and the verdict carries
-`mode=full`. A context with no local mirror (`Frontend`,
-`Detect changes`, `Semantic PR`) is never read by the race; the CI wait
-gates it. A new CI job gets a local mirror by gaining a manifest row,
-never by an edit to the tool.
+`decks-build`, `test` and the rest. A target that mirrors only
+`test.yml` jobs is skipped when no file in the merge-base diff (or the
+uncommitted tree) passes that workflow's `code` filter, the skip CI
+makes; the race prints the skipped targets first and the verdict
+carries `skipped=<targets>`. CI settles a stage only when every context
+that target mirrors is green, and the verdict carries `mode=full`. A
+context with no local mirror (`Frontend`, `Detect changes`,
+`Semantic PR`) is never read by the race; the CI wait gates it. A new CI
+job gets a local mirror by gaining a manifest row, never by an edit to
+the tool.
 
 The trigger tool and the stale-run cancel of section 8 are
 `.claude/tools/ci_runs.py`. `trigger --pr N`
