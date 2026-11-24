@@ -417,6 +417,11 @@ class WaitLedger:
         return counted + [lines[SUBAGENTS]]
 
 
+# A cause seen in one session and shorter than this is folded into the
+# analyst list's count line: trim-context files only a recurring cause.
+SINGLETON_MAX_S = 600
+
+
 def hours(seconds: float) -> str:
     return f"{seconds / 3600:.2f}h"
 
@@ -544,11 +549,16 @@ def digest_section(
     profile: dict[str, dict],
     ci: dict | None = None,
     pairs: list[tuple[str, list[str]]] | None = None,
+    full: bool = False,
 ) -> tuple[list[str], dict]:
     """The digest's ``## Wait`` section and its JSON twin: the daily line,
     then the ranked causes the analyst reads, one fingerprint each.
     ``pairs`` is the day's ``ci_verdicts.pair`` result: local race verdicts
-    paired with the remote checks on the same tree."""
+    paired with the remote checks on the same tree.
+
+    A cause seen in one session only and under :data:`SINGLETON_MAX_S` is
+    folded into one count line, since the analyst never files one; ``full``
+    lists each. The twin always carries every cause."""
     ci_cause = _ci_cause(ci)
     # pairing -> its count and, per failing job, the events naming it.
     paired = {k: {"count": 0, "jobs": {}} for k in (*PAIRINGS, AGREED)}
@@ -619,6 +629,7 @@ def digest_section(
         "",
     ]
     causes = []
+    folded: list[int] = []
     for (dimension, cause), values in sorted(
         per_cause.items(),
         key=lambda kv: (kv[0][0] == SUBAGENTS, -sum(kv[1]), kv[0]),
@@ -639,6 +650,9 @@ def digest_section(
         )
         if dimension == SUBAGENTS:
             continue
+        if not full and len(values) == 1 and values[0] < SINGLETON_MAX_S:
+            folded.append(values[0])
+            continue
         tail = (
             f"`**Fingerprint**: {fingerprint}`"
             if fingerprint
@@ -648,6 +662,12 @@ def digest_section(
             f"- {LABEL[dimension]} · {cause or 'unnamed'}: {hours(sum(values))}"
             f" over {len(values)} session(s), median {_span(int(_median(values)))}"
             f" per session — {tail}"
+        )
+    if folded:
+        out.append(
+            f"- {len(folded)} one-session cause(s) under"
+            f" {_span(SINGLETON_MAX_S)}, {hours(sum(folded))} total"
+            " — see `--wait-full`"
         )
     if not any(c["dimension"] != SUBAGENTS for c in causes):
         out.append("- nothing to rank")

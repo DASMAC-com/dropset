@@ -104,9 +104,11 @@ curator's, on its judgment and the operator's tick.
 skipped (operator ruling, 2026-10-29: Done means prune):
 
 ```sh
-python3 .claude/tools/upkeep.py prune --apply
+python3 .claude/tools/upkeep.py prune --apply --no-notifications
 ```
 
+`--no-notifications` skips the dismissal the pre-launch pass already
+ran (re-walking every settled PR took minutes for a sub-second prune).
 Its names' issues are completed or canceled with no PR open, so
 everything attached goes — the checkout, its `.git/worktrees`
 registration and the local branch — dirty or unpushed work included,

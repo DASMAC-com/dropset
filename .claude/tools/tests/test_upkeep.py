@@ -1821,6 +1821,22 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(upkeep.run(["upkeep.py", "prune"]), 0)
             self.assertEqual(seen, [upkeep.PRUNE_STEPS])
 
+    def test_prune_no_notifications_drops_only_that_step(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / ".claude").mkdir()
+            upkeep.check_base = lambda run, cwd: (base, [], "")
+            seen = []
+            upkeep.run_pass = lambda ctx, only=None: (
+                seen.append(only) or {"ran_at": "t", "armed": False, "steps": []}
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                argv = ["upkeep.py", "prune", "--no-notifications"]
+                self.assertEqual(upkeep.run(argv), 0)
+            expected = tuple(s for s in upkeep.PRUNE_STEPS if s != "notifications")
+            self.assertEqual(seen, [expected])
+            self.assertIn("prune", expected)
+
     def test_if_stale_runs_a_pass_whose_stamp_is_from_another_day(self):
         with tempfile.TemporaryDirectory() as d:
             base = Path(d)

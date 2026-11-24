@@ -51,7 +51,12 @@ the whole fall-through inside one Bash call::
 manifest's distinct local targets (``cfg/ci-mirror.json``, read by
 ``ci_mirror.py``) in manifest order: ``lint`` first, then ``tools-tests``,
 ``decks-build``, ``test`` and the rest, each its own process group as
-above, the E0463 recovery kept for the ``test`` stage. CI settles a stage
+above, the E0463 recovery kept for the ``test`` stage. A target mirroring
+only ``test.yml`` jobs is skipped when no file in the merge-base diff (plus
+the uncommitted tree) passes that workflow's ``code`` path filter, as CI
+skips their steps (:func:`unreached_targets`): the skipped targets are
+printed before the race and the verdict carries ``skipped=<targets>``; a
+git failure skips nothing. CI settles a stage
 only when every context that target mirrors is
 green, and the verdict line carries ``mode=full`` after the SHA. A context
 with no local mirror (``Frontend``, ``Detect changes``, ``Semantic PR``) is
@@ -102,6 +107,7 @@ from typing import Callable
 
 import ci_mirror
 import ci_verdicts
+import review_diff
 import wait_for_checks as wfc
 
 #: The two checks, in local run order, and the make target each runs.
@@ -162,11 +168,12 @@ SKIPPED_BY_TRAILER = "not-consulted(skipped-by-trailer)"
 
 
 def full_plan(
-    rows: list[ci_mirror.Row],
+    rows: list[ci_mirror.Row], skip: frozenset[str] = frozenset()
 ) -> tuple[tuple[tuple[str, list[str]], ...], Buckets]:
-    """``--full``'s stages, one per distinct local target in the manifest,
-    and each stage's CI check: exactly the contexts that target mirrors."""
-    targets = ci_mirror.local_targets(rows)
+    """``--full``'s stages, one per distinct local target in the manifest
+    less ``skip``, and each stage's CI check: exactly the contexts that
+    target mirrors."""
+    targets = [t for t in ci_mirror.local_targets(rows) if t not in skip]
     stages = tuple((t, ["make", t]) for t in targets)
     buckets: Buckets = {}
     for t in targets:
@@ -193,6 +200,7 @@ class Race:
     recovered: str = ""
     order: list[str] = field(default_factory=lambda: [n for n, _ in STAGES])
     mode: str = ""  # "" for the abridged pair, "full" under --full
+    skipped: list[str] = field(default_factory=list)  # targets out of reach
 
 
 def log_path_for(sha: str, stage: str) -> Path:
@@ -342,6 +350,47 @@ def _git(args: list[str]) -> str:
 
 def read_head() -> str:
     return _git(["rev-parse", "HEAD"])
+
+
+def diff_files(base: str = "origin/main") -> list[str] | None:
+    """The paths the local stages would test that differ from ``base``:
+    the merge-base diff to HEAD plus the uncommitted tree, renames split
+    into both sides as the CI path filter sees them. ``None`` when git
+    cannot say, so nothing is skipped."""
+    merge_base = _git(["merge-base", "HEAD", base])
+    if not merge_base:
+        return None
+    files: list[str] = []
+    for args in (
+        ["diff", "--name-only", "--no-renames", merge_base, "HEAD"],
+        ["diff", "--name-only", "--no-renames", "HEAD"],
+        ["ls-files", "--others", "--exclude-standard"],
+    ):
+        done = subprocess.run(
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if done.returncode != 0:
+            return None
+        files += done.stdout.splitlines()
+    return sorted(set(filter(None, files)))
+
+
+def unreached_targets(rows: list[ci_mirror.Row], files: list[str]) -> list[str]:
+    """The local targets CI would skip for ``files``: every row naming one
+    is a ``test.yml`` job, gated on the workflow's ``code`` path filter, and
+    no file passes that filter (``review_diff.touches_ci_code``, which holds
+    the filter's one mirror and its parity test)."""
+    if review_diff.touches_ci_code(files):
+        return []
+    gated = Path(review_diff.TESTS_WORKFLOW).name
+    return [
+        t
+        for t in ci_mirror.local_targets(rows)
+        if all(r.workflow == gated for r in rows if t in r.local)
+    ]
 
 
 def skipped_by_trailer(sha: str) -> bool:
@@ -542,6 +591,7 @@ def render(r: Race, wall: float) -> str:
             f"sha={r.sha[:12]}",
             *([f"mode={r.mode}"] if r.mode else []),
             *(check(name) for name in r.order),
+            *([f"skipped={','.join(r.skipped)}"] if r.skipped else []),
             f"wall={round(wall)}s",
             f"killed={','.join(r.killed) or '-'}",
             *([f"recovered={r.recovered}"] if r.recovered else []),
@@ -580,14 +630,25 @@ def main(argv: list[str] | None = None) -> int:
     if opts.interval < 1 or opts.timeout < 1:
         parser.error("--interval and --timeout must be positive")
 
-    stages, buckets, mode = STAGES, ABRIDGED_BUCKETS, ""
+    stages, buckets, mode, skipped = STAGES, ABRIDGED_BUCKETS, "", []
     if opts.full:
         try:
-            stages, buckets = full_plan(ci_mirror.load())
+            rows = ci_mirror.load()
         except ci_mirror.ManifestError as exc:
             print(f"verify-head: bad CI-mirror manifest: {exc}", file=sys.stderr)
             return 2
+        # The same skip CI's `code` filter makes, so a diff with no reach
+        # into the Rust suites pays no minutes of builds (or a pool race).
+        files = diff_files()
+        if files is not None:
+            skipped = unreached_targets(rows, files)
+        stages, buckets = full_plan(rows, frozenset(skipped))
         mode = "full"
+        if skipped:
+            print(
+                f"verify-head: skipped (no diff reach): {', '.join(skipped)}",
+                flush=True,
+            )
 
     sha = read_head()
     if not sha:
@@ -639,6 +700,7 @@ def main(argv: list[str] | None = None) -> int:
             order=[name for name, _ in stages],
             mode=mode,
         )
+        result.skipped = skipped
     except BaseException:
         # An interrupt or a crash must not leave a stage holding the pool lock.
         # No second signal may cut this short, and a dead leader does not mean

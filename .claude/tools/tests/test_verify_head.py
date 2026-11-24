@@ -480,6 +480,30 @@ class FullModeTest(unittest.TestCase):
         )
         self.assertIn("test-postgres=local:green[", line)
 
+    def test_a_diff_with_no_rust_reach_skips_the_gated_targets(self):
+        rows = ci_mirror.load()
+        tools_only = [".claude/tools/upkeep.py", "cfg/ci-mirror.json", "README.md"]
+        skipped = vh.unreached_targets(rows, tools_only)
+        self.assertEqual(
+            skipped, ["test", "test-no-teardown", "test-parity", "test-postgres"]
+        )
+        stages, buckets = vh.full_plan(rows, frozenset(skipped))
+        self.assertEqual(
+            [n for n, _ in stages], ["lint", "tools-tests", "decks-build", "sdk-test"]
+        )
+        self.assertNotIn("test", buckets)
+        # One Rust file reaches every gated target again.
+        self.assertEqual(
+            vh.unreached_targets(rows, [*tools_only, "sdk/rs/src/lib.rs"]), []
+        )
+        # A target that also mirrors an ungated job always runs.
+        mixed = [*MANIFEST, ci_mirror.Row("SDK", "sdk.yml", (), ("test",))]
+        self.assertNotIn("test", vh.unreached_targets(mixed, tools_only))
+        self.assertEqual(vh.unreached_targets(mixed, tools_only), ["test-postgres"])
+        r = vh.Race(sha=SHA, outcome="GREEN", ci_note="consulted", mode="full")
+        r.order, r.skipped = ["lint"], skipped[:2]
+        self.assertIn(" skipped=test,test-no-teardown wall=", vh.render(r, 1))
+
     def test_the_committed_manifest_loads_into_a_plan(self):
         stages, buckets = vh.full_plan(ci_mirror.load())
         self.assertEqual(stages[0], ("lint", ["make", "lint"]))

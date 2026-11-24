@@ -811,6 +811,7 @@ def wait_section(
     since: str,
     until: str,
     ci: dict | None = None,
+    full: bool = False,
 ) -> tuple[list[str], dict]:
     """The wait section over the window: every session's ledger (already
     windowed by the aggregation), the launch records beside the estimates,
@@ -828,6 +829,7 @@ def wait_section(
         wait_ledger.queue_profile(log_text, since, until),
         ci,
         ci_verdicts.pair(verdicts, since),
+        full,
     )
 
 
@@ -906,6 +908,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="add the CI section (reads GitHub through `gh`)",
     )
+    parser.add_argument(
+        "--wait-full",
+        action="store_true",
+        help="list every wait cause, one-session short ones included",
+    )
     parser.add_argument("--now", help="override the current instant (testing)")
     parser.add_argument(
         "--projects", help="the Claude projects directory (default: the Claude home's)"
@@ -964,7 +971,9 @@ def main(argv: list[str] | None = None) -> int:
             (now - UNTIL_MARGIN).replace(microsecond=0),
             directory / CI_CACHE_NAME,
         )
-    wait_lines, wait_twin = wait_section(base, sessions, since_text, until_text, ci)
+    wait_lines, wait_twin = wait_section(
+        base, sessions, since_text, until_text, ci, args.wait_full
+    )
     text, flags = render(
         date, since_text, sessions, figures, history, calibration, ci, wait_lines
     )
