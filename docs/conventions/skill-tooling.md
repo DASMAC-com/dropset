@@ -350,10 +350,12 @@ would be read by an agent as instruction text.
 
 **Extract sparingly, and only on verbatim repetition.** The
 duplication here is thinner than it looks, which is worth recording so
-the next pass does not over-build. The one block ever extracted — a
+the next pass does not over-build. The first block extracted — a
 model guard shared by `plan` and `architect` — was **retired** once
-the launcher pinned the model and refused an unresolved tier, so no
-block is extracted today; the gate stays as the home for the next one.
+the launcher pinned the model and refused an unresolved tier. The one
+block today, `board-tool-shapes`, is the board tools' full call lines,
+rendered into `plan`, `architect`, `curate` and `ratify-staged`, since
+sessions that met only a tool's name probed its `--help` or guessed.
 Several "runs in the base repo" mentions each say something different
 about why. Extract when the prose is genuinely the same in two or more
 places; otherwise leave it written out.
