@@ -156,6 +156,12 @@ class TheDebounceArms(Harness):
         self.paint(_request("AskUserQuestion"))
         self.assertEqual(self.read(self.state), STATE_REPLY)
         self.assertFalse(self.pending.exists())
+        # The request must leave the sticky-green sentinel alone, so the
+        # selector's companion prompt six seconds on is still suppressed.
+        self.assertTrue(self.askq.exists())
+        self.paint(_permission("pick one"))
+        self.assertEqual(self.read(self.state), STATE_REPLY)
+        self.assertFalse(self.pending.exists())
 
     def test_any_other_paint_cancels_the_arm(self):
         """The classifier approved: the tool ran and its PostToolUse fires."""
