@@ -628,7 +628,8 @@ ask once whether to cycle (`plan` → "Cycling"). Today's
 the state, so it re-lists and carries on.
 
 **The stop.** The scheduler's close-out sends the line "closing
-for the day". On it:
+for the day" (the fleet wind-down's stand-down for the curator,
+`docs/conventions/fleet-winddown.md`). On it:
 
 1. Take **no new batch**; finish a batch that is mid-tick — its
    writes and its message to the scheduler.

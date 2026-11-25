@@ -408,11 +408,15 @@ the document's state sections.
    `chore anthropic`, `explore`, `explore anthropic`, `plan` (the
    scheduler), `plan cycle`, `curate` (the curator), `analyze` (the
    analyst), `architect`
-   (bare number, idempotent), and `fleet`; a substrate word always
+   (bare number, idempotent), and `fleet` (`fleet down` the
+   wind-down); a substrate word always
    precedes the number (`architect bedrock <n>`); `housekeeping` is
    retired, its upkeep run by the `plan` pre-launch. Audit issues
    dispatch as
    `explore`.
+1. **A wind-down pauses the fleet**: nothing new starts, In Review
+   finishes only while its path to merge is linear, and every
+   session parks (`docs/conventions/fleet-winddown.md`).
 1. **Announce a fleet-wide toolchain change** (a global anchor or
    solana install) to every program-building session by message
    before it happens: an unannounced one once broke `check-solana`

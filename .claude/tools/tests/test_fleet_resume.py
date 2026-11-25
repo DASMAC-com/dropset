@@ -414,6 +414,38 @@ class MarkAttention(unittest.TestCase):
             self.assertFalse(fr.mark_attention("/dev/ttys009"))
 
 
+class BranchPrs(unittest.TestCase):
+    def test_one_call_aliases_every_digit_tag(self):
+        sent = []
+        repo = {"b1": {"nodes": [{"number": 3, "state": "OPEN"}]}, "b2": None}
+
+        def gh(args):
+            sent.append(args)
+            return 0, json.dumps({"data": {"repository": repo}}), ""
+
+        got = fr.branch_prs(["1", "2", "x; rm"], gh)
+        self.assertEqual(len(sent), 1)
+        query = sent[0][-1]
+        self.assertIn('headRefName: "eng-1"', query)
+        self.assertNotIn("rm", query)
+        self.assertEqual(got, {"1": [{"number": 3, "state": "OPEN"}], "2": []})
+
+    def test_a_failed_call_raises(self):
+        with self.assertRaises(fr.FleetResumeError):
+            fr.branch_prs(["1"], lambda _a: (1, "", "HTTP 502"))
+
+    def test_merged_only(self):
+        self.assertTrue(fr.merged_only([{"state": "MERGED"}]))
+        self.assertFalse(fr.merged_only([{"state": "MERGED"}, {"state": "OPEN"}]))
+        self.assertFalse(fr.merged_only([]))
+
+    def test_a_failed_read_annotates_nothing_and_says_why(self):
+        entries = [{"tag": "1", "state": "In Review"}]
+        why = fr.annotate_merged(entries, lambda _a: (1, "", "down"))
+        self.assertIn("not annotated", why)
+        self.assertNotIn("note", entries[0])
+
+
 class Cli(unittest.TestCase):
     def setUp(self):
         self._env = mock.patch.dict(
@@ -437,6 +469,26 @@ class Cli(unittest.TestCase):
             patcher = mock.patch.object(fr.session_dispatch, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        # No case reaches the real GitHub: the roll-call's PR read fails soft.
+        self.gh = mock.MagicMock(return_value=(1, "", "test: no gh"))
+        patcher = mock.patch.object(fr, "_gh", self.gh)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_merged_in_review_session_is_resumed_and_annotated(self):
+        merged = {"b889": {"nodes": [{"number": 7, "state": "MERGED"}]}}
+        self.gh.return_value = (0, json.dumps({"data": {"repository": merged}}), "")
+        issue = _issue("ENG-889")
+        issue["state"] = {"name": "In Review", "type": "started"}
+        with (
+            mock.patch.object(fr, "_post", return_value=_page([issue])),
+            mock.patch.object(fr, "live_tags", return_value=set()),
+        ):
+            code, out, err = self._run()
+        self.assertEqual(code, 0)
+        entry = json.loads(out)["resume"][0]
+        self.assertEqual(entry["note"], fr.MERGED_NOTE)
+        self.assertIn(f"889: {fr.MERGED_NOTE}", err)
 
     def _run(self, *argv):
         out, err = io.StringIO(), io.StringIO()

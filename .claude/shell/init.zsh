@@ -2897,6 +2897,10 @@ architect() {
 # Each tab it opens types `task resume <n>`, which reads that session's own
 # substrate marker — so a mixed fleet of Bedrock and subscription sessions comes back
 # on the right provider per session, with no substrate knowledge here.
+#
+# `fleet down` is the evening's counterpart: the wind-down listing (In Review
+# finishes, the rest pauses) and the two message texts the scheduler sends.
+# Read-only; see docs/conventions/fleet-winddown.md.
 fleet() {
   _ds_base || return 1
   _ds_secrets
@@ -2907,11 +2911,14 @@ fleet() {
     python3 "$_DS_REPO/.claude/tools/fleet_resume.py" --apply
   elif [[ "$1" == "go" && "$2" == "--over-budget" && -z "$3" ]]; then
     python3 "$_DS_REPO/.claude/tools/fleet_resume.py" --apply --over-budget
+  elif [[ "$1" == "down" && -z "$2" ]]; then
+    python3 "$_DS_REPO/.claude/tools/fleet_winddown.py"
   elif [[ -z "$1" ]]; then
     python3 "$_DS_REPO/.claude/tools/fleet_resume.py"
   else
-    print -u2 'Usage: fleet [go [--over-budget]]   (no argument = show the plan;' \
-      '`go` = open the tabs; `--over-budget` = past the machine gate)'
+    print -u2 'Usage: fleet [go [--over-budget] | down]   (no argument = show' \
+      'the plan; `go` = open the tabs; `--over-budget` = past the machine' \
+      'gate; `down` = the wind-down listing and messages, read-only)'
     return 1
   fi
 }

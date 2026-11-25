@@ -1417,12 +1417,18 @@ migrations or generation inputs, and whether it spans crates.
    line, then **ends this client** (SIGTERM, last of all, after the
    result prints) so the fleet slot frees; `--no-exit` keeps the tab
    for a human-driven park. It refuses — naming what is missing — on a
-   dirty or unpushed tree, no open PR, no brief naming this PR, or a
+   dirty or unpushed tree, no brief naming the open PR, or a
    worktree lock that does not name this session's `claude` client; a
    failed cost-line append exits 1 and leaves the client running, since
-   a killed client never reads the result. A fresh session
+   a killed client never reads the result. Its tab is marked green and
+   moved leftmost before the kill. A fresh session
    resumes from the brief alone at step 2, re-running no lens unless
    the rebase overlaps.
+
+   **A fleet wind-down message** replaces the queue watch with the
+   linear-path rule: finish only while the path to merge needs no
+   local work, else stand down at once by this park
+   (`docs/conventions/fleet-winddown.md`).
 
    **Nothing is enqueued unsigned**: step 17 signed before its
    trigger, so CI verified the commits that merge. When it held on

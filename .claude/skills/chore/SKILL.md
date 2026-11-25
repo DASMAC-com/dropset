@@ -92,15 +92,25 @@ sessions: temporary worktree, no PR".
       (Recommended)"** first, **"Leave In Review"** second. Ask only
       when every checklist item is done and nothing is left open; an
       open follow-up or an unticked item skips the ask and leaves In
-      Review, naming why. On the yes, the Done write is the session's
-      **last** tool call:
+      Review, naming why. On the yes, write Done:
 
       ```sh
       python3 .claude/tools/board_batch.py state --id ENG-<n> \
         --state Done
       ```
 
+   1. **Signal the tab**, either way, as the session's **last** tool
+      call: it marks this tab green and moves it leftmost, so the
+      operator sees a finished chore waiting only on its close
+      (best-effort; it always exits 0):
+
+      ```sh
+      python3 .claude/tools/iterm_api.py --signal-parked
+      ```
+
    Done stays the operator's word — the ask is the mechanism, never a
    self-marked Done. A no leaves In Review, for `post-merge`'s chore
    branch later. There is no worktree to keep or remove, so `close_session.py`
-   (which refuses the base checkout) is not the close.
+   (which refuses the base checkout) is not the close. A fleet
+   wind-down message is a pause: append the next step as a resume
+   brief, then this tab signal (`docs/conventions/fleet-winddown.md`).

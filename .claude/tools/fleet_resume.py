@@ -65,6 +65,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -108,8 +109,93 @@ query InFlight($filter: IssueFilter, $first: Int!, $after: String) {
 """
 
 
+REPO_OWNER, REPO_NAME = "DASMAC-com", "dropset"
+
+# The roll-call note on an In Review issue whose PR has merged: it is reopened
+# like any other, and will ask for its state transition in its own tab.
+MERGED_NOTE = "PR merged, tail outstanding"
+
+# One branch's PRs, newest first. Aliased per tag so a whole fleet is one call.
+_BRANCH_PRS_FIELD = (
+    'b{tag}: pullRequests(headRefName: "eng-{tag}", first: 5, '
+    "orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ number state "
+    "mergeable mergeStateStatus mergeQueueEntry {{ state position }} }} }}"
+)
+
+
 class FleetResumeError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
+
+
+def _gh(args: list[str]) -> tuple[int, str, str]:
+    """``(rc, stdout, stderr)`` from one ``gh`` call; a timeout is an rc."""
+    try:
+        proc = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, timeout=60, check=False
+        )
+    except subprocess.TimeoutExpired:
+        return 124, "", "gh timed out after 60s"
+    except OSError as exc:
+        return 127, "", str(exc)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def branch_prs(tags: list[str], gh=None) -> dict[str, list[dict]]:
+    """Each tag's ``eng-<tag>`` PRs, newest first, in ONE GraphQL call.
+
+    Each node carries ``number``, ``state``, ``mergeable``,
+    ``mergeStateStatus`` and ``mergeQueueEntry``. A tag that is not a digit
+    run is dropped, never interpolated. Raises :class:`FleetResumeError` on a
+    failed or unreadable call; callers treat that as best-effort.
+    """
+    tags = [t for t in tags if t.isdigit()]
+    if not tags:
+        return {}
+    fields = " ".join(_BRANCH_PRS_FIELD.format(tag=t) for t in tags)
+    query = (
+        "query($owner: String!, $name: String!) { repository(owner: $owner, "
+        f"name: $name) {{ {fields} }} }}"
+    )
+    rc, out, err = (gh or _gh)(
+        [
+            "api", "graphql", "-f", f"owner={REPO_OWNER}",
+            "-f", f"name={REPO_NAME}", "-f", f"query={query}",
+        ]
+    )  # fmt: skip
+    if rc != 0:
+        line = (err.strip().splitlines() or ["no detail"])[0]
+        raise FleetResumeError(f"could not read the fleet's PRs: {line}")
+    try:
+        repo = json.loads(out)["data"]["repository"]
+        return {t: list((repo.get(f"b{t}") or {}).get("nodes") or []) for t in tags}
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
+        raise FleetResumeError(f"unreadable PR read: {exc}") from exc
+
+
+def merged_only(prs: list[dict]) -> bool:
+    """Whether a branch's PRs show a merge and nothing still open."""
+    states = {p.get("state") for p in prs}
+    return "MERGED" in states and "OPEN" not in states
+
+
+def annotate_merged(entries: list[dict], gh=None) -> str | None:
+    """Mark each In Review entry whose PR has merged with ``MERGED_NOTE``.
+
+    One PR read over the In Review entries only. Best-effort: a failed read
+    leaves every entry unannotated and returns the reason, never raises —
+    the resume itself does not depend on it.
+    """
+    review = [e for e in entries if e.get("state") == "In Review" and e.get("tag")]
+    if not review:
+        return None
+    try:
+        prs = branch_prs([e["tag"] for e in review], gh)
+    except FleetResumeError as exc:
+        return f"roll-call not annotated: {exc}"
+    for entry in review:
+        if merged_only(prs.get(entry["tag"], [])):
+            entry["note"] = MERGED_NOTE
+    return None
 
 
 def _env(name: str) -> str:
@@ -386,6 +472,16 @@ def run(argv: list[str]) -> int:
         gated = admit(result, directory, args.over_budget)
     else:
         result["held"] = []
+    # The roll-call: a merged In Review session is reopened like any other,
+    # and says so, since it will ask for its state transition.
+    unannotated = annotate_merged(result["resume"] + result["held"])
+    if unannotated:
+        gated.append(unannotated)
+    gated += [
+        f"{e['tag']}: {e['note']}"
+        for e in result["resume"] + result["held"]
+        if e.get("note")
+    ]
     if args.apply and result["resume"]:
         tags = [entry["tag"] for entry in result["resume"]]
         try:

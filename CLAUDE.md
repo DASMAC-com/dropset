@@ -71,7 +71,11 @@ start-of-day bootstrap writes to the "Planning" Linear document
 (`LINEAR_PLANNING_DOC_ID`), owns the live day, and writes every later
 decision back there. The `plan` skill is its method; the document is
 the state. Detail — the env var, and where blocking edges are
-placed: `docs/conventions/linear-automation.md`.
+placed: `docs/conventions/linear-automation.md`. At close-out it
+**winds the fleet down** (`fleet down`): In Review finishes only while
+its path to merge is linear, the rest pauses, every session parks,
+and `fleet go` reopens them tomorrow:
+`docs/conventions/fleet-winddown.md`.
 
 ### The architect session — the CEO hat
 

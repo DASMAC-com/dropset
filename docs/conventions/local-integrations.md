@@ -911,6 +911,9 @@ hooks, so a glance at the tab strip tells you which session needs you.
   permission prompt, or it is about to edit a file. Go approve.
 - **No tint** — working, or you acknowledged it with the attend
   shortcut.
+- **Green at the left edge** — a parked session (a park, or a
+  finished chore): it waits on exactly one operator action, its
+  close (`docs/conventions/fleet-winddown.md`).
 
 `AskUserQuestion` (a tool, so green) and a permission prompt (a
 harness-native dialog, so yellow) are *different mechanisms*, which is
