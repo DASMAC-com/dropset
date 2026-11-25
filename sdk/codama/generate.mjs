@@ -462,7 +462,14 @@ function withTryBuilders(file, client) {
   const builder = out.slice(...builderSpan);
   // Its body is copied, so it keeps the `#[allow(..)]` lints the
   // renderer put on the original (`clone_on_copy` on the args).
+  // Only that one is expected: a broader allow from a later renderer must
+  // fail here, loudly, rather than be inherited silently.
   const attrs = out.slice(0, builderSpan[0]).match(/(?:#\[allow\([^)]*\)\]\s*)*$/)[0].trim();
+  const copied = attrs.match(/#\[allow\([^)]*\)\]/g) ?? [];
+  const unexpected = copied.filter((attr) => attr !== '#[allow(clippy::clone_on_copy)]');
+  if (unexpected.length) {
+    throw new Error(`${file}: unexpected lint allow to copy onto try_instruction: ${unexpected.join(' ')}`);
+  }
   const builderTwin = tryTwin(builder, 'instruction').replace(
     'pub fn try_instruction(',
     `${attrs ? `${attrs}\n    ` : ''}pub fn try_instruction(`,
