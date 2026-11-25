@@ -57,7 +57,7 @@ The rebase and the second review are tomorrow's, in one pass: a
 rebase at wind-down buys a second review, unsupervised after the
 operator has left. A finisher mid-queue when the message arrives
 waits, since that path is linear, and a dequeue during the wait is a
-stand-down. A finisher that merges runs its post-merge tail up to the
+stand-down. A finisher that merges runs `post-merge` up to the
 Done question, leaves the issue In Review and stands down; tomorrow's
 `fleet go` reopens it to ask. Normal-hours behavior (`review-pr`'s
 queue watch) is unchanged.

@@ -71,7 +71,7 @@ FINISH_MESSAGE = (
     "at once: a rebase (base moved, mergeable CONFLICTING or DIRTY), CI red "
     "on the PR's own checks, a dequeue of any kind or any re-enqueue, a lens "
     "finding that reopens the review. That rebase and second review are "
-    "tomorrow's, in one pass. Once merged, run the post-merge tail up to its "
+    "tomorrow's, in one pass. Once merged, run `post-merge` up to its "
     "Done question, leave the issue In Review, and stand down. " + STAND_DOWN
 )
 
