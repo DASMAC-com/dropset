@@ -520,7 +520,9 @@ class SelfMatchTest(unittest.TestCase):
         return inspect.getsource(rt).split("\n")
 
     def test_review_tier_source_tags_nothing_when_added(self):
-        self.assertEqual(self.hits_for(diff(self.PATH, self.lines(), new_file=True)), [])
+        self.assertEqual(
+            self.hits_for(diff(self.PATH, self.lines(), new_file=True)), []
+        )
 
     def test_review_tier_source_tags_nothing_when_rewritten(self):
         # One hunk removing and re-adding every line exercises the
