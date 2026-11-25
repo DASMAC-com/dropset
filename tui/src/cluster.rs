@@ -398,7 +398,9 @@ static SESSION_RPC_URL: OnceLock<String> = OnceLock::new();
 
 /// Register `rpc_url` as the endpoint [`redact`] strips. The first call wins:
 /// a session has one endpoint.
-pub fn register_rpc_url(rpc_url: &str) {
+fn register_rpc_url(rpc_url: &str) {
+    // A second set is ignored on purpose: the first registration is the
+    // session's endpoint.
     let _ = SESSION_RPC_URL.set(rpc_url.to_string());
 }
 
@@ -425,16 +427,23 @@ pub fn redact(text: &str) -> String {
 /// [`host_of`] is the endpoint's host is rewritten to `scheme://host`, then
 /// any remaining copy of the endpoint's secret-bearing parts — userinfo,
 /// path, query, fragment — is replaced outright.
-pub fn redact_with(text: &str, rpc_url: &str) -> String {
+fn redact_with(text: &str, rpc_url: &str) -> String {
     let Some(host) = host_of(rpc_url) else {
         return text.to_string();
     };
-    let secrets = secret_parts(rpc_url);
-    if secrets.is_empty() {
+    // A bare `scheme://host[:port][/]` carries nothing to strip (the localnet
+    // validator, the public endpoint). Anything more — userinfo of any length
+    // included — takes both passes.
+    let after_scheme = rpc_url.split_once("://").map_or(rpc_url, |(_, rest)| rest);
+    let bare = !after_scheme.contains('@')
+        && after_scheme
+            .find(['/', '?', '#'])
+            .is_none_or(|i| &after_scheme[i..] == "/");
+    if bare {
         return text.to_string();
     }
     let mut out = rewrite_urls(text, &host);
-    for secret in secrets {
+    for secret in secret_parts(rpc_url) {
         out = out.replace(&secret, "…");
     }
     out
@@ -841,6 +850,13 @@ mod tests {
             let redacted = redact_with(&format!("url ({url}) failed"), &url);
             assert_eq!(redacted, format!("url ({host_only}) failed"));
         }
+        // A short password has no part long enough to strip by value, but its
+        // URL is still cut to the host.
+        let short = "https://u:pw12345@rpc.example.com";
+        assert_eq!(
+            redact_with(&format!("({short})"), short),
+            "(https://rpc.example.com/…)"
+        );
     }
 
     #[test]

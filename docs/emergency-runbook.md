@@ -153,9 +153,9 @@ planned stop, not an emergency one: kill only, never close or drain.
 1. **Wait for the switch to complete.** Poll the new RPC method until it
    returns a certificate rather than `null`. A `-32601 Method not found`
    means the node predates Agave 4.3, not that the switch is pending; use
-   another endpoint. Poll the keyless public endpoint: the exported
-   variable is a 1Password reference, not a URL, and the keyed URL is
-   never typed.
+   another keyless endpoint. Poll a keyless public endpoint only: the
+   exported variable is a 1Password reference, not a URL, and the keyed
+   URL is never typed.
 
    ```sh
    curl -s https://api.mainnet-beta.solana.com \

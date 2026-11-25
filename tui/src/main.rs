@@ -300,7 +300,8 @@ fn print_help() {
          never the URL: the binary reads it with `op read`, then `op signout`\n    \
          ({} names the account). A literal URL is refused, except a loopback\n    \
          one for the rehearsal and the public endpoint for a watch-only\n    \
-         session; there is deliberately no default. Entry verifies the genesis hash and requires a typed confirmation, and\n    \
+         session; there is deliberately no default.\n    \
+         Entry verifies the genesis hash and requires a typed confirmation, and\n    \
          every ceremony step shows its plan under its own typed confirmation.\n    \
          --rehearsal-loopback instead admits only a 127.0.0.1 or localhost\n    \
          endpoint whose genesis is NOT mainnet-beta, and needs its own\n    \

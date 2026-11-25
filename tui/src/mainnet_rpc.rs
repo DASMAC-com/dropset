@@ -28,6 +28,7 @@ use crate::cluster::{is_rehearsal_loopback, MAINNET_RPC_ENV};
 use anyhow::{anyhow, bail, Result};
 use std::io::{self, Read};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -131,8 +132,9 @@ pub fn resolve(
     bail!(
         "{MAINNET_RPC_ENV} holds a literal value, refused without printing it: a mainnet \
          endpoint is never typed. Set the variable to a 1Password reference \
-         (op://<vault>/<item>/<field>) — see {RPC_DOC}. Only a loopback URL, for the \
-         rehearsal, is admitted as a literal."
+         (op://<vault>/<item>/<field>) — see {RPC_DOC}. The only literals admitted are a \
+         loopback URL, for the rehearsal, and the exact public endpoint in a watch-only \
+         session."
     )
 }
 
@@ -212,26 +214,39 @@ pub fn run_op(args: &[&str]) -> io::Result<OpOutput> {
         .spawn()?;
     let mut stdout = child.stdout.take().expect("stdout is piped");
     // Drained on its own thread so a large write cannot block `op` on a full
-    // pipe while this thread waits for it to exit.
-    let reader = thread::spawn(move || {
+    // pipe while this thread waits for it to exit. The result comes back over
+    // a channel so the deadline bounds the read too: a descendant of `op`
+    // (its background daemon) can inherit the pipe and hold it open after
+    // `op` itself exits, and an unbounded join would hang the launch.
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
         let mut buf = Vec::new();
-        stdout.read_to_end(&mut buf).map(|_| buf)
+        let _ = tx.send(stdout.read_to_end(&mut buf).map(|_| buf));
     });
     let deadline = Instant::now() + OP_TIMEOUT;
+    let timed_out = || io::Error::new(io::ErrorKind::TimedOut, "op timed out");
     let status = loop {
-        if let Some(status) = child.try_wait()? {
+        let waited = child.try_wait();
+        if let Ok(Some(status)) = waited {
             break status;
         }
-        if Instant::now() >= deadline {
+        if waited.is_err() || Instant::now() >= deadline {
+            // Best effort: the child is being abandoned either way, and the
+            // error returned below is the one that matters.
             let _ = child.kill();
             let _ = child.wait();
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "op timed out"));
+            return Err(waited.err().unwrap_or_else(timed_out));
         }
         thread::sleep(Duration::from_millis(50));
     };
-    let stdout = reader
-        .join()
-        .map_err(|_| io::Error::other("the op stdout reader panicked"))??;
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    let stdout = match rx.recv_timeout(remaining) {
+        Ok(read) => read?,
+        Err(mpsc::RecvTimeoutError::Timeout) => return Err(timed_out()),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            return Err(io::Error::other("the op stdout reader panicked"))
+        }
+    };
     Ok(OpOutput {
         success: status.success(),
         stdout,

@@ -525,9 +525,10 @@ endef
 # DROPSET_MAINNET_RPC_URL holds a 1Password reference (op://<vault>/<item>/
 # <field>), exported once in the profile — never the URL, which carries the
 # provider's key. The binary reads it itself with `op read`, then `op
-# signout`, and refuses a literal URL without echoing it (a loopback one for
-# the rehearsal excepted); DROPSET_OP_ACCOUNT, from the collectors' enclave
-# file below, is passed through when set so `op` knows which account to read.
+# signout`, and refuses a literal URL without echoing it (excepted: a loopback
+# one for the rehearsal, and the public endpoint for a watch-only session —
+# see `mainnet-demo`); DROPSET_OP_ACCOUNT, from the collectors' enclave file
+# below, is passed through when set so `op` knows which account to read.
 # See docs/conventions/local-integrations.md, "The cockpit's mainnet RPC URL".
 # The variable has no default on purpose: a wrong-but-present endpoint fails
 # silently, while an absent one fails here with a message. The binary then
@@ -565,14 +566,14 @@ define refuse-agent-shell
 	exit 1; \
 fi
 endef
-# The account assignment, empty when no account is named.
-TUI_OP_ACCOUNT = $(if $(DROPSET_OP_ACCOUNT), \
+# The account's environment assignment, empty when no account is named.
+TUI_OP_ACCOUNT_ENV = $(if $(DROPSET_OP_ACCOUNT), \
 	DROPSET_OP_ACCOUNT='$(DROPSET_OP_ACCOUNT)')
 .PHONY: tui-mainnet
 tui-mainnet:
 	$(refuse-agent-shell)
 	$(call require-env,DROPSET_MAINNET_RPC_URL,$(MAINNET_RPC_HINT))
-	$(TUI_OP_ACCOUNT) DROPSET_TUI_DATABASE_URL='$(TUI_DATABASE_URL)' \
+	$(TUI_OP_ACCOUNT_ENV) DROPSET_TUI_DATABASE_URL='$(TUI_DATABASE_URL)' \
 		cargo run -p dropset-tui -- --cluster mainnet --keys-file '$(TUI_KEYS_FILE)' \
 		$(TUI_MAINNET_ARGS)
 
