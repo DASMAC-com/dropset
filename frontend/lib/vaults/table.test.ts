@@ -16,6 +16,7 @@ import {
   groupSortValue,
   matchesQuery,
   type PositionValue,
+  type VaultsTableState,
   vaultSortValue,
 } from "./table";
 
@@ -81,9 +82,7 @@ const entry = (v: Vault): GroupedVault => {
   return hit;
 };
 
-const arrange = (
-  state: Partial<Parameters<typeof arrangeVaultsTable>[1]> = {},
-) =>
+const arrange = (state: Partial<VaultsTableState> = {}) =>
   arrangeVaultsTable(groups, {
     query: "",
     pin: NO_PIN,
@@ -122,9 +121,16 @@ describe("the sort values", () => {
   it("sums a pair's positions and ranks it by its first label", () => {
     const gbp = group("GBP / USD");
     expect(groupSortValue(gbp, "position", position)).toBe(7);
-    expect(groupSortValue(gbp, "name", position)).toBe("Alpha");
     expect(groupSortValue(gbp, "pair", position)).toBe("GBP / USD");
     expect(groupSortValue(gbp, "tvl", position)).toBe(400);
+  });
+
+  it("ranks a pair by its alphabetically first label, not its first vault", () => {
+    const [reversed] = groupVaultMarkets([
+      resolveVaultMarket(GBP_MARKET, "TGBP", "USDC", [second, alpha]),
+    ]);
+    if (!reversed) throw new Error("fixture group missing");
+    expect(groupSortValue(reversed, "name", noPosition)).toBe("Alpha");
   });
 });
 

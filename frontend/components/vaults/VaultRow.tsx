@@ -182,8 +182,8 @@ export function VaultRow({
               ahead of the leader-set name, which can't then pass for another
               vault's number (the pin keys on the leader). The hover
               keeps the full address; its copy and explorer links live in
-              the dialog. Clicking the number or name pins like the
-              crosshair; the crosshair stays the one keyboard stop. */}
+              the dialog. Clicking the number or name toggles the pin like
+              the crosshair; the crosshair stays the one keyboard stop. */}
           <button
             type="button"
             tabIndex={-1}

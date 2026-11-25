@@ -1,9 +1,4 @@
 import {
-  compareSortValues,
-  type SortDir,
-  type SortState,
-} from "@/components/ui/SortableHeader";
-import {
   cmpPairCode,
   type FxPairGroup,
   type GroupedVault,
@@ -16,6 +11,7 @@ import {
   vaultNumberLabel,
   vaultPinMatches,
 } from "@/lib/data/vaults";
+import { compareSortValues, type SortDir, type SortState } from "@/lib/ui/sort";
 
 // The Vaults table's view-model: which rows show, and in what order. Pure, so
 // the view only feeds it state; the connected wallet's position value arrives
@@ -111,18 +107,21 @@ export const groupSortValue = (
   return groupMetric(g, key);
 };
 
-// The table's rows for its current state: the search query (raw, as typed),
-// the URL pin and the column sort. With no column sort chosen, the pairs read
-// alphabetically by base currency code (cmpPairCode) and each pair's vaults
-// by TVL, largest first.
+// The view state the table's rows follow: the search query (raw, as typed),
+// the URL pin, the column sort and the wallet's position values.
+export type VaultsTableState = {
+  query: string;
+  pin: VaultPin;
+  sort: SortState<MetricKey>;
+  positionValue: PositionValue;
+};
+
+// The table's rows for its current state. With no column sort chosen, the
+// pairs read alphabetically by base currency code (cmpPairCode) and each
+// pair's vaults by TVL, largest first.
 export function arrangeVaultsTable(
   groups: FxPairGroup[],
-  state: {
-    query: string;
-    pin: VaultPin;
-    sort: SortState<MetricKey>;
-    positionValue: PositionValue;
-  },
+  state: VaultsTableState,
 ): ArrangedSection {
   const { pin, sort, positionValue } = state;
   const q = state.query.trim().toLowerCase();
