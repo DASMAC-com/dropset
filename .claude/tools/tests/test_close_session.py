@@ -5,6 +5,7 @@ Run via the repo's ``make tools-tests`` (discovery adds ``.claude/tools`` as
 the top-level dir so the bare ``import close_session`` below resolves).
 """
 
+import io
 import json
 import os
 import shutil
@@ -949,6 +950,27 @@ class EndClientTests(unittest.TestCase):
         names = [c[0] for c in order.mock_calls]
         self.assertLess(names.index("out.flush"), names.index("signal"))
         self.assertLess(names.index("signal"), names.index("end"))
+
+    def test_a_raising_signal_is_named_and_still_reaches_the_kill(self):
+        # The integrity hit's justification: the broad catch exists so the
+        # kill that frees the fleet slot always follows.
+        end = mock.MagicMock(return_value=True)
+        err = io.StringIO()
+        result = {"dry_run": False, "client_pid": 4242, "park": True}
+        boom = mock.MagicMock(side_effect=RuntimeError("iterm exploded"))
+        with (
+            mock.patch.object(close_session, "close", return_value=(0, result)),
+            mock.patch.object(close_session, "parse_args"),
+            mock.patch.object(close_session, "end_client", end),
+            mock.patch.object(close_session, "still_ours", return_value=True),
+            mock.patch.object(close_session.iterm_api, "signal_parked", boom),
+            mock.patch.object(close_session.sys, "stdout", io.StringIO()),
+            mock.patch.object(close_session.sys, "stderr", err),
+        ):
+            self.assertEqual(close_session.main(), 0)
+        boom.assert_called_once()
+        end.assert_called_once_with(4242)
+        self.assertIn("tab signal failed: RuntimeError: iterm exploded", err.getvalue())
 
     def test_main_signals_no_tab_off_a_park_or_on_a_dry_run(self):
         for result in (

@@ -870,11 +870,16 @@ def main() -> int:
 def signal_tab(signal_parked: Callable[[], list[str]] | None = None) -> None:
     """Mark the parked session's own tab green and move it leftmost, so a
     park reads at a glance. Best-effort and silent: no iTerm, the integration
-    disabled, or a refused call never blocks the park."""
+    disabled, or a refused call never blocks the park. Those expected
+    failures come back from ``iterm_api`` as data; anything raised here is a
+    bug, so it is named on stderr — and the kill still follows."""
     try:
         (signal_parked or iterm_api.signal_parked)()
-    except Exception:  # noqa: BLE001 — the tab signal is a convenience
-        pass
+    except Exception as e:  # noqa: BLE001 — the kill that frees the slot must follow
+        try:
+            sys.stderr.write(f"tab signal failed: {type(e).__name__}: {e}\n")
+        except BrokenPipeError:
+            pass
 
 
 def _warn(text: str) -> int:
