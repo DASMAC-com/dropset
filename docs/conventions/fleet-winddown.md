@@ -82,15 +82,16 @@ the same way:
 1. Run `close_session.py --park --session-id <id>` as the last tool
    call.
 
-Park writes no state, keeps the worktree and branch, appends the cost line and
-dismisses no PR thread. It refuses on a dirty or unpushed tree, a missing resume
-brief, a brief that does not name the open PR when there is one, or a worktree
-lock this session does not hold. A pauser with no PR parks on the brief alone,
-which must then be the issue body's last paragraph (there is no PR number to tie
-it to). Its last acts mark the tab green, move it to the leftmost position in
-its window (best-effort, silent on failure) and end the client, so the operator
-sees one green tab at the left edge per parked session and closes it. No tool
-closes a tab.
+Park writes no state, keeps the worktree and branch, appends the cost line, then
+marks the open PR's notification threads done with the subscription kept
+(best-effort, a failure is a note), so a parked PR leaves none showing. It
+refuses on a dirty or unpushed tree, a missing resume brief, a brief that does
+not name the open PR when there is one, or a worktree lock this session does not
+hold. A pauser with no PR parks on the brief alone, which must then be the issue
+body's last paragraph (there is no PR number to tie it to). Its last acts mark
+the tab green, move it to the leftmost position in its window (best-effort,
+silent on failure) and end the client, so the operator sees one green tab at the
+left edge per parked session and closes it. No tool closes a tab.
 
 The base-checkout sessions the wind-down reaches cannot park
 (`close_session.py` refuses the base checkout):

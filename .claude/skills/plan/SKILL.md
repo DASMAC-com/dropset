@@ -504,7 +504,7 @@ offer it** (wrap-up signaled, or a lull after significant decisions — offer it
 unasked) **or `cycle` runs it.** It holds the gate, stopping the curator first,
 the fleet wind-down, the section-patched rewrite to the shape above with its
 round-trip composition rules, the audit-state table and upkeep report carried
-forward, and the settled-PR notification dismissal.
+forward, and the every-PR notification sweep.
 
 **7. Run `/session-metrics` at close-out**, the shared tail,
 before the final document write — its id and cost line are in

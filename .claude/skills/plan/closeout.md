@@ -21,8 +21,8 @@ answer. None live: report `curator: not live`.
 **Then wind the fleet down** (`docs/conventions/fleet-winddown.md`):
 run `fleet down`, send each open-tab session its message, and count
 the stand-down replies (re-running the listing on each) until every
-session messaged has stood down or gone unreachable; dismiss the
-settled PRs' notifications (below), then print the day report and
+session messaged has stood down or gone unreachable; dismiss every
+PR's notifications (below), then print the day report and
 append it under `Session-metrics state`; then the close-out proper.
 
 **A `cycle` skips this gate, the curator stop and the wind-down** — the day goes
@@ -78,19 +78,20 @@ verbatim** — its heading through its `End of upkeep report.`
 line: the tool splices only between the two and refuses a
 section whose end line is gone.
 
-## Dismiss the settled PRs' notifications
+## Dismiss every PR's notifications
 
-One bare call, so the day's merges leave no inbox behind them:
+One bare call, the shutdown sweep, so the day leaves no PR thread
+showing, an open PR's included:
 
 ```sh
-python3 .claude/tools/pr_notifications.py dismiss --settled --apply
+python3 .claude/tools/pr_notifications.py dismiss --all --apply
 ```
 
-It selects every thread whose PR is merged or closed, whatever
-its issue's state, never an open PR's, marks each done with one
-call (the merge tail already unsubscribed each merged one), and
-prints counts, not threads; say its `summary` line in the
-close-out report. A failure is that line, never a blocker.
+It selects every PR thread, whatever the PR's or its issue's
+state, ignores a merged PR's thread before marking it done, and
+marks any other done with its subscription kept. It prints
+counts, not threads; say its `summary` line in the close-out
+report. A failure is that line, never a blocker.
 
 ## Step 7: `/session-metrics`
 

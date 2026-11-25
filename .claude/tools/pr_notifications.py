@@ -9,10 +9,20 @@ Usage:
       [--keep-subscription] [--apply]
     python3 .claude/tools/pr_notifications.py dismiss --pr 663 --hold-attention \
       [--apply]
+    python3 .claude/tools/pr_notifications.py dismiss --all [--apply]
     python3 .claude/tools/pr_notifications.py dismiss --settled [--apply]
 
+**No PR notification is left showing**, for an open PR as much as a merged one.
+``--all`` selects every PR thread on the repo, whatever its PR's state — the
+scheduler's two repo-wide sweeps, upkeep's ``notifications`` step at startup
+and the planning close-out at shutdown. A thread on a merged PR is ignored,
+then marked done; any other (open, closed, or a PR whose state is unresolved)
+is marked done with its subscription kept, so new activity re-creates it.
+
 ``--pr`` selects every thread on the named PRs, whatever their state — the
-close path's form, which has already refused an open PR. **``--hold-attention``**
+form a session runs for its own PR: the close path (which has already refused
+an open PR), the queue watcher's exit, and a park's stand-down, which keeps the
+open PR's subscription. **``--hold-attention``**
 (``--pr`` only) then leaves in the inbox every selected thread whose GitHub
 ``reason`` is in ``ATTENTION_REASONS`` (a mention, a review request, an
 assignment), or whose conversation's latest comment is another human's
@@ -20,18 +30,21 @@ assignment), or whose conversation's latest comment is another human's
 as ``{id, pr, state, reason, title}``: the queue watcher holds them at the
 merge so the ``post-merge`` skill can answer each before its close, whose own
 ``--pr`` run (no hold) clears them. ``--settled`` selects every thread whose
-PR is merged or closed, whatever its issue's Linear state:
-a merged PR whose issue sits In Review is settled code, and its threads are
-the bulk of the inbox. An open PR's threads are never selected by it.
+PR is merged or closed, whatever its issue's Linear state; an open PR's
+threads are never selected by it. It is kept for a by-hand run, and no caller
+uses it.
 
-A dry run unless ``--apply``. **Unsubscribe only on merge, on the ``--pr``
-path**: there a thread on a merged PR is first unsubscribed by ignoring it
+A dry run unless ``--apply``. **Unsubscribe only on merge, on the ``--pr`` and
+``--all`` paths**: there a thread on a merged PR is first unsubscribed by
+ignoring it
 (``PUT /notifications/threads/<id>/subscription`` with ``ignored=true``), so a
 later bot comment on the merged PR cannot re-create it — a ``DELETE`` on the
 subscription would not hold, since a watcher of the repository still receives
 the thread's notifications. Every selected thread is then dismissed with its
 own ``DELETE /notifications/threads/<id>`` — GitHub's "mark as done"; marking
-read would leave it in the inbox — and never with a mark-all. A thread on a PR
+read would leave it in the inbox — and never with a mark-all. **A 404 on that
+``DELETE`` counts as dismissed**, never failed: a stand-down's ``--pr`` run and
+the shutdown sweep can race on one thread. A thread on a PR
 not merged is marked done only, its subscription kept: an open PR's is what
 re-creates the thread on new activity, and a closed PR can be reopened, so a
 ``--pr`` caller passes ``--keep-subscription`` (in process,
@@ -44,15 +57,21 @@ The queue watcher (``wait_for_checks.py --queue``) calls :func:`dismiss` in
 process on every exit but ``probe_failed``, holding attention threads and
 keeping the subscription unless the verdict is ``merged``; the close path
 dismisses every thread, held ones included, and keeps the subscription for any
-PR not merged;
-upkeep's ``notifications`` step and the scheduler's close-out run
-``dismiss --settled --apply``.
+PR not merged; a park (``close_session.py --park``) dismisses its open PR's
+threads with the subscription kept; upkeep's ``notifications`` step and the
+scheduler's close-out run ``dismiss --all --apply``. A thread that arrives
+mid-day on an open PR shows until its session stands down, its PR leaves the
+queue, or the shutdown sweep runs; with no shutdown, the next startup sweep
+clears it.
 
 The thread list is read through ``gh api`` on the repo-scoped notifications
 path with ``all=true`` (the default lists unread threads only), paged up to
-``MAX_PAGES``. Settled mode resolves PR states from one ``gh pr list --state
-all`` read, then up to ``MAX_LOOKUPS`` one-by-one reads for PRs outside it; a
-PR still unresolved is reported and left, never guessed settled.
+``MAX_PAGES``; only a thread whose subject URL is a PR on the repo is ever
+selected. Settled and all modes resolve PR states from one ``gh pr list
+--state all`` read, then up to ``MAX_LOOKUPS`` one-by-one reads for PRs
+outside it. In settled mode a PR still unresolved is reported and left, never
+guessed settled; in all mode it is selected and keeps its subscription, never
+guessed merged.
 
 Prints JSON ``{mode, dry_run, threads, selected, held, prs, dismissed, unsubscribed,
 failed: [id], unsubscribe_failed: [id], error, unresolved: [pr], notice,
@@ -205,10 +224,12 @@ def select(
     threads: list[tuple[str, int]],
     states: dict[int, str],
     prs: set[int] | None,
+    every: bool = False,
 ) -> tuple[list[dict], list[int]]:
     """``(selected, unresolved)``. ``prs`` given: every thread on those PRs.
-    ``prs`` None: settled mode — threads whose PR state is merged or closed;
-    a PR with no known state is unresolved, never selected."""
+    ``every``: all mode — every thread, whatever its PR's state. Otherwise
+    settled mode — threads whose PR state is merged or closed; a PR with no
+    known state is unresolved, never selected."""
     selected: list[dict] = []
     unresolved: set[int] = set()
     for tid, num in threads:
@@ -216,24 +237,33 @@ def select(
         if prs is not None:
             if num in prs:
                 selected.append({"id": tid, "pr": num, "state": state})
-        elif state in SETTLED_STATES:
+        elif every or state in SETTLED_STATES:
             selected.append({"id": tid, "pr": num, "state": state})
         elif state is None:
             unresolved.add(num)
     return selected, sorted(unresolved)
 
 
-def unsubscribes(thread: dict, keep_subscription: set[int], settled: bool) -> bool:
+def unsubscribes(thread: dict, keep_subscription: set[int], mode: str) -> bool:
     """Whether a selected thread is ignored before it is marked done.
 
-    **Unsubscribe only on merge, and only on the ``--pr`` path.** A
-    still-open PR's subscription is what re-creates its thread on new
-    activity, and a closed PR can be reopened, so both keep it: a ``--pr``
-    caller names its non-merged PRs in ``keep_subscription``. Settled mode
-    never ignores — the merge tail already unsubscribed each merged PR's
-    thread and ``init-pr`` muted it at creation, so the sweep is one
+    **Unsubscribe only on merge.** A still-open PR's subscription is what
+    re-creates its thread on new activity, and a closed PR can be reopened,
+    so both keep it: a ``--pr`` caller names its non-merged PRs in
+    ``keep_subscription``, and all mode ignores only a thread whose PR it
+    read as merged (an unresolved state keeps its subscription). Settled
+    mode never ignores — the merge tail already unsubscribed each merged
+    PR's thread and ``init-pr`` muted it at creation, so the sweep is one
     ``DELETE`` per thread."""
-    return not settled and thread["pr"] not in keep_subscription
+    if mode == "all":
+        return thread.get("state") == "MERGED"
+    return mode == "pr" and thread["pr"] not in keep_subscription
+
+
+def gone(err: str) -> bool:
+    """Whether a failed call's stderr is GitHub's 404 — the thread already
+    went, through a concurrent run's dismissal."""
+    return "HTTP 404" in err
 
 
 def wants_reply(gh: Gh, info: dict, viewer: Callable[[], str | None]) -> bool:
@@ -292,17 +322,21 @@ def dismiss(
     repo: str = REPO,
     keep_subscription: set[int] = frozenset(),
     hold_attention: bool = False,
+    every: bool = False,
 ) -> tuple[int, dict]:
-    """The whole act; ``prs`` None is settled mode. Threads on PRs in
-    ``keep_subscription``, and every settled-mode thread, are marked done
+    """The whole act; ``prs`` None is settled mode, or all mode with
+    ``every``. Threads on PRs in ``keep_subscription``, every settled-mode
+    thread and every all-mode thread on a PR not merged are marked done
     without being ignored (:func:`unsubscribes`). ``hold_attention`` (``--pr``
     mode only) leaves a thread that wants a reply in the inbox and lists it in
     ``held`` (:func:`hold`)."""
     if hold_attention and prs is None:
         raise ValueError("hold_attention applies only to named PRs")
-    settled = prs is None
+    if every and prs is not None:
+        raise ValueError("every selects all PRs; name none")
+    mode = "pr" if prs is not None else "all" if every else "settled"
     result: dict = {
-        "mode": "settled" if prs is None else "pr",
+        "mode": mode,
         "dry_run": not apply,
         "threads": 0,
         "selected": [],
@@ -323,14 +357,14 @@ def dismiss(
         return 1, result
     result["threads"] = len(threads)
     states: dict[int, str] = {}
-    if settled:
+    if prs is None:
         states, result["notice"] = pr_states(gh, {num for _, num in threads}, repo)
-    result["selected"], result["unresolved"] = select(threads, states, prs)
+    result["selected"], result["unresolved"] = select(threads, states, prs, every)
     if hold_attention:
         result["selected"], result["held"] = hold(gh, result["selected"], meta)
     if not apply:
         result["would_keep"] = sum(
-            not unsubscribes(t, keep_subscription, settled) for t in result["selected"]
+            not unsubscribes(t, keep_subscription, mode) for t in result["selected"]
         )
         return 0, result
     for t in result["selected"]:
@@ -339,7 +373,7 @@ def dismiss(
         # subscription, which a watcher of the repository outlives.
         thread = f"/notifications/threads/{t['id']}"
         calls = [(["DELETE", thread], "dismissed", "failed")]
-        if unsubscribes(t, keep_subscription, settled):
+        if unsubscribes(t, keep_subscription, mode):
             calls.insert(
                 0,
                 (
@@ -350,7 +384,8 @@ def dismiss(
             )
         for args, count, failed in calls:
             rc, _, err = gh(["api", "-X", *args])
-            if rc == 0:
+            # A 404 on the mark-done is a thread a concurrent run took first.
+            if rc == 0 or (count == "dismissed" and gone(err)):
                 result[count] += 1
             else:
                 result[failed].append(t["id"])
@@ -397,9 +432,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--pr", type=int, action="append", help="a PR whose threads to dismiss"
     )
     which.add_argument(
+        "--all",
+        action="store_true",
+        dest="every",
+        help="every PR thread, whatever the PR's state (the scheduler's sweeps)",
+    )
+    which.add_argument(
         "--settled",
         action="store_true",
-        help="every thread whose PR is merged or closed",
+        help="every thread whose PR is merged or closed (by hand only)",
     )
     p.add_argument(
         "--keep-subscription",
@@ -430,9 +471,9 @@ def compact(result: dict) -> dict:
 
 def main() -> int:
     args = parse_args(sys.argv)
-    if (args.keep_subscription or args.hold_attention) and args.settled:
+    if (args.keep_subscription or args.hold_attention) and args.pr is None:
         sys.exit("--keep-subscription and --hold-attention apply only with --pr")
-    prs = None if args.settled else set(args.pr)
+    prs = None if args.pr is None else set(args.pr)
     keep = prs if args.keep_subscription else set()
     rc, result = dismiss(
         real_gh,
@@ -440,6 +481,7 @@ def main() -> int:
         args.apply,
         keep_subscription=keep,
         hold_attention=args.hold_attention,
+        every=args.every,
     )
     json.dump(result if args.full else compact(result), sys.stdout, indent=2)
     sys.stdout.write("\n")

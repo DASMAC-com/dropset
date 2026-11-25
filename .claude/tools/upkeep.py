@@ -46,10 +46,10 @@ refuses the whole pass, since every later step assumes it.
     (:func:`undigested`) — is held
     out of the set and reported ``held: not yet digested``; it goes the next
     morning;
- 7. dismiss every settled PR's notifications
-    (``pr_notifications dismiss --settled``) — merged or closed, whatever its
-    issue's state, one ``DELETE`` per thread (never mark-all, and no ignore:
-    the merge tail already unsubscribed the thread);
+ 7. dismiss every PR's notifications (``pr_notifications dismiss --all``) —
+    the scheduler's startup sweep, open PRs included, whatever the issue's
+    state: one ``DELETE`` per thread (never mark-all), a merged PR's thread
+    ignored first and any other's subscription kept;
  8. the cargo lanes (``cargo_lanes``): each lane under the cargo target root
     and every non-lane entry there, sized, with whether a build is running on
     it; every idle one is wiped, armed or not — the bound on the lanes' growth.
@@ -92,7 +92,7 @@ once.
 
 **Arming.** Step 6 runs as a dry run and touches nothing unless
 ``DS_UPKEEP_ARMED=1`` is exported from the untracked runtime config. Steps 7
-and 8 are always armed in ``run``: with the board gate gone, a settled PR's
+and 8 are always armed in ``run``: with the board gate gone, every PR's
 threads are dismissible on sight, and a dismissal destroys nothing; the lane
 wipe is a cache clean, not a destructive item (plan ruling 16), and a lane
 with a build on it is held by the process table. The open-PR guard holds
@@ -595,10 +595,10 @@ def step_prune(ctx: Ctx) -> None:
 
 
 def step_notifications(ctx: Ctx) -> None:
-    # No board gate: a merged or closed PR's threads are settled whatever its
-    # issue's state, and an open PR's are never selected. Armed on its own
-    # flag, since dismissal destroys nothing the way a prune can.
-    args = ["dismiss", "--settled"] + (["--apply"] if ctx.dismiss else [])
+    # No board gate: every PR thread goes, an open PR's included (its
+    # subscription kept), so none is left showing. Armed on its own flag,
+    # since dismissal destroys nothing the way a prune can.
+    args = ["dismiss", "--all"] + (["--apply"] if ctx.dismiss else [])
     rc, out, err = ctx.tool("pr_notifications.py", *args, timeout=TIMEOUT_DISMISS)
     try:
         result = json.loads(out)
@@ -1121,7 +1121,7 @@ STEP_LABELS = {
     ),
     "prune": ("prune worktrees and branches", f"per-call timeout {TIMEOUT_TOOL}s"),
     "notifications": (
-        "dismiss settled PR notifications",
+        "dismiss every PR's notifications",
         f"timeout {TIMEOUT_DISMISS}s",
     ),
     "parked": (
@@ -1727,7 +1727,7 @@ def run(argv: list[str]) -> int:
         ctx.data["trees"] = trees
         wire_terminal(ctx, base)
         # The analyst's prune follows the morning pass, which already
-        # dismissed: re-walking every settled PR there cost minutes for a
+        # dismissed: re-walking every PR's threads there cost minutes for a
         # 0.2s prune, so it opts the step out.
         steps = tuple(
             s
