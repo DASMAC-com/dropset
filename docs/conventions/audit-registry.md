@@ -60,6 +60,7 @@ feeds (rust-lib, low): feeds/**
 fair-value (rust-lib, med): fair-value/**
 market-data (rust-tool, low): market-data/**
 db-schema (rust-lib, med): db-schema/**
+node (rust-tool, low): node/**
 ```
 
 **`ci-infra` is served daily by the session digest.** Its CI section
@@ -535,6 +536,13 @@ parked set (feeds <-> market-data <-> db-schema <-> grafana): the SECOND
   end (whole-set write, both prune paths, the cascade); nothing in the repo
   semantically validates the two Grafana consumers, so those hops are held
   by review alone, exactly as push liveness's last two are.
+node <-> ci-infra deploy: the node's three stdout lines (start, heartbeat,
+  shutdown; docs/node.md) are what the AWS deploy reads back from its logs
+  as proof the image ran, the start line's build field matched against the
+  deployed commit's full SHA. infra/node/Dockerfile's BUILD_COMMIT argument
+  feeds that field at compile time (DROPSET_NODE_BUILD). The line formats are
+  pinned by node/src/main.rs's unit tests and the shutdown path by
+  node/tests/shutdown.rs; nothing in the repo checks the deploy end.
 ```
 
 **Skip-globs** — generated / vendored / binary paths the file audit

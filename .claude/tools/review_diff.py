@@ -307,6 +307,7 @@ CODE_FILTER_EXCLUDES = (
     "pnpm-workspace.yaml",
     "cfg/**",
     "infra/aws/**",
+    "infra/node/**",
     "market-data/grafana/**",
 )
 
@@ -681,7 +682,8 @@ def rust_test_fixtures(
       dropped all of ``infra/**``) and pulled in by three Rust files at the
       time, two of them tests. This is the dequeue class exactly: a diff confined to it made
       every Tests job a no-op while the merge queue compiled it into the full
-      suite. The filter now excludes only ``infra/aws/**``; the scan still
+      suite. The filter now excludes only ``infra/aws/**`` and
+      ``infra/node/**``; the scan still
       guards the next excluded tree a test starts reading.
     * The other thirty are CI-*visible* but still unmatched — every
       ``*/queries/*.sql`` a store module compiles in, ``sdk/idl/dropset.json``,

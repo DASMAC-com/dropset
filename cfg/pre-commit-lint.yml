@@ -128,8 +128,11 @@ repos:
 # 80-column limit the docs follow (MD013) across both, failing on any line over
 # 80 chars (a leading recipe tab counts as one column). Wrap with `\`
 # continuations, as the existing multi-line recipes and Dockerfile `COPY`s do.
+# The one exemption is a `FROM` pinned by digest (`<image>:<tag>@sha256:<64
+# hex>`, as `infra/node/Dockerfile` does): the digest alone is 71 columns and a
+# continuation cannot split a token, so that line cannot be wrapped.
 - hooks:
-  - entry: '^.{81,}$'
+  - entry: '^(?!FROM [^\s:@]+:\S+@sha256:[0-9a-f]{64}( AS [\w.-]+)?$).{81,}$'
     files: '(^|/)(Makefile|.*\.mk|Dockerfile|.*\.Dockerfile)$'
     id: 'line-length-80'
     language: 'pygrep'
