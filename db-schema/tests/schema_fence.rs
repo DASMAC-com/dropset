@@ -13,7 +13,7 @@
 //! The container-backed tests that used to sit here, which ran the history
 //! against a real server and probed each declared relation, were removed with
 //! the old stack's Postgres tests. Nothing probes a manifest against a live
-//! database any more; the grammar and the pairing are what is left, and
+//! database anymore; the grammar and the pairing are what is left, and
 //! where a comment below speaks of "the probe" it means that removed check.
 
 use dropset_db_schema::MIGRATOR;
@@ -296,13 +296,13 @@ fn every_migration_declares_a_fence_manifest() {
     assert!(!manifests.is_empty(), "no migrations embedded");
     // The one vacuity `manifests()` cannot catch on its own. A missing manifest
     // panics there and an empty one is a parse error, so the only way to reach
-    // an empty work list is for every migration to legitimately declare `none`
-    // — a set of manifests a probe would iterate over to no effect.
+    // a manifest set that declares no relation at all is for every migration
+    // to legitimately declare `none`.
     assert!(
         manifests
             .iter()
             .any(|(_, d)| d.iter().any(|d| !matches!(d, Declared::Nothing))),
-        "no migration declares a relation — the probe would be vacuous"
+        "no migration declares a relation — the manifests would assert nothing"
     );
 }
 

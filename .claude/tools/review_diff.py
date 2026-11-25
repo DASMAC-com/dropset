@@ -445,9 +445,8 @@ IGNORE_ATTR = "#[ignore"
 #: What `make test-postgres` selects — the trees of the crates its
 #: `POSTGRES_TEST_CRATES` names, less any test file it filters out. An ignored
 #: test outside this set runs in no CI job, so its change triggers nothing.
-#: Both are empty while that list is: the old stack's Postgres tests were
-#: deleted. Mirror the target when it changes; `postgres_ci_wiring.py` keeps
-#: the target itself honest.
+#: Both are empty while that list is. Mirror the target when it changes;
+#: `postgres_ci_wiring.py` keeps the target itself honest.
 POSTGRES_TEST_ROOTS: tuple[str, ...] = ()
 POSTGRES_TEST_EXCLUDES: tuple[str, ...] = ()
 

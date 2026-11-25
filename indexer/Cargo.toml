@@ -58,7 +58,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 # Build tagged event bytes in the decode unit test.
 borsh = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [package]
 description = "Prototype event indexer for the Dropset eCLOB program."

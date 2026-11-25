@@ -20,16 +20,16 @@ hand-kept list, which would only catch a regression of today's line:
 * the workflow must still run ``make test-postgres``, so the owner is the
   thing CI actually executes.
 
-The list is **empty** today: the old stack's Postgres tests were deleted. An
-empty gated set is therefore a legitimate state, not a failure. What guards
-the attribute's spelling instead is the container library itself: a tracked
-``.rs`` file naming ``testcontainers`` that carries no gate attribute is
-reported, since it is a container-backed test this guard cannot see. That
-bound is stated plainly: a test reaching Postgres some other way, ungated, is
-invisible here.
+An empty gated set, with an empty list, is a legitimate state, not a failure.
+What guards the attribute's spelling instead is the container library itself:
+a tracked ``.rs`` file that holds a test and names ``testcontainers`` but
+carries no gate attribute is reported, since it is a container-backed test
+this guard cannot see. A shared harness module with no test of its own (a
+``tests/common/mod.rs``) is not. That bound is stated plainly: a test reaching
+Postgres some other way, ungated, is invisible here.
 
-Extra crates in the list are fine — the selection may also exist for
-feature-gated unit tests that a plain run leaves off.
+Extra crates in the list are fine; the guard checks only that no gated crate
+is missing.
 
 Usage::
 
@@ -57,6 +57,9 @@ GATE_RE = re.compile(r'#\[ignore\s*=\s*"requires a Docker daemon')
 
 #: The container library a Docker-backed test reaches Postgres through.
 CONTAINER_RE = re.compile(r"\btestcontainers")
+
+#: A Rust test attribute: what makes a container user a test, not a harness.
+TEST_ATTR_RE = re.compile(r"#\[(?:tokio::)?test\b")
 
 #: The Makefile target the Postgres job runs.
 TARGET = "test-postgres"
@@ -104,16 +107,17 @@ def package_name(cargo_toml: str) -> str | None:
     return name.group(1) if name else None
 
 
-def scan(
+def classify_sources(
     root: Path, sources: list[str]
 ) -> tuple[dict[str, list[str]], list[str], list[str]]:
-    """The gated packages, the unresolved gated files, and the ungated users.
+    """The gated packages, the unresolved gated files, and the ungated tests.
 
     Returns each package with a Docker-gated test mapped to the files carrying
     one; the gated files whose package could not be resolved (no crate
     manifest, or none with a readable ``[package]`` name), reported rather than
     skipped because a gated test this guard cannot place is one it cannot vouch
-    for; and the files naming the container library with no gate attribute.
+    for; and the files that hold a test and name the container library but
+    carry no gate attribute. A harness module with no test is none of these.
     """
     packages: dict[str, list[str]] = {}
     unresolved: list[str] = []
@@ -124,7 +128,7 @@ def scan(
         except OSError:
             continue
         if not GATE_RE.search(text):
-            if CONTAINER_RE.search(text):
+            if CONTAINER_RE.search(text) and TEST_ATTR_RE.search(text):
                 ungated.append(src)
             continue
         crate = manifest_dir(src, root)
@@ -167,11 +171,15 @@ def recipe(makefile: str, target: str) -> str | None:
 
 
 def variable(makefile: str, name: str) -> list[str] | None:
-    """The words of a simple ``name := …`` (or ``=``) assignment, or ``None``."""
+    """The words of a simple ``name := …`` (or ``=``) assignment, or ``None``.
+
+    A trailing ``#`` comment is not part of the value, so its words are never
+    read as list entries.
+    """
     for line in _logical_lines(makefile):
         match = re.match(rf"^{re.escape(name)}\s*:?=(.*)$", line)
         if match:
-            return match.group(1).split()
+            return match.group(1).split("#", 1)[0].split()
     return None
 
 
@@ -181,7 +189,7 @@ def check(root: Path, sources: list[str] | None = None) -> list[str]:
         sources = tracked_rust_sources(root)
     problems = []
 
-    gated, unresolved, ungated = scan(root, sources)
+    gated, unresolved, ungated = classify_sources(root, sources)
     for src in unresolved:
         problems.append(
             f"{src} has a Docker-gated test but no crate `[package]` name could "
@@ -259,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root) if args.root else find_root()
 
     if args.show:
-        gated, unresolved, ungated = scan(root, tracked_rust_sources(root))
+        gated, unresolved, ungated = classify_sources(root, tracked_rust_sources(root))
         for src in unresolved:
             print(f"(unresolved) {src}")
         for src in ungated:

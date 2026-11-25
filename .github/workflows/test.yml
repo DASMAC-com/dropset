@@ -101,9 +101,9 @@ jobs:
           - '!pnpm-workspace.yaml'
           - '!cfg/**'
           # Only the CloudFormation tree and the node image's Dockerfile, which
-          # no Rust test reads: Rust tests in market-data and feeds read the
-          # localnet compose file and the secrets template, so infra/localnet/
-          # stays relevant.
+          # no Rust test reads: Rust tests in market-data, feeds and the TUI
+          # read the localnet compose file and the secrets template, so
+          # infra/localnet/ stays relevant.
           - '!infra/aws/**'
           - '!infra/node/**'
           # Grafana dashboard JSON, its provisioning, and the generated SQL
@@ -546,11 +546,10 @@ jobs:
         sccache --show-stats >>"$S"
         echo '```' >>"$S"
   # The slot for the tests that need a running Postgres, kept under its
-  # required-check name while it holds none. The old stack's Postgres tests
-  # were deleted, so `make test-postgres` selects no crate and succeeds
-  # without building anything; this job therefore installs no toolchain and
-  # restores or saves no Rust cache. A crate added to the target's list
-  # needs the toolchain, nextest and cache steps back here in the same change
+  # required-check name. While `make test-postgres` selects no crate it
+  # succeeds without building anything, so this job installs no toolchain and
+  # restores or saves no Rust cache. A crate added to the list needs the
+  # toolchain, nextest and cache steps back here in the same change
   # (docs/ci.md, "Tests (Postgres)").
   test-postgres:
     name: 'Tests (Postgres)'
@@ -561,10 +560,10 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
-    # The crate selection lives in the Makefile's `test-postgres` target, the
-    # one owner a local run and review-pr also use; `postgres_ci_wiring.py`
-    # fails lint when a crate gains a Docker-gated test the target does not
-    # select, or when this step stops running the target.
+    # The crate selection is the Makefile's `POSTGRES_TEST_CRATES`, the one
+    # owner a local run and review-pr also use; `postgres_ci_wiring.py` fails
+    # lint when a crate gains a Docker-gated test the list does not name, or
+    # when this step stops running `make test-postgres`.
     - if: |
         needs.changes.outputs.code == 'true'
       name: 'Run the Postgres-backed tests'

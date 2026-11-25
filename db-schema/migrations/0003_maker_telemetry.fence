@@ -1,4 +1,7 @@
-# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+# Relations this migration declares, parsed and paired with its migration by
+# db-schema/tests/schema_fence.rs. No test checks them against a database:
+# the container tests named below were deleted with the old stack's
+# Postgres tests, so their claims are history, not current coverage.
 table maker_telemetry
 table maker_legs
 table feed_health

@@ -3,9 +3,9 @@
 
 The load-bearing assertions are the bug class itself — a crate that gains a
 Docker-gated test without joining the job's selection fails — and the drift
-check that replaced the zero-match failure: a file using the container library
-with no gate attribute is reported, so a drifted attribute spelling cannot make
-the guard approve everything. Run via the repo's ``make tools-tests``.
+check: a test using the container library with no gate attribute is reported,
+so a drifted attribute spelling cannot make the guard approve everything. Run
+via the repo's ``make tools-tests``.
 """
 
 from __future__ import annotations
@@ -113,8 +113,8 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(self.check("tui/src/e2e.rs"), [])
 
     def test_zero_gated_crates_and_an_empty_list_is_wired(self):
-        # Today's tree: the old stack's Postgres tests are gone and the list is
-        # empty. That is a legitimate state, not a drifted spelling.
+        # No gated crate and an empty list is a legitimate state, not a drifted
+        # spelling.
         self.write(
             "Makefile", MAKEFILE.replace(" dropset-feeds \\\n\tdropset-indexer", "")
         )
@@ -126,11 +126,22 @@ class WiringTests(unittest.TestCase):
         # still naming the container library, so it is reported, not skipped.
         self.write(
             "feeds/tests/store.rs",
-            '#[ignore = "needs Docker"]\nuse testcontainers_modules::postgres;\n',
+            "#[tokio::test]\n"
+            '#[ignore = "needs Docker"]\n'
+            "async fn t() { testcontainers_modules::postgres::Postgres; }\n",
         )
         problems = self.check()
         self.assertEqual(len(problems), 1)
         self.assertIn("uses testcontainers", problems[0])
+
+    def test_a_shared_harness_with_no_test_is_not_reported(self):
+        # The layout the deleted suites used: a harness module naming the
+        # container library, its tests gated in a sibling file.
+        self.write(
+            "feeds/tests/common/mod.rs",
+            "use testcontainers_modules::postgres::Postgres;\npub fn start() {}\n",
+        )
+        self.assertEqual(self.check("feeds/tests/common/mod.rs"), [])
 
     def test_a_gated_container_user_is_not_reported_as_ungated(self):
         self.write(
@@ -182,6 +193,9 @@ class ParsingTests(unittest.TestCase):
     def test_an_empty_variable_is_an_empty_list_not_absent(self):
         self.assertEqual(pcw.variable("V :=\n", "V"), [])
         self.assertIsNone(pcw.variable("W := a\n", "V"))
+
+    def test_a_trailing_comment_is_not_read_as_entries(self):
+        self.assertEqual(pcw.variable("V := a # b is pending\n", "V"), ["a"])
 
     def test_recipe_steps_over_conditionals_and_stops_at_the_next_rule(self):
         body = pcw.recipe(MAKEFILE, "test-postgres")

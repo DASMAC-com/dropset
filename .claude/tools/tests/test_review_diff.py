@@ -1280,7 +1280,7 @@ class GateTests(unittest.TestCase):
         self.assertTrue(self.targets_by_name(v)["make test-postgres"]["run"])
 
     def test_an_empty_postgres_selection_resolves_nothing(self):
-        # Today's target selects no crate, so no ignored test reaches it.
+        # An empty selection reaches no ignored test.
         self.commit(
             "feeds/tests/store.rs",
             '#[test]\n#[ignore = "needs docker"]\nfn store() {}\n',

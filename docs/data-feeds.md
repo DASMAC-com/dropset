@@ -554,8 +554,7 @@ directive per line — `table <name>`, `view <name>`,
 ordinary test run, as does a manifest with no migration, so the pairing
 holds in both directions, and every manifest must parse. Nothing checks a
 declared relation against a live database any more: that probe went with
-the old stack's Postgres tests on 2026-11-24 (`docs/ci.md` → "Tests
-(Postgres)").
+the old stack's Postgres tests (`docs/ci.md` → "Tests (Postgres)").
 
 The manifest is a **declaration, not a derivation**: nothing parses
 `CREATE TABLE` out of the DDL, which would make the check agree with
