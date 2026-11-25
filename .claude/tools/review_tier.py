@@ -794,11 +794,11 @@ _BOUND_WORD_RE = re.compile(
 )
 _NUMBER_RE = re.compile(r"\d+(\.\d+)?")
 _EXACT_ASSERT_RE = re.compile(
-    r"assert_eq!|assertEqual\(|\.toBe\(|\.toEqual\(|toHaveLength\(|assertCountEqual\("
+    r"assert_eq[!]|assertEqual\(|\.toBe\(|\.toEqual\(|toHaveLength\(|assertCountEqual\("
 )
 _RANGE_ASSERT_RE = re.compile(
     r"assert!\(.*(>=|<=|>|<)|assert(Greater|Less)(Equal)?\(|"
-    r"toBeGreaterThan|toBeLessThan|assertAlmostEqual\("
+    r"toBeGreater[T]han|toBeLess[T]han|assertAlmostEqual\("
 )
 _SNAPSHOT_PATTERNS = ("**/*.snap", "**/__snapshots__/**", "**/snapshots/**")
 
@@ -887,24 +887,32 @@ def integrity_hits(
 def _dropped_asserts(hunks: list[Hunk]) -> list[str]:
     """The removed assertions the added ones do not replace, in diff order.
 
-    A removed assertion pairs with an added one of the same literal skeleton
-    (an edited value, a moved line), so the quoted text is the one actually
-    lost rather than whichever came last. The count still nets removed
-    against added: an unpaired added assertion offsets one unpaired removed
-    assertion, and the earliest unpaired ones are taken as rewritten.
+    A removed assertion pairs first with an added one of the same text (a
+    moved line), then with one of the same literal skeleton (an edited
+    value), so the quoted text is the one actually lost rather than
+    whichever came last. The count still nets removed against added: an
+    unpaired added assertion offsets one unpaired removed assertion, and the
+    earliest unpaired ones are taken as rewritten.
     """
-    removed = [t for h in hunks for t in h.removed if _ASSERT_RE.search(t)]
-    added = Counter(
-        _skeleton(t) for h in hunks for _, t in h.added if _ASSERT_RE.search(t)
-    )
-    unpaired = []
-    for text in removed:
-        skeleton = _skeleton(text)
-        if added[skeleton]:
-            added[skeleton] -= 1
-        else:
-            unpaired.append(text)
-    return unpaired[sum(added.values()) :]
+    removed = [t.strip() for h in hunks for t in h.removed if _ASSERT_RE.search(t)]
+    added = [t.strip() for h in hunks for _, t in h.added if _ASSERT_RE.search(t)]
+    for key in (str, _skeleton):
+        pool = Counter(key(t) for t in added)
+        kept_removed, matched = [], Counter()
+        for text in removed:
+            if pool[key(text)]:
+                pool[key(text)] -= 1
+                matched[key(text)] += 1
+            else:
+                kept_removed.append(text)
+        kept_added = []
+        for text in added:
+            if matched[key(text)]:
+                matched[key(text)] -= 1
+            else:
+                kept_added.append(text)
+        removed, added = kept_removed, kept_added
+    return removed[len(added) :]
 
 
 def _relaxations(path: str, hunk: Hunk) -> list[dict]:

@@ -488,6 +488,9 @@ class ParseDiffEdgeTests(unittest.TestCase):
     def test_letter_escapes_are_unescaped(self):
         self.assertEqual(rt.unquote_c_path('a\\"b\\\\c\\td'), 'a"b\\c\td')
 
+    def test_an_octal_control_byte_is_unescaped(self):
+        self.assertEqual(rt.unquote_c_path("a\\001b"), "a\x01b")
+
     def test_an_unknown_escape_is_kept(self):
         self.assertEqual(rt.unquote_c_path("a\\qb"), "a\\qb")
 
@@ -506,14 +509,24 @@ class ParseDiffEdgeTests(unittest.TestCase):
 class SelfMatchTest(unittest.TestCase):
     """The tagger's own pattern definitions raise no hit on a diff of its file."""
 
-    def test_review_tier_source_tags_nothing(self):
+    PATH = ".claude/tools/review_tier.py"
+
+    def hits_for(self, text):
+        return rt.integrity_hits(rt.parse_diff(text), {self.PATH: "source"})
+
+    def lines(self):
         import inspect
 
-        lines = inspect.getsource(rt).split("\n")
-        path = ".claude/tools/review_tier.py"
-        text = diff(path, lines, new_file=True)
-        hits = rt.integrity_hits(rt.parse_diff(text), {path: "source"})
-        self.assertEqual(hits, [])
+        return inspect.getsource(rt).split("\n")
+
+    def test_review_tier_source_tags_nothing_when_added(self):
+        self.assertEqual(self.hits_for(diff(self.PATH, self.lines(), new_file=True)), [])
+
+    def test_review_tier_source_tags_nothing_when_rewritten(self):
+        # One hunk removing and re-adding every line exercises the
+        # removed-line and relaxation rules the added-only case cannot.
+        lines = self.lines()
+        self.assertEqual(self.hits_for(diff(self.PATH, lines, lines)), [])
 
 
 class IntegrityAdditionsTests(unittest.TestCase):
@@ -550,6 +563,16 @@ class IntegrityAdditionsTests(unittest.TestCase):
         )
         hits = [h for h in self.hits(text) if h["kind"] == "assertion-removed"]
         self.assertEqual([h["text"] for h in hits], ["assert!(x.is_ok());"])
+
+    def test_an_exact_match_pairs_before_a_skeleton_match(self):
+        # `y, 5` survives verbatim, so `y, 4` is the one lost.
+        text = diff(
+            "tui/tests/a.rs",
+            ["assert_eq!(y, 5);"],
+            ["assert_eq!(y, 4);", "assert_eq!(y, 5);"],
+        )
+        hits = [h for h in self.hits(text) if h["kind"] == "assertion-removed"]
+        self.assertEqual([h["text"] for h in hits], ["assert_eq!(y, 4);"])
 
     def test_a_moved_assertion_is_not_a_hit(self):
         text = diff(
