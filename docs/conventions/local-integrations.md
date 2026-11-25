@@ -3485,13 +3485,13 @@ links `iterm-reorder.py` into iTerm2's `AutoLaunch/` folder too, where
 that folder exists (the reorderer needs iTerm2's **Python Runtime** —
 Scripts → Manage → Install Python Runtime — and the API enabled; it
 finds the palette through the link, since it resolves its own path).
-Starting the reorderer from Scripts → AutoLaunch runs it **through the
-link** (verified 2026-10-14: the process runs the AutoLaunch path, which
-resolves into the checkout), so no launcher stub is needed. Whether iTerm2
-also follows the link when it auto-launches at startup is not yet
-observed; if the reorderer is not running after an iTerm restart, start it
-from the Scripts menu by hand. Never fall back to a copy — that is the
-drift `make hook-wiring` reports.
+The reorderer runs **through the link** whether started from Scripts →
+AutoLaunch (verified 2026-10-14) or auto-launched by iTerm2 at startup
+(verified 2026-11-24: after an iTerm restart the reorderer started one
+second after iTerm2 itself, from the AutoLaunch path, which resolves into
+the checkout). So no launcher stub is needed, and a restart brings it
+back unattended. Never fall back to a copy — that is the drift
+`make hook-wiring` reports.
 Where the deploy directory is itself a link into the checkout, every
 target reads `is-source` and is left untouched, since it already runs the
 committed code.
