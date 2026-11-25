@@ -747,7 +747,7 @@ while `SpendKillSwitchEnabled` is armed. The other two only email.
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `dropset-bedrock-spend-alerts` SNS topic (four CloudWatch alarms) | 24-hour Bedrock estimate at 25, 50, 75 and 100% of `SpendCapUsd`          | Email; at 100%, when armed, the deny blocks every key |
 | `dropset-bedrock-agent-spend` budget                              | Monthly cost **before credits** past 80% actual or 100% forecast of limit | Email only                                            |
-| Cost Anomaly Detection `Default-Services-Subscription` (console)  | Daily; an anomaly of at least \$100 **and** 40% on any service            | Email only                                            |
+| Cost Anomaly Detection `Default-Services-Subscription`            | Daily; an anomaly of at least \$100 **and** 40% on any service            | Email only                                            |
 
 The budget counts the dashboard's before-credits cost across every
 service, ignoring refunds, so free usage counts as \$0 and credits do
@@ -757,11 +757,74 @@ limit. Anomaly detection also sees spend before credits: it flagged
 the 2026-09-10 Opus 5 spike. That makes it the only alert likely to
 catch a sizable new charge on a non-Bedrock service. A charge of a few
 dollars a day is unlikely to fire any of the three, and may show up
-only on the dashboard. Anomaly detection
-is not in any template. Check its subscriber with
+only on the dashboard.
+
+All three are template-managed in `dropset-bedrock-agent`, the anomaly
+monitor and its subscription included (`CostAnomalyMonitor`,
+`CostAnomalySubscription`), and all three take their address from
+`BudgetAlertEmail`. Check the anomaly subscriber with
 `aws ce get-anomaly-subscriptions --region us-east-1`. An email
 subscriber that reads anything but `CONFIRMED`, or an SNS subscription
 whose ARN reads `PendingConfirmation`, delivers nothing.
+
+**Importing the anomaly resources.** Both were made in the console and
+are imported, not created: an account holds one AWS-services monitor,
+so a create fails while it exists. An import change set must change
+nothing else, so run it on a template that otherwise matches the
+deployed one, keep every parameter at its previous value, and keep
+`BudgetAlertEmail` non-empty, or the subscription drops out of the
+template and the import fails. Write the two identifiers to
+`import.json` outside the repo (the ARNs carry the account id), from
+`aws ce get-anomaly-monitors` and `get-anomaly-subscriptions`:
+
+```json
+[
+  {
+    "LogicalResourceId": "CostAnomalyMonitor",
+    "ResourceIdentifier": {"MonitorArn": "<monitor ARN>"},
+    "ResourceType": "AWS::CE::AnomalyMonitor"
+  },
+  {
+    "LogicalResourceId": "CostAnomalySubscription",
+    "ResourceIdentifier": {"SubscriptionArn": "<subscription ARN>"},
+    "ResourceType": "AWS::CE::AnomalySubscription"
+  }
+]
+```
+
+Then create the change set, read it, and execute it, all from the
+admin login like the stack's deploy:
+
+```sh
+aws cloudformation create-change-set \
+  --stack-name dropset-bedrock-agent \
+  --change-set-name import-cost-anomaly \
+  --change-set-type IMPORT \
+  --template-body file://infra/aws/bedrock-agent.yml \
+  --resources-to-import file://<path>/import.json \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameters ParameterKey=BudgetAlertEmail,UsePreviousValue=true \
+    ParameterKey=BudgetLimitUsd,UsePreviousValue=true \
+    ParameterKey=EnvironmentName,UsePreviousValue=true \
+    ParameterKey=SpendCapUsd,UsePreviousValue=true \
+    ParameterKey=SpendKillSwitchEnabled,UsePreviousValue=true \
+    ParameterKey=TokenRateCacheRead,UsePreviousValue=true \
+    ParameterKey=TokenRateCacheWrite,UsePreviousValue=true \
+    ParameterKey=TokenRateInput,UsePreviousValue=true \
+    ParameterKey=TokenRateOutput,UsePreviousValue=true
+aws cloudformation describe-change-set \
+  --stack-name dropset-bedrock-agent \
+  --change-set-name import-cost-anomaly
+aws cloudformation execute-change-set \
+  --stack-name dropset-bedrock-agent \
+  --change-set-name import-cost-anomaly
+```
+
+The change set must list exactly two `Import` actions. Afterward,
+`aws cloudformation detect-stack-drift` and
+`describe-stack-resource-drifts` should read `IN_SYNC` for both. A
+template edit that differs from the console values surfaces there,
+not at import time.
 
 ## Secrets
 
