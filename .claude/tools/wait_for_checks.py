@@ -1135,6 +1135,31 @@ def _failing_on_latest(runs: list[dict]) -> list[dict]:
     ]
 
 
+def _group_runs(
+    runs: list[dict], entry: dict | None, current_enqueue: str | None
+) -> list[dict]:
+    """The runs that can be the CURRENT entry's merge group.
+
+    A group is built after its entry is enqueued, so a run created before the
+    newest enqueue this poll can see (the live entry's ``enqueuedAt``, else the
+    timeline's unremoved enqueue) belongs to an earlier cycle. With neither
+    known, every windowed run counts, as before; so does a run with no
+    ``created_at``, which the window filter keeps too.
+    """
+    times = [
+        t
+        for t in (
+            _parse_time((entry or {}).get("enqueuedAt")),
+            _parse_time(current_enqueue),
+        )
+        if t is not None
+    ]
+    if not times:
+        return runs
+    floor = max(times)
+    return [r for r in runs if (_parse_time(r.get("created_at")) or floor) >= floor]
+
+
 def wait_queue(
     pr: int,
     repo: str = DEFAULT_REPO,
@@ -1334,8 +1359,12 @@ def wait_queue(
                             break
                     # In the queue: a run on its branch is the group, and an
                     # entry that never gets one is told apart from a running
-                    # group rather than sitting silent to the timeout.
-                    if runs:
+                    # group rather than sitting silent to the timeout. Only a
+                    # run postdating THIS entry's enqueue disarms the bound:
+                    # the window floor follows the earliest anchor ever seen
+                    # (a stale `since`, an earlier cycle's enqueue), so a
+                    # finished run from a previous cycle can sit inside it.
+                    if _group_runs(runs, entry, current_enqueue):
                         group_since = None
                         if first_run_seen_at is None:
                             first_run_seen_at = wall()

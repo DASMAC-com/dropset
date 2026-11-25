@@ -1633,7 +1633,11 @@ process, reads the write back itself, and prints only the body's hash
 and the changed headings. `patch --verify <hash>` later confirms the
 stored body is still that one, and `patch --verify-file <path>` checks
 a wholesale write against the file it came from. Neither prints the
-body.
+body. Another session's handoff note goes through
+`planning_doc.py append-under --file <note>`: it matches the heading
+(by default `Notes for the next planning session`) by its text at any
+depth, appends after the section's last line, and refuses a note
+breaking the write-mangle rules below before anything is written.
 
 **The op payload field is `text`, not `content`.** An invalid-input
 error naming the patch field is what a wrong field name looks like.

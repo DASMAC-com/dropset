@@ -36,7 +36,7 @@ Usage::
 when several sections are wanted: slice that file with ``read_result.py``
 afterwards rather than re-fetching.
 
-Two write modes. The scheduler's close-out::
+Three write modes. The scheduler's close-out::
 
     python3 .claude/tools/planning_doc.py replace-sections \
         --file <scratchpad>/changed.md [--drop '## Old addendum'] \
@@ -61,6 +61,16 @@ printed; ``--verify`` later confirms the stored body still has that hash.
 stored body is compared to the file it wrote, and only the first differing
 line number is printed.
 
+And another session's handoff note, under the one heading it may write::
+
+    python3 .claude/tools/planning_doc.py append-under --file <note.md> \
+        [--heading 'Notes for the next planning session'] [--dry-run]
+
+The heading resolves by its text at any depth, the note lands after the
+section's last line, and a note breaking the document's composition rules (an
+inline code span, emphasis across a line break, a bare file name with its
+extension) is refused before anything is written.
+
 **A live scheduler is still the better source when there is one.** It
 answers the question rather than the text — one session that read the document
 then messaged its scheduler peer got the state of both blockers, the operator's
@@ -81,6 +91,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 
 import linear_api
@@ -542,16 +553,161 @@ def run_patch(argv: list[str]) -> int:
     )
 
 
+#: File extensions whose ``name.ext`` is also a hostname Linear linkifies —
+#: most are country-code TLDs (``.py``, ``.rs``, ``.md``, ``.sh``).
+_LINKIFIED_EXTS = (
+    "py|rs|md|ts|tsx|js|json|toml|yaml|yml|sh|zsh|sql|txt|lock|css|html|so"
+)
+_BARE_NAME_EXT = re.compile(
+    rf"(?<![\w/.~-])[A-Za-z0-9_-]+\.(?:{_LINKIFIED_EXTS})\b(?![/\w])"
+)
+_LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
+
+
+def composition_problems(note: str) -> list[str]:
+    """Where ``note`` breaks the Planning document's composition rules.
+
+    The document re-parses on every write, so the shapes the convention's
+    write-mangle rules name are refused before the write rather than repaired
+    after it: an inline code span, an emphasis span left open across a line
+    break, and a bare ``name.ext`` (linkified as a hostname). Measured: one
+    handoff note took a third ``save_document`` only to strip code spans the
+    document's header forbids, which the writer had no way to check.
+    """
+    problems = []
+    for n, line in enumerate(note.splitlines(), 1):
+        if "`" in line:
+            problems.append(f"line {n}: an inline code span (write the name plainly)")
+        body = _LIST_ITEM.sub("", line, count=1)
+        if body.count("**") % 2:
+            problems.append(f"line {n}: a ** emphasis span not closed on its line")
+        elif body.replace("**", "").count("*") % 2:
+            problems.append(f"line {n}: a * emphasis span not closed on its line")
+        for match in _BARE_NAME_EXT.finditer(line):
+            problems.append(
+                f"line {n}: bare {match.group(0)!r} is linkified as a hostname "
+                "(name it without the extension, or give its directory)"
+            )
+    return problems
+
+
+def append_under(content: str, heading: str, note: str) -> str:
+    """``content`` with ``note`` appended at the end of the section ``heading``.
+
+    The heading is matched by its text at any depth, so the caller never
+    guesses its markdown level (a guessed level was a measured aborted
+    anchor); exactly one match, else nothing is composed. The section runs to
+    the next heading at the same or a shallower depth, so a subsection stays
+    inside it. The note follows the section's last non-blank line — directly
+    when both are list items, so a bullet list stays one list, else after a
+    blank line — and the blank lines before the next heading are kept.
+    """
+    text = note.strip("\n")
+    if not text.strip():
+        raise PlanningDocError("the note is empty — nothing to append")
+    lines = content.splitlines(keepends=True)
+    plain = [line.rstrip("\n") for line in lines]
+    heads = list(read_result.iter_headings(plain))
+    wanted = heading.lstrip("#").strip()
+    found = [(i, d) for i, d, t in heads if t.strip() == wanted]
+    if len(found) != 1:
+        raise PlanningDocError(
+            f"heading {wanted!r} matches {len(found)} stored heading(s), not "
+            "exactly one — run --headings and use its exact text"
+        )
+    start, depth = found[0]
+    end = next((i for i, d, _ in heads if i > start and d <= depth), len(lines))
+    last = end
+    while last > start + 1 and not plain[last - 1].strip():
+        last -= 1
+    tight = (
+        last > start + 1
+        and _LIST_ITEM.match(plain[last - 1])
+        and _LIST_ITEM.match(text.splitlines()[0])
+    )
+    before = lines[:last]
+    if before and not before[-1].endswith("\n"):
+        before[-1] += "\n"
+    inserted = ("" if tight else "\n") + text + "\n"
+    after = lines[last:]
+    if after and after[0].strip():
+        # The section ran straight into the next heading: keep one blank line.
+        inserted += "\n"
+    return "".join(before) + inserted + "".join(after)
+
+
+def run_append_under(argv: list[str]) -> int:
+    """``append-under``: add a note under one Planning document heading.
+
+    Measured (session c09bcba8, a worker's post-merge handoff note): three
+    ``save_document`` calls for one line — an anchor aborted on a guessed
+    heading level, the insert, then a rewrite to strip inline code spans. Here
+    the heading resolves by text, the note is linted before any write, and the
+    write is guarded and read back like ``patch``, printing only a hash.
+    """
+    parser = argparse.ArgumentParser(
+        prog="planning_doc.py append-under",
+        description="Append a note at the end of one Planning document section.",
+    )
+    parser.add_argument(
+        "--heading",
+        default="Notes for the next planning session",
+        help="the section's heading text, any depth (default: %(default)s)",
+    )
+    parser.add_argument("--file", required=True, help="the note to append")
+    parser.add_argument("--id", default=None, help="default $LINEAR_PLANNING_DOC_ID")
+    parser.add_argument("--dry-run", action="store_true", help="write nothing")
+    args = parser.parse_args(argv)
+
+    try:
+        with open(args.file, encoding="utf-8") as fh:
+            note = fh.read()
+    except OSError as exc:
+        raise PlanningDocError(f"cannot read {args.file}: {exc}") from exc
+    problems = composition_problems(note)
+    if problems:
+        raise PlanningDocError(
+            "the note breaks the document's composition rules, so nothing was "
+            "written:\n  " + "\n  ".join(problems)
+        )
+    doc_id = args.id or linear_api.env_var(
+        "LINEAR_PLANNING_DOC_ID", error=PlanningDocError
+    )
+    api_key = linear_api.env_var("LINEAR_API_KEY", error=PlanningDocError)
+    title, stored = fetch(api_key, doc_id)
+    composed = append_under(stored, args.heading, note)
+    summary = (
+        f"{title} | under {args.heading!r}, {len(stored)} -> {len(composed)} chars"
+    )
+    if args.dry_run:
+        print(f"planning-doc | WOULD APPEND {summary}", file=sys.stderr)
+        return 0
+    # The same one-round-trip race guard as `patch`.
+    _, fresh = fetch(api_key, doc_id)
+    if fresh != stored:
+        composed = append_under(fresh, args.heading, note)
+        _, again = fetch(api_key, doc_id)
+        if again != fresh:
+            raise PlanningDocError(
+                "the document is changing under this write (two concurrent edits "
+                "in a row) — wait for the other writer and re-run"
+            )
+        summary += " (re-applied over a concurrent edit)"
+    return _write_and_read_back(api_key, doc_id, composed, "APPENDED", summary)
+
+
 def run(argv: list[str]) -> int:
     if argv[1:2] == ["replace-sections"]:
         return run_replace(argv[2:])
     if argv[1:2] == ["patch"]:
         return run_patch(argv[2:])
+    if argv[1:2] == ["append-under"]:
+        return run_append_under(argv[2:])
     parser = argparse.ArgumentParser(
         prog="planning_doc.py",
         description="Read named sections of the Planning document, not all of it.",
         epilog="The write modes: planning_doc.py replace-sections --help, "
-        "planning_doc.py patch --help",
+        "planning_doc.py patch --help, planning_doc.py append-under --help",
     )
     parser.add_argument(
         "--id",

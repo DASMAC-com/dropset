@@ -170,6 +170,15 @@ class ExtractFieldTests(unittest.TestCase):
         rc, out, _ = _invoke(path, "--field", "status")
         self.assertEqual((rc, out), (0, "In Review\n"))
 
+    def test_a_backgrounded_verdict_with_the_exit_trailer_selects(self):
+        # The shape a backgrounded `wait_for_checks.py --queue` leaves: an
+        # indented verdict, then the harness's exit line. It was refused as
+        # "Extra data" on every dequeue verdict before the leading-value parse.
+        verdict = '{\n  "conclusion": "dequeued",\n  "pr": 285\n}\n'
+        path = _plain(verdict + "\n[exited with code 1]\n")
+        rc, out, _ = _invoke(path, "--field", "conclusion")
+        self.assertEqual((rc, out), (0, "dequeued\n"))
+
 
 class TailTests(unittest.TestCase):
     def test_the_last_n_lines_come_back_numbered(self):
