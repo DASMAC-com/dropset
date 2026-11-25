@@ -1406,11 +1406,10 @@ def added_line_shape(diff_path: Path) -> dict:
     gate whose whole purpose is quality rather than thrift; the point of saying so
     is that "errs toward code" describes the state machine, not the result.
 
-    Two further gaps in the low direction, both accepted: an added line
-    whose own content starts with ``++`` is written ``+++…`` and is skipped with
-    the file header, and a path git **quotes** (an embedded space, or non-ASCII)
-    yields an extension with a trailing quote that matches no table entry, so
-    that file reads as code.
+    One further gap in the low direction, accepted: an added line whose own
+    content starts with ``++`` is written ``+++…`` and is skipped with the file
+    header. A path git **quotes** (non-ASCII) is unescaped by the header
+    parser, so its extension is read correctly.
     """
     added = 0
     comment = 0
