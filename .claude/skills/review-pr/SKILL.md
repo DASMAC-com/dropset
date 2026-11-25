@@ -1508,19 +1508,21 @@ migrations or generation inputs, and whether it spans crates.
    python3 .claude/tools/wait_for_checks.py --queue <number>
    ```
 
-   It owns the merged-versus-dequeued reasoning (a terminal `MERGED`
-   from any source wins — `docs/conventions/github-mcp.md` → "The
-   merge-queue handoff"), anchors itself on the PR's own enqueue time,
-   dismisses the PR's notifications on every exit but `probe_failed`,
-   and writes the full verdict beside its log. Say once that the PR is
-   queued, then stay silent until the exit. Where a background command
-   is unavailable, a session-scoped cron runs the same command about
-   every 12 minutes with `--timeout 660`; it needs no `--since`,
-   deletes itself on a terminal verdict, and stays silent on a
-   `timeout`. If the classifier denies the cron, ask the operator to
-   approve it here; never hand over the wait. **If your own read says
-   `MERGED`, never act on an older non-merged verdict**, and never
-   re-read a file at the merge ref to confirm the landing.
+   It owns the merged-versus-dequeued reasoning (a terminal `MERGED` from any
+   source wins — `docs/conventions/github-mcp.md` → "The merge-queue handoff"),
+   anchors itself on the PR's own enqueue time, dismisses the PR's notifications
+   on every exit but `probe_failed`, and writes the full verdict beside its log.
+   Say once that the PR is queued, then stay silent until the exit. **Exit 0 is
+   `merged`: skip the read** — its one stdout line, in the exit notification, is
+   all `/post-merge` needs. Only a non-zero exit needs the verdict, in one call
+   (`read_result.py <output> --field conclusion`, which tolerates the harness's
+   exit trailer), never a grep fallback. Where a background command is
+   unavailable, a session-scoped cron runs the same command about every 12
+   minutes with `--timeout 660`; it needs no `--since`, deletes itself on a
+   terminal verdict, and stays silent on a `timeout`. If the classifier denies
+   the cron, ask the operator to approve it here; never hand over the wait. **If
+   your own read says `MERGED`, never act on an older non-merged verdict**, and
+   never re-read a file at the merge ref to confirm the landing.
 
    Branch on the verdict — the re-enqueue decision is yours:
 

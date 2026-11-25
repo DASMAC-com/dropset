@@ -1197,6 +1197,60 @@ class QueueWatchTests(unittest.TestCase):
         self.assertEqual(v["conclusion"], "merged")
         self.assertEqual(v["first_run_seen_at"], "2026-10-13T12:05:00Z")
 
+    def test_a_stale_anchor_run_never_disarms_the_no_group_bound(self):
+        """A stale ``since`` widens the window to an earlier cycle: that cycle's
+        finished run predates this entry's enqueue, so it is not the group."""
+        earlier = queue_run(
+            "success",
+            created="2026-10-13T11:30:00Z",
+            branch="gh-readonly-queue/main/pr-285-old",
+        )
+        v = self._watch(
+            [snap(entry=QUEUED, runs=[earlier])],
+            since="2026-10-13T11:00:00Z",
+            await_group_seconds=600,
+        )
+        self.assertEqual(v["conclusion"], "queued_no_group")
+        self.assertIsNone(v["first_run_seen_at"])
+
+    def test_a_timeline_enqueue_also_floors_the_group_runs(self):
+        """No GraphQL entry: the timeline's unremoved enqueue is the floor."""
+        earlier = queue_run("success", created="2026-10-13T11:30:00Z")
+        v = self._watch(
+            [snap(enqueued=ENQUEUED, runs=[earlier])],
+            since="2026-10-13T11:00:00Z",
+            await_group_seconds=600,
+        )
+        self.assertEqual(v["conclusion"], "queued_no_group")
+
+    def test_a_run_seconds_before_the_enqueue_is_still_not_the_group(self):
+        """A fast dequeue-then-re-enqueue: the old cycle's run is only 30 s
+        older. No slack on the floor, or this run would disarm the bound."""
+        just_before = queue_run("failure", created="2026-10-13T11:59:30Z")
+        v = self._watch(
+            [snap(entry=QUEUED, runs=[just_before])],
+            since="2026-10-13T11:00:00Z",
+            await_group_seconds=600,
+        )
+        self.assertEqual(v["conclusion"], "queued_no_group")
+
+    def test_group_runs_floors_on_the_newer_of_the_two_enqueue_times(self):
+        older_entry = {"state": "QUEUED", "enqueuedAt": "2026-10-13T11:00:00Z"}
+        between = queue_run(created="2026-10-13T11:30:00Z")
+        self.assertEqual(wfc._group_runs([between], older_entry, ENQUEUED), [])
+        self.assertEqual(
+            wfc._group_runs([between], dict(QUEUED), "2026-10-13T11:00:00Z"), []
+        )
+
+    def test_group_runs_keeps_an_undated_run_and_counts_all_with_no_enqueue(self):
+        undated = queue_run(created=None)
+        old = queue_run(created="2026-10-13T11:30:00Z")
+        self.assertEqual(wfc._group_runs([undated], QUEUED, None), [undated])
+        self.assertEqual(
+            wfc._group_runs([undated, old], {"state": "QUEUED"}, None),
+            [undated, old],
+        )
+
     def test_auto_merge_never_outranks_a_failed_queue_run(self):
         auto = {"enabledAt": ENQUEUED}
         gone = snap(auto=auto, runs=[queue_run("failure")])

@@ -557,6 +557,169 @@ class PatchRun(unittest.TestCase):
         self.assertIn("MISMATCH", err)
 
 
+NOTES_DOC = "\n".join(
+    [
+        "# State of play",
+        "",
+        "today",
+        "",
+        "## Notes for the next planning session",
+        "",
+        "- an earlier note",
+        "",
+        "### From the architect",
+        "",
+        "a nested note",
+        "",
+        "# Standing decisions",
+        "",
+        "never hardcode slot duration",
+        "",
+    ]
+)
+
+
+class AppendUnder(unittest.TestCase):
+    def test_the_heading_resolves_by_text_at_any_depth(self):
+        # No `##` given: the caller never guesses the stored level.
+        out = pd.append_under(NOTES_DOC, "Notes for the next planning session", "x")
+        self.assertIn("- an earlier note\n\nx\n\n### From the architect", out)
+
+    def test_the_note_never_joins_a_subsection(self):
+        # After the last subsection it would read as the architect's note.
+        out = pd.append_under(NOTES_DOC, "## Notes for the next planning session", "x")
+        self.assertLess(out.index("\nx\n"), out.index("### From the architect"))
+        self.assertIn("a nested note\n\n# Standing decisions", out)
+        self.assertTrue(out.endswith("never hardcode slot duration\n"))
+
+    def test_a_bullet_after_a_bullet_stays_one_list(self):
+        doc = "# Notes\n\n- one\n\n# Next\n"
+        self.assertEqual(
+            pd.append_under(doc, "Notes", "- two\n"),
+            "# Notes\n\n- one\n- two\n\n# Next\n",
+        )
+
+    def test_an_empty_section_and_the_document_end(self):
+        self.assertEqual(pd.append_under("# Notes", "Notes", "x"), "# Notes\n\nx\n")
+        self.assertEqual(
+            pd.append_under("# Notes\n# Next\n", "Notes", "x"),
+            "# Notes\n\nx\n\n# Next\n",
+        )
+
+    def test_a_missing_or_repeated_heading_composes_nothing(self):
+        with self.assertRaisesRegex(pd.PlanningDocError, "matches 0"):
+            pd.append_under(NOTES_DOC, "Notes", "x")
+        with self.assertRaisesRegex(pd.PlanningDocError, "matches 2"):
+            pd.append_under("# A\n\n## A\n", "A", "x")
+
+    def test_an_empty_note_is_refused(self):
+        with self.assertRaisesRegex(pd.PlanningDocError, "empty"):
+            pd.append_under(NOTES_DOC, "Notes for the next planning session", "\n\n")
+
+
+class CompositionProblems(unittest.TestCase):
+    def test_a_clean_note_passes(self):
+        note = (
+            "- **ENG-1** landed: the planning_doc tool now appends, see\n"
+            "  .claude/tools/planning_doc.py, e.g. for a *handoff* note.\n"
+        )
+        self.assertEqual(pd.composition_problems(note), [])
+
+    def test_each_rule_is_named_with_its_line(self):
+        note = "use `make lint`\n**open bold\nstill open**\n- a *dangling\nsee foo.py\n"
+        problems = pd.composition_problems(note)
+        self.assertEqual(len(problems), 5)
+        self.assertIn("line 1: an inline code span", problems[0])
+        self.assertIn("line 2: a ** emphasis", problems[1])
+        self.assertIn("line 3: a ** emphasis", problems[2])
+        self.assertIn("line 4: a * emphasis", problems[3])
+        self.assertIn("line 5: bare 'foo.py'", problems[4])
+
+    def test_a_strikethrough_open_across_a_line_is_refused_not_an_underscore(self):
+        problems = pd.composition_problems("~~old\ntext~~\nplanning_doc_tool\n")
+        self.assertEqual(len(problems), 2)
+        self.assertIn("line 1: a ~~ strikethrough", problems[0])
+        self.assertIn("line 2: a ~~ strikethrough", problems[1])
+
+
+class AppendUnderRun(unittest.TestCase):
+    OK = {"documentUpdate": {"success": True}}
+
+    @staticmethod
+    def doc(content):
+        return {"document": {"title": "Planning", "content": content}}
+
+    def _run(self, responses, note, *args):
+        calls = []
+
+        def post(api_key, query, variables, error):
+            calls.append((query, variables))
+            return responses.pop(0)
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "note.md")
+            Path(path).write_text(note, encoding="utf-8")
+            err = io.StringIO()
+            with mock.patch.object(pd.linear_api, "post", side_effect=post):
+                with mock.patch.dict(os.environ, ENV, clear=True):
+                    with redirect_stdout(io.StringIO()) as out, redirect_stderr(err):
+                        code = pd.run(
+                            ["planning_doc.py", "append-under", "--file", path, *args]
+                        )
+        return code, out.getvalue(), err.getvalue(), calls
+
+    def test_the_default_heading_writes_reads_back_with_zero_echo(self):
+        note = "- a handoff pointer\n"
+        composed = pd.append_under(
+            NOTES_DOC, "Notes for the next planning session", note
+        )
+        code, out, err, calls = self._run(
+            [self.doc(NOTES_DOC), self.doc(NOTES_DOC), self.OK, self.doc(composed)],
+            note,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[2][1], {"id": "doc-1", "content": composed})
+        self.assertIn("APPENDED Planning | under 'Notes for the next", err)
+        self.assertIn(f"hash {pd.content_hash(composed)}", err)
+        self.assertEqual(out, "")
+        self.assertNotIn("handoff pointer", err)
+
+    def test_a_note_breaking_a_rule_is_refused_before_any_read(self):
+        with self.assertRaisesRegex(pd.PlanningDocError, "inline code span"):
+            self._run([], "run `make lint`\n")
+
+    def test_dry_run_writes_nothing(self):
+        code, _, err, calls = self._run([self.doc(NOTES_DOC)], "x\n", "--dry-run")
+        self.assertEqual((code, len(calls)), (0, 1))
+        self.assertIn("WOULD APPEND", err)
+
+    def test_the_heading_flag_overrides_the_default(self):
+        code, _, err, calls = self._run(
+            [self.doc(NOTES_DOC)], "x\n", "--heading", "Standing decisions", "--dry-run"
+        )
+        self.assertEqual((code, len(calls)), (0, 1))
+        self.assertIn("under 'Standing decisions'", err)
+        with self.assertRaisesRegex(pd.PlanningDocError, "matches 0"):
+            self._run([self.doc(NOTES_DOC)], "x\n", "--heading", "Nowhere")
+
+    def test_a_concurrent_edit_is_re_applied_over(self):
+        fresh = NOTES_DOC.replace("today", "today, later")
+        composed = pd.append_under(fresh, "Notes for the next planning session", "x")
+        code, _, err, calls = self._run(
+            [
+                self.doc(NOTES_DOC),
+                self.doc(fresh),
+                self.doc(fresh),
+                self.OK,
+                self.doc(composed),
+            ],
+            "x\n",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[3][1]["content"], composed)
+        self.assertIn("re-applied over a concurrent edit", err)
+
+
 class Failures(unittest.TestCase):
     def test_empty_content_is_an_error_not_a_silent_empty_read(self):
         with mock.patch.object(
