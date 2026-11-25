@@ -47,7 +47,11 @@ class FakeGh:
         pr_list_fails=False,
         delete_fails=(),
         unsubscribe_fails=(),
+        comments=None,
+        viewer="me",
     ):
+        self.comments = comments or {}
+        self.viewer = viewer
         self.pages = [THREADS] if pages is None else pages
         self.listed = listed
         self.views = views or {}
@@ -65,6 +69,11 @@ class FakeGh:
             page = int(args[1].rsplit("page=", 1)[1])
             body = self.pages[page - 1] if page <= len(self.pages) else []
             return 0, json.dumps(body), ""
+        if args == ["api", "/user"]:
+            return 0, json.dumps({"login": self.viewer}), ""
+        if args[0] == "api" and args[1] in self.comments:
+            body = self.comments[args[1]]
+            return (1, "", "HTTP 404") if body is None else (0, json.dumps(body), "")
         if args[:2] == ["pr", "list"]:
             if self.pr_list_fails:
                 return 1, "", "HTTP 502"
@@ -171,6 +180,112 @@ class PrModeTests(unittest.TestCase):
         self.assertEqual(sorted(gh.deletes()), ["m1", "m2", "o1"])
         self.assertEqual(sorted(gh.unsubscribes()), ["m1", "m2"])
         self.assertEqual((out["dismissed"], out["unsubscribed"]), (3, 2))
+
+
+def conversation(tid, reason, url, title=None):
+    """A thread on merged #663 whose latest comment lives at ``url``."""
+    return {
+        "id": tid,
+        "reason": reason,
+        "subject": {
+            "url": URL.format("pulls", 663),
+            "title": title,
+            "latest_comment_url": url,
+        },
+    }
+
+
+HUMAN = {"user": {"login": "reviewer", "type": "User"}}
+BOT = {"user": {"login": "copilot", "type": "Bot"}}
+SELF = {"user": {"login": "me", "type": "User"}}
+
+
+class HoldTests(unittest.TestCase):
+    """A thread that wants a reply is held for the ``post-merge`` skill,
+    never dismissed under it; the rest of the PR's threads go as usual."""
+
+    PAGE = [
+        {**THREADS[0], "reason": "mention"},
+        {**THREADS[1], "reason": "ci_activity"},
+        conversation("m3", "comment", "c/human", title="Fix it"),
+        # A reviewer's comment on this account's own PR arrives as `author`.
+        conversation("m4", "author", "c/review"),
+        conversation("m5", "author", "c/bot"),
+        conversation("m6", "author", "c/self"),
+        {**THREADS[3], "reason": "review_requested"},
+    ]
+    COMMENTS = {"c/human": HUMAN, "c/review": HUMAN, "c/bot": BOT, "c/self": SELF}
+
+    def test_attention_and_human_conversations_are_held(self):
+        gh = FakeGh(pages=[self.PAGE], comments=self.COMMENTS)
+        _, out = dismiss(gh, {663}, apply=True, hold_attention=True)
+        # A bot's comment and this account's own are no question.
+        self.assertEqual(sorted(gh.deletes()), ["m2", "m5", "m6"])
+        self.assertEqual(
+            [(t["id"], t["reason"], t["title"]) for t in out["held"]],
+            [
+                ("m1", "mention", None),
+                ("m3", "comment", "Fix it"),
+                ("m4", "author", None),
+            ],
+        )
+        self.assertEqual(
+            summary(out),
+            "dismissed 3 notification(s), unsubscribed 3; 3 held for a reply",
+        )
+        # One viewer read for the whole run, never one per thread.
+        self.assertEqual(gh.calls.count(["api", "/user"]), 1)
+
+    def test_an_unreadable_comment_holds_and_no_comment_url_dismisses(self):
+        page = [
+            conversation("m3", "author", "c/gone"),
+            conversation("m4", "author", None),
+        ]
+        gh = FakeGh(pages=[page], comments={"c/gone": None})
+        _, out = dismiss(gh, {663}, apply=True, hold_attention=True)
+        self.assertEqual([t["id"] for t in out["held"]], ["m3"])
+        self.assertEqual(gh.deletes(), ["m4"])
+
+    def test_the_mention_alone_reads_no_comment(self):
+        gh = FakeGh(pages=[[{**THREADS[0], "reason": "mention"}]])
+        dismiss(gh, {663}, apply=True, hold_attention=True)
+        self.assertNotIn(["api", "/user"], gh.calls)
+
+    def test_without_the_hold_every_thread_goes(self):
+        gh = FakeGh(pages=[self.PAGE], comments=self.COMMENTS)
+        _, out = dismiss(gh, {663}, apply=True)
+        self.assertEqual(sorted(gh.deletes()), ["m1", "m2", "m3", "m4", "m5", "m6"])
+        self.assertEqual(out["held"], [])
+        # No hold, no comment reads.
+        self.assertNotIn(["api", "/user"], gh.calls)
+
+    def test_settled_mode_refuses_the_hold(self):
+        with self.assertRaises(ValueError):
+            dismiss(FakeGh(), None, apply=False, hold_attention=True)
+
+    def test_main_forwards_the_hold_and_refuses_it_with_settled(self):
+        seen = []
+
+        def fake_dismiss(gh, prs, apply, keep_subscription=frozenset(), **kw):
+            seen.append((prs, kw.get("hold_attention")))
+            return 0, {
+                "mode": "pr", "dry_run": True, "threads": 0, "held": [],
+                "selected": [], "dismissed": 0, "unsubscribed": 0,
+                "failed": [], "unsubscribe_failed": [], "error": None,
+                "unresolved": [], "notice": None,
+            }  # fmt: skip
+
+        argv = ["prog", "dismiss", "--pr", "663", "--hold-attention"]
+        with (
+            mock.patch.object(pr_notifications, "dismiss", fake_dismiss),
+            mock.patch("sys.argv", argv),
+            mock.patch("sys.stdout", io.StringIO()),
+        ):
+            self.assertEqual(pr_notifications.main(), 0)
+        self.assertEqual(seen, [({663}, True)])
+        argv = ["prog", "dismiss", "--settled", "--hold-attention"]
+        with mock.patch("sys.argv", argv), self.assertRaises(SystemExit):
+            pr_notifications.main()
 
 
 class ApplyTests(unittest.TestCase):
@@ -313,11 +428,13 @@ class CliTests(unittest.TestCase):
     def test_main_passes_mode_and_apply_through_and_prints_compact(self):
         seen = []
 
-        def fake_dismiss(gh, prs, apply, keep_subscription=frozenset()):
+        def fake_dismiss(
+            gh, prs, apply, keep_subscription=frozenset(), hold_attention=False
+        ):
             seen.append((prs, apply, set(keep_subscription)))
             return 0, {
                 "mode": "settled" if prs is None else "pr",
-                "dry_run": not apply, "threads": 0,
+                "dry_run": not apply, "threads": 0, "held": [],
                 "selected": [], "dismissed": 0, "unsubscribed": 0,
                 "failed": [], "unsubscribe_failed": [], "error": None,
                 "unresolved": [], "notice": None,

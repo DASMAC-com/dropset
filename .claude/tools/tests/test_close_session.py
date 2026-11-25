@@ -73,11 +73,14 @@ class FakeRun:
         self.unlock_rc = 0
         self.lock_rc = 0
         self.branch_rc = 0
+        self.make_rc = 0
         self.__dict__.update(overrides)
         self.calls: list[list[str]] = []
 
     def __call__(self, cmd, cwd=None):
         self.calls.append(cmd)
+        if cmd[0] == "make":
+            return self.make_rc, "", "make: *** [clean] Error 1"
         if cmd[:3] == ["ps", "-o", "comm="]:
             name = self.comms.get(int(cmd[-1]))
             return (0, f"{name}\n", "") if name else (1, "", "")
@@ -375,6 +378,50 @@ class CloseTests(unittest.TestCase):
         rc, result, runner, _ = run_close(porcelain=porcelain, parents={1000: 1})
         self.assertEqual(rc, 0, result)
         self.assertFalse(any(c[3:5] == ["worktree", "unlock"] for c in runner.calls))
+
+
+class ReclaimTests(unittest.TestCase):
+    """``make clean`` runs in the closing tree after the state write and
+    before the removal, on the removal path only."""
+
+    def _cleans(self, runner):
+        return [i for i, c in enumerate(runner.calls) if c[0] == "make"]
+
+    def test_clean_runs_in_the_tree_between_the_write_and_the_removal(self):
+        order = []
+        runner = FakeRun()
+
+        def tracking_run(cmd, cwd=None):
+            if cmd[0] == "make" or cmd[3:5] == ["worktree", "remove"]:
+                order.append(cmd[0] if cmd[0] == "make" else "remove")
+            return runner(cmd, cwd)
+
+        def writer(*_):
+            order.append("write")
+
+        rc, result = close(ns(), run=tracking_run, writer=writer, pid=1000)
+        self.assertEqual(rc, 0, result)
+        self.assertTrue(result["reclaimed"])
+        self.assertEqual(order, ["write", "make", "remove"])
+        (at,) = self._cleans(runner)
+        self.assertEqual(runner.calls[at], ["make", "-C", TREE, "clean"])
+
+    def test_a_failed_clean_is_a_note_and_the_removal_still_happens(self):
+        rc, result, _, _ = run_close(make_rc=2)
+        self.assertEqual(rc, 0, result)
+        self.assertTrue(result["removed"])
+        self.assertFalse(result["reclaimed"])
+        self.assertIn("make clean failed: make: *** [clean] Error 1", result["notes"])
+
+    def test_no_clean_when_the_tree_stays_or_nothing_is_written(self):
+        for args, fake in (
+            (ns(keep_worktree=True), {}),
+            (ns(dry_run=True), {}),
+            (ns(), {"status": " M x\n"}),
+        ):
+            _, result, runner, _ = run_close(args, **fake)
+            self.assertEqual(self._cleans(runner), [], args)
+            self.assertFalse(result["reclaimed"])
 
 
 @unittest.skipUnless(shutil.which("git"), "git not installed")

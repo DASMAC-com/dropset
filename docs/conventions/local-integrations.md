@@ -129,7 +129,7 @@ wired guard whose reference lacks it reports `FAIL-CLOSED` and exits
 1 — it fires today, but it is the brick waiting for a removal. The
 private-key guard's `permissions.deny` rules hold with no script
 running, so its failing open leaves that layer in force. The close
-tools still treat removal as the end of shell access (`review-pr`'s
+tools still treat removal as the end of shell access (`post-merge`'s
 close question says so), since an operator's wiring may predate this.
 
 The upkeep pass calls `hook_wiring.py` directly rather than this `make`
@@ -1683,7 +1683,8 @@ it. **A hand-typed `anchor build` gets none of this.** Go through
 `make program`, or run it as `env -u CARGO_TARGET_DIR anchor build`.
 
 **Cleaning.** `make clean` removes the worktree's own `target/` (plus its
-`node_modules` and `.next`), never the pool. Under the pool that `target/`
+`node_modules` and `.next`), never the pool; `close_session.py` runs it
+before removing a worktree. Under the pool that `target/`
 holds the Anchor outputs, the copied bots and, until the editor joins,
 rust-analyzer's checks. **Never `cargo clean` the pool from a
 worktree.** A bare `cargo clean` wipes the current lane, the build of

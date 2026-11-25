@@ -13,8 +13,8 @@ all: lint test
 # Nuke this worktree's heavy build artifacts to reclaim disk: the Rust
 # target/ tree, every pnpm node_modules, and the Next.js .next build caches
 # (all cheaply rebuilt). Leaves the committed generated trees (sdk/idl,
-# sdk/ts, sdk/conformance) alone. Run at PR merge time (by review-pr) so a
-# worktree that lingers before it is pruned doesn't keep its build tree.
+# sdk/ts, sdk/conformance) alone. Run by close_session.py just before it
+# removes a worktree, so the disk frees even when the removal then fails.
 # `rm -rf target`, not `cargo clean`: under the shared cargo pool, `cargo
 # clean` would wipe the POOL (every worktree's build), not this one's outputs,
 # and `cargo clean -p <crate>` removes that crate for every checkout on the

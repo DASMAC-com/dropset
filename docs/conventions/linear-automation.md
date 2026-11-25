@@ -1021,8 +1021,8 @@ reads against is in `local-integrations.md` → "The verb table".
   `ENG-###`, the session — never the operator — or the reason; `[]`
   when nothing was left over), a Done or Canceled close refuses
   without one or with any item undisposed, before any write, and
-  `review-pr` and `wrap` run it as a `--dry-run` before asking the
-  close question. The order is load-bearing: once the
+  `post-merge` runs it as a `--dry-run` before asking the close
+  question. The order is load-bearing: once the
   close removes the worktree, guard wiring that predates "Wiring
   fails open" (`local-integrations.md`) blocks every Bash and file
   write, so nothing can be filed afterwards except through raw MCP.

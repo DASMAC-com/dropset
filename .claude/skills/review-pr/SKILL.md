@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and enqueuing the PR (unasked for an in-band Todo task, else offered), then watch the queue itself through to merged or dequeued and, on a merge, run the post-merge tail — the session-metrics tail run unprompted, then one mark-Done-and-close question.
+description: Adversarial pre-review — mark the Linear issue In Progress on invocation, verify its checklist is fully addressed, lint, catalogue issues, fix what's mechanical, ready the PR, wait for GitHub CI to pass, print the review summary, then at the merge-queue handoff re-check the PR still merges cleanly before moving the issue In Review and enqueuing the PR (unasked for an in-band Todo task, else offered), then watch the queue itself through to merged or dequeued and, on a merge, hand straight to post-merge for the close.
 user-invocable: true
 ---
 
@@ -1483,19 +1483,11 @@ migrations or generation inputs, and whether it spans crates.
    - **On decline**, leave the PR ready and the issue In Review, and
      note they can merge it (or enable "Merge when ready") themselves.
 
-1. **Capture session metrics** — unprompted, once, as the second-last
-   act of the step-22 tail: after a confirmed merge, immediately
-   **before** the close question, so the capture covers the whole
-   task. **No approval and no question**; the enqueue-time "shall I
-   file session metrics?" ask is retired (`history.md` → "Metrics
-   ask retired"). If the PR is taken back out of the queue, nothing
-   files — the capture waits for the next close attempt. On every path
-   that ends without a merge (a declined enqueue, a `closed` PR, a
-   dequeue left for the user), say in the report that session metrics
-   were **not** captured this run.
-
-   Invoke `/session-metrics`, the shared tail: the brief, then the
-   `Session account`.
+1. **The close is `/post-merge`'s.** Session metrics, the cost, what
+   landed, the leftovers and the one Done question all run there,
+   after a confirmed merge (`history.md` → "Metrics ask retired"). On
+   a path that ends without a merge (a declined enqueue, a dequeue left
+   for the user), say that session metrics were **not** captured.
 
 1. **Surface the merge-queue outcome.** Only if the enqueue was
    approved. **Watch the queue yourself: "come back and tell me when
@@ -1527,9 +1519,10 @@ migrations or generation inputs, and whether it spans crates.
    Branch on the verdict — the re-enqueue decision is yours:
 
    - **`merged`** (one line, carrying `Today's merge count is now N.`)
-     → the issue **stays In Review**; run the post-merge tail below.
-   - **`closed`** → abandoned, not landed; skip the tail. The close is
-     `/wrap`'s.
+     → the issue **stays In Review**; enter `/post-merge` at once,
+     unasked, the merged line in hand.
+   - **`closed`** → abandoned, not landed; the close is
+     `/post-merge`'s closed-not-merged branch.
    - **`not_queued`**, acted on once (a second holds) → when
      `not_queued.classification` is present an earlier cycle failed and
      this watch began too late to see it: branch on its `cause` as the
@@ -1562,76 +1555,6 @@ migrations or generation inputs, and whether it spans crates.
      restart the watch; never report it as queued-and-fine.
    - **`stopped`** → act on what you learned instead.
 
-   **The post-merge tail, on `merged` only — one batched sequence with
-   a single operator touch at the very end.** Work it as a checklist;
-   **a diversion does not discharge it** — another skill, a peer
-   session's message, a fresh request or a long wait closes nothing
-   (`history.md` → "Diverted tail"). Come back and finish it, or say
-   which item you are skipping and why. An unanswered
-   `AskUserQuestion` is a deferral the user chose; an unasked one is a
-   dropped step.
-
-   - [ ] **Relay the merged line's two facts** — print its
-     `Today's merge count is now N.` sentence exactly (or its
-     "unavailable" one; never count by hand), and say so only if the
-     notification dismissal failed: the upkeep pass's settled-PR sweep
-     is the fallback, so never dismiss by hand or
-     `mark_all_notifications_read`.
-
-   - [ ] **Reclaim the worktree's disk** — the multi-GB `target/` and
-     `node_modules` are dead weight until the worktree is pruned:
-
-     ```sh
-     make clean
-     ```
-
-     Only on a confirmed merge; a dequeued PR keeps its build tree.
-
-   - [ ] **Working tree clean** — `git status --short` is empty. A
-     stray change can come from anywhere (a partial edit, a scratch
-     file written into the repo), nothing else at the end of a review
-     reads tree state, and the evidence is deleted with the worktree.
-     After `make clean` on purpose, since it can touch the tree.
-     Surface anything modified and decide where it goes; never report
-     the run complete with a dirty tree.
-
-   - [ ] **Session metrics** — step 21, unprompted.
-
-   - [ ] **Close** — the leftover ledger, then the one question.
-     Every warning, nit and left-for-you item in the summary and PR
-     body is filed, handed to a live session or dropped with a reason
-     — by you, never handed to the operator; the PR body is no
-     disposition (`docs/conventions/linear-automation.md` → "Every
-     leftover has a disposition before the close"), each filing
-     messaged to the curator (`curate-<day>`, via `ListAgents`; else
-     the scheduler). A captured operator action is never restated,
-     and the close question is the last word (same doc → "A close
-     never recites a captured operator action"). Run the tool below
-     with `--dry-run`; ask only once it passes, via `AskUserQuestion`
-     — *"N leftovers disposed, metrics captured — mark Done? Removing
-     the worktree ends shell, file writes and memory saves here."* —
-     **"Mark Done and remove the worktree (Recommended)"** first,
-     **"Mark Done, keep the worktree"** second. Only this approval
-     moves the issue to Done. Both run one tool as the **last** tool
-     call, so the state write lands before any removal:
-
-     ```sh
-     python3 .claude/tools/close_session.py --state Done --session-id <uuid> \
-       --leftovers-file <scratchpad>/leftovers.json
-     ```
-
-     (`--keep-worktree` for the second option; the id appends the
-     cost line). It refuses with nothing changed when it cannot prove
-     the close safe — an undisposed leftover, a dirty tree, an
-     unpushed commit, an open or unreadable PR, a foreign lock, a
-     failed state write — naming it in `refused`. Exit 2 means Done
-     landed and the removal did not; relay its note.
-
-   If you want the landed content anyway — a merge resolution, say —
-   slice it with `python3 .claude/tools/show_at_ref.py <ref> <path>`;
-   **never `git show <ref>:<path>`**, which prints the whole blob
-   (`--no-patch` suppresses a diff, not a blob). That restates a
-   general rule **at the call site on purpose**: a correct rule stated
-   in one phase of a long skill has repeatedly failed to fire in
-   another, and the cheap fix is the narrow form where it is needed —
-   so a later de-duplication pass must leave it.
+   **On `merged`, the session goes on in `/post-merge`** — its
+   checklist, the cost and the one Done question; this skill ends
+   here.

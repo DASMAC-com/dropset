@@ -109,14 +109,14 @@ Mechanism and naming rule: `docs/conventions/local-integrations.md` →
 
 ### Three more verbs
 
-**`/wrap`** is the clear-to-close gate for ending a session — a
-deterministic checklist ending in an explicit verdict, for the ragged
-endings `review-pr` does not cover. **`/harden`** turns a proven
-ad-hoc command shape into a committed, tested tool, consuming the
-candidates the daily digest already ranks; it refuses a shape with no
-measured recurrence. **`/root-cause`** is systematic debugging under
-two hard rules: no fix before the cause is investigated, and after
-three failed hypotheses the architecture is what gets questioned.
+**`/post-merge`** is the session close — `review-pr` enters it on a merged
+verdict, and it is typed for the ragged endings: a checklist, the cost and one
+Done question, never a self-marked Done. **`/harden`** turns a proven ad-hoc
+command shape into a committed, tested tool, consuming the candidates the daily
+digest already ranks; it refuses a shape with no measured recurrence.
+**`/root-cause`** is systematic debugging under two hard rules: no fix before
+the cause is investigated, and after three failed hypotheses the architecture is
+what gets questioned.
 
 ### Structured filing fields
 
