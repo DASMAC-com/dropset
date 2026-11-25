@@ -492,5 +492,48 @@ def _probe(pid: int) -> None:
         raise ProcessLookupError(pid)
 
 
+class RelaunchKnobTests(unittest.TestCase):
+    """The cycle relaunch's re-read of the runtime config."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.profile = Path(tmp.name) / ".zshrc"
+
+    def test_a_raised_knob_wins_and_is_noted(self):
+        self.profile.write_text(
+            "export DS_FLEET_TOTAL=18\nCARGO_BUILD_JOBS=6\nDS_OTHER=x\n"
+        )
+        env = {"DS_FLEET_TOTAL": "16", "CARGO_BUILD_JOBS": "6"}
+        values, notes = pc.relaunch_knobs(env, self.profile)
+        self.assertEqual(values, {"DS_FLEET_TOTAL": "18", "CARGO_BUILD_JOBS": "6"})
+        self.assertEqual(len(notes), 1)
+        self.assertIn("this shell holds 16", notes[0])
+
+    def test_a_knob_the_shell_lacks_is_noted_as_nothing(self):
+        self.profile.write_text("DS_CARGO_LANES=2\n")
+        values, notes = pc.relaunch_knobs({}, self.profile)
+        self.assertEqual(values, {"DS_CARGO_LANES": "2"})
+        self.assertIn("holds nothing", notes[0])
+
+    def test_an_unreadable_config_leaves_the_shell_standing(self):
+        values, notes = pc.relaunch_knobs({"DS_FLEET_TOTAL": "16"}, self.profile)
+        self.assertEqual(values, {})
+        self.assertIn("unreadable", notes[0])
+
+    def test_the_cli_prints_assignments_and_notes_apart(self):
+        self.profile.write_text("DS_FLEET_TOTAL=18\n")
+        out, err = io.StringIO(), io.StringIO()
+        env = {"ZDOTDIR": str(self.profile.parent), "DS_FLEET_TOTAL": "16"}
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            redirect_stdout(out),
+            redirect_stderr(err),
+        ):
+            self.assertEqual(pc.run(["plan_cycle.py", "knobs"]), 0)
+        self.assertEqual(out.getvalue(), "DS_FLEET_TOTAL=18\n")
+        self.assertIn("cycle: DS_FLEET_TOTAL", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

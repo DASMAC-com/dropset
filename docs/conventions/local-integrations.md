@@ -1360,6 +1360,13 @@ documented where its consumer is rather than listed twice here. They are
 untracked for different reasons: these `DS_OP_*` refs because they are
 credential coordinates, those because they name one machine's setup.
 
+**Export every variable a hook, the dispatcher, the machine-load probe
+or any Python tool reads** (`export NAME=value`, never a bare
+`NAME=value`). A plain profile assignment satisfies the shell's own
+check and reads as unset to every subprocess. A plain assignment is
+right only for a variable the shell helpers alone read, such as the
+`DS_OP_*` refs above and the model tiers.
+
 **The config's shape is committed; its values are not.**
 `.claude/shell/runtime-config.manifest.json` has one row per variable
 the shell init or a tool reads: kind, required or optional, repo
@@ -1367,7 +1374,8 @@ default, the verbs that need it, and the anchor documenting it.
 `.claude/shell/runtime-config.example.zsh` is a copy of the config
 holding placeholders only. `runtime_config_check.py --static` (a lint
 hook, so CI enforces it) fails on an undocumented read, a stale row, a
-knob default that disagrees with the code, or a row the example omits.
+knob default that disagrees with the code, a row the example omits, or
+an example line assigning a tool-read row without `export`.
 `--live` reads an environment: each required row set or missing, each
 optional knob at its default or `pinned: NAME=value (default d)`, and
 any `DS_*` / `LINEAR_*` name the manifest does not know. The cargo pair
@@ -1375,7 +1383,10 @@ is optional there while `DS_CARGO_POOL=0`, as at launch. It prints a model id,
 secret reference or Linear id only as `set`. The morning upkeep pass
 runs it as its `config` step, and `_ds_upkeep` exports the shell's
 manifest variables to that pass alone, since a Python child sees only
-exported ones. Run by hand, `--live` sees only what is exported. The
+exported ones. It names the ones it had to export in
+`DS_CONFIG_UNEXPORTED`, and a tool-read row among them reports
+`UNEXPORTED` and counts as missing, required or not. Run by hand,
+`--live` sees only what is exported. The
 check exists because three knobs were pinned in the profile on
 2026-10-28 and the repo had no record of it.
 
@@ -1410,6 +1421,13 @@ runs the probe under them, and prints a note naming both values when the
 shell disagrees. Only literal assignments at column zero are read, so a knob
 set inside a function or conditional, a knob the profile does not set, and
 an unreadable profile all fall back to the environment.
+
+A daily role's **cycle relaunch** re-reads the same way, before it
+relaunches in the tab's old shell: `plan_cycle.py knobs` prints the four
+`DS_FLEET_*` knobs plus `DS_CARGO_LANES` and `CARGO_BUILD_JOBS` as the
+profile sets them now, the loop exports them, and then runs the launch
+gate (`_ds_fleet_knobs`). A knob raised since the tab opened reaches the
+cycled session, and a knob still missing refuses the relaunch by name.
 
 | Knob                    | Default      | Bounds                                                               |
 | ----------------------- | ------------ | -------------------------------------------------------------------- |

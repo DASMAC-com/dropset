@@ -56,7 +56,7 @@ ROWS = [
 
 EXAMPLE = (
     "DS_LANES=2\nDS_MODEL='<model-id>'\nDS_REF='op://<vault>/<item>/<field>'\n"
-    "# DS_REGION=x\n# DS_WAIT=120\n# DS_POOL=0\n"
+    "# DS_REGION=x\n# export DS_WAIT=120\n# DS_POOL=0\n"
 )
 
 
@@ -148,6 +148,20 @@ class StaticTests(Fixture):
         self.assertIn("example gap: DS_MODEL", out)
         # A launcher-set row is never the config's to set.
         self.assertNotIn("LINEAR_KEY", out)
+
+    def test_a_tool_read_row_the_example_assigns_plainly_fails(self):
+        # DS_WAIT is read by a tool, so only an export reaches it; DS_REGION is
+        # read by the shell alone, so a plain assignment is fine; a per-command
+        # prefix is no profile line.
+        self.put(
+            ".claude/shell/runtime-config.example.zsh",
+            EXAMPLE.replace("# export DS_WAIT=120", "DS_WAIT=120")
+            + "# DS_WAIT=1 plan\n",
+        )
+        code, out = self.call("--static")
+        self.assertEqual(code, 1)
+        self.assertEqual(out.count("export gap:"), 1, out)
+        self.assertIn("export gap: DS_WAIT", out)
 
     def test_a_malformed_manifest_exits_2(self):
         for rows in (
@@ -302,6 +316,21 @@ class LiveTests(Fixture):
             data["line"].startswith("config: 1 required missing (DS_LANES)")
         )
         self.assertIn("MISSING DS_LANES", data["rows"])
+
+    def test_an_unexported_tool_read_row_counts_as_missing(self):
+        # DS_WAIT is optional but a tool reads it; DS_LANES is required but
+        # only the shell reads it, so its plain assignment is fine.
+        env = {**self.ENV, rc.UNEXPORTED_ENV: "DS_WAIT DS_LANES"}
+        code, out = self.call("--live", "--json", env=env)
+        self.assertEqual(code, 1)
+        data = json.loads(out)
+        self.assertEqual(data["missing"], ["DS_WAIT"])
+        self.assertIn("UNEXPORTED DS_WAIT", data["rows"])
+        self.assertIn("DS_LANES=2", data["rows"])
+        self.assertTrue(
+            data["line"].startswith("config: 1 assigned but not exported (DS_WAIT)"),
+            data["line"],
+        )
 
     def test_names_lists_the_rows_the_config_sets(self):
         code, out = self.call("--names")

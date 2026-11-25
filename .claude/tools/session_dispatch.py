@@ -431,10 +431,10 @@ FLEET_KNOBS = (
     "DS_FLEET_RESERVE_GB",
 )
 
-#: A `DS_*` name, and a value that is a plain literal once unquoted: a
-#: number, a word, a path. Anything else (`$`, a backtick, a substitution) is
-#: not read.
-_DS_NAME = re.compile(r"DS_[A-Z0-9_]+")
+#: A `DS_*` name (or `CARGO_BUILD_JOBS`, the one launch knob outside that
+#: family), and a value that is a plain literal once unquoted: a number, a
+#: word, a path. Anything else (`$`, a backtick, a substitution) is not read.
+_DS_NAME = re.compile(r"DS_[A-Z0-9_]+|CARGO_BUILD_JOBS")
 _LITERAL = re.compile(r"[A-Za-z0-9._/:+-]*")
 #: The builtins that assign (or clear) a variable in the current shell.
 _DECLARERS = ("export", "typeset", "declare", "local", "readonly")
@@ -463,8 +463,8 @@ def _first_command(line: str) -> list[str]:
 
 
 def read_runtime_config(path: Path) -> dict[str, str] | None:
-    """The literal `DS_*` values the profile leaves set, as zsh would, or
-    `None` when it cannot be read.
+    """The literal `DS_*` (and `CARGO_BUILD_JOBS`) values the profile leaves
+    set, as zsh would, or `None` when it cannot be read.
 
     Only COLUMN-ZERO lines count: an indented assignment is presumed to sit in
     a function or conditional body, which a line scan cannot evaluate, so it is

@@ -2302,11 +2302,13 @@ explore() {
 # may assign its model ids plainly. So every manifest variable this shell
 # holds is exported to the pass, exported or not — as function-local copies
 # (`local -x`), so the export ends with this function and never reaches the
-# shell itself.
+# shell itself. The ones it had to export are named to the pass in
+# `DS_CONFIG_UNEXPORTED`, so the check can flag a variable a tool or hook
+# reads that only this hand-over reaches: every other child reads it unset.
 _ds_upkeep() {
   setopt localoptions localtraps
   local rc name interrupted=''
-  local -a config
+  local -a config unexported
   if [[ "$DS_SKIP_UPKEEP" == 1 ]]; then
     print -u2 'dropset: DS_SKIP_UPKEEP=1 — skipping the upkeep pass.'
     return 0
@@ -2327,8 +2329,11 @@ _ds_upkeep() {
   _ds_secrets
   for name in ${(f)"$(python3 "$_DS_REPO/.claude/tools/runtime_config_check.py" \
     --names 2>/dev/null)"}; do
-    (( ${+parameters[$name]} )) && config+=("$name=${(P)name}")
+    (( ${+parameters[$name]} )) || continue
+    config+=("$name=${(P)name}")
+    [[ "${(tP)name}" == *export* ]] || unexported+=("$name")
   done
+  (( $#unexported )) && config+=("DS_CONFIG_UNEXPORTED=${(j: :)unexported}")
   (( $#config )) && local -x "${config[@]}"
   python3 "$_DS_REPO/.claude/tools/upkeep.py" run --if-stale
   rc=$?
@@ -2514,9 +2519,12 @@ _ds_plan_cycle() {
 # midnight keeps `schedule-<launch day>` and that day's ids rather than turning
 # into tomorrow's session under a new name. It refuses to relaunch while a live
 # session already holds the name, since a duplicate name would break that
-# addressing. The counter is per day, so a later bare `plan` the same day
-# resumes the latest cycle; plan_cycle.py and resolve_session.py read the same
-# counter, and DS_PLAN_DATE carries the launch day into the client.
+# addressing. Before each relaunch it re-reads the fleet and cargo knobs from
+# the runtime config and runs the launch gate on them (`_ds_relaunch_knobs`),
+# so a value raised since the tab opened reaches the cycled session. The
+# counter is per day, so a later bare `plan` the same day resumes the latest
+# cycle; plan_cycle.py and resolve_session.py read the same counter, and
+# DS_PLAN_DATE carries the launch day into the client.
 #
 # THE ROLE MARKER. Around the loop the tab carries the iTerm user variable
 # `ds_role=plan`, which `iterm-reorder.py` reads to keep a resting planning tab
@@ -2705,6 +2713,7 @@ _ds_daily_role() {
           "the check failed (exit $rc); relaunching would break the name."
         return 1
       fi
+      _ds_relaunch_knobs || return 1
     fi
     rm -f "$marker"
     sid="$(_ds_daily_sid "$kind" "$cycle" "$day")"
@@ -2720,6 +2729,29 @@ _ds_daily_role() {
   } always {
     _ds_iterm_role ''
   }
+}
+
+# Internal: THE KNOB RE-READ before a cycle relaunch. The tab's shell holds the
+# fleet and cargo knobs it was opened with, so a value the operator raised in
+# the runtime config since (the load limit on a quiet evening) would never
+# reach the cycled session. `plan_cycle.py knobs` reads the profile as the
+# dispatcher does — literal column-zero assignments only — and prints each
+# knob it sets as `NAME=value`; each is exported here, a knob the profile does
+# not set keeps the shell's value. Then the fresh launch's own gate runs
+# (`_ds_fleet_knobs`), so a knob still missing refuses the relaunch by name
+# rather than starting a session that cannot dispatch. A full `source` of the
+# profile was the road not taken: it would re-run everything else in it
+# (prompt, completion, this file) inside the running loop.
+_ds_relaunch_knobs() {
+  setopt localoptions extendedglob
+  local line
+  for line in "${(@f)$(python3 "$_DS_REPO/.claude/tools/plan_cycle.py" knobs)}"; do
+    [[ "$line" == (DS_[A-Z0-9_]##|CARGO_BUILD_JOBS)=* ]] && export "$line"
+  done
+  _ds_fleet_knobs && return 0
+  print -u2 'dropset: not cycling — set the knob(s) above in the runtime' \
+    'config, then type the verb again.'
+  return 1
 }
 
 # Start OR resume today's CURATOR session — review between Backlog and Todo,
