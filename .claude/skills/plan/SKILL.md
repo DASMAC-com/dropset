@@ -40,9 +40,6 @@ document is **not** an append log; the curator's bootstrap
 rewrite and step 6's close-out each produce exactly these
 headings, in this order, and nothing else:
 
-1. **Discuss with operator** — a single blank checkbox the
-   operator fills before a session (Enter in Linear adds the
-   next).
 1. **Current direction and checkpoints** — the phase, the live
    tracks, and the next bootstrap's first moves.
 1. **Fleet state and chains** — in flight, in review, queued,
@@ -147,8 +144,6 @@ counts** at boot: each is in the curator's write — the fleet
 state, the counts, the clusters, the heartbeat's decision, the
 holds pending the operator's tick in the curator's tab. Then:
 
-- **Act on each `Discuss with operator` item first** — one
-  needing the operator's word joins step 8's ask.
 - **Recite no operator list.** An operator action is asked for
   **when it binds**, in the tab that needs it, through
   `AskUserQuestion` — the scheduler for a Done that releases an
@@ -177,9 +172,9 @@ The new batches reach the inbox, where the curator reviews them.
 
 **The boot runs to its one ask.** Then stop at step 8's
 consolidated ask. **`fleet resume` and every dispatch wait for that
-ask's start trigger** (ruling: fleet doctrine 1). A Discuss item
-or duty needing the operator's word joins that ask. A question
-open in the curator's tab never holds the trigger or a dispatch.
+ask's start trigger** (ruling: fleet doctrine 1). A duty needing
+the operator's word joins that ask. A question open in the
+curator's tab never holds the trigger or a dispatch.
 
 **Which tier an issue sits in is the whole scoping signal:**
 
@@ -533,8 +528,8 @@ now, this wave only; ask before later waves"** or **"Not yet"**,
 the question naming the count of Todo `[Operator]` items the state
 of play records, which the curator carries one per batch until
 Done (step 5 runs each answer). Then the `Audit findings` kill
-list and Discuss items; the holds' edges are the curator's first
-ask, never this one.
+list; the holds' edges are the curator's first ask, never this
+one.
 
 **`Audit findings` is a legacy pool, drained one finding at a
 time**: each bootstrap promotes what it holds, or lists it for a

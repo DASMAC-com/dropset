@@ -2083,7 +2083,13 @@ Bedrock cannot resolve, is skipped with a note): the first chore's tab
 403'd on every turn (the agent identity lacked the Marketplace
 actions that enable the helper model) and only looked alive.
 `models check` cannot catch that, since a control-plane read passes
-for a model the account may not invoke. It writes a substrate
+for a model the account may not invoke. When the refused body names
+Marketplace actions, the refusal adds one line naming the fix: the
+account has not yet accepted the model agreement (Bedrock subscribes on
+a first call, which needs Marketplace actions the agent key deliberately
+lacks), so it is accepted once from the admin SSO login. That is not a
+credential failure, and widening the agent's policy is not the fix. The
+launch writes a substrate
 marker with a `helper` `.tier` beside it, so
 `task resume <n>` — and so `fleet` — hands back to `chore <n>`,
 which resumes by its computed id on the recorded substrate. A chore

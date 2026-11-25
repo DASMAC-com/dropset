@@ -160,9 +160,8 @@ Otherwise, the full bootstrap:
    spans, no emphasis span crossing a newline, no machine-parsed
    field opening with a bare hostname-valid `name.ext`): today's
    `Bootstrap stamp`, no `Fleet start:` line (the scheduler writes
-   today's), `Discuss with operator` **carried verbatim** for the
-   scheduler to act on, the direction carried forward, the fleet
-   state and parked counts from the reads above, the clusters, the
+   today's), the direction carried forward, the fleet state and
+   parked counts from the reads above, the clusters, the
    audit table with the heartbeat's decision, the upkeep report
    verbatim through its `End of upkeep report.` line, and every
    foreign or unconsolidated note swept into its section. **Compose
