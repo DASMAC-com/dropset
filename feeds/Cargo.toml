@@ -59,10 +59,11 @@ sqlx = { version = "0.8", default-features = false, features = [
 
 [dev-dependencies]
 # The book-feed capture example (examples/capture_ws_books.rs) and the Kraken
-# checksum replay test over its fixtures (tests/kraken_book_checksum.rs). All
-# three were already in the lock through other workspace crates. `raw_value`
-# keeps a Kraken `price` / `qty` JSON number's exact text, trailing zeros
-# included, which a parse into `f64` would drop.
+# checksum replay test over its fixtures (tests/kraken_book_checksum.rs).
+# `crc32fast`, `futures-util` and `tokio-tungstenite` were already in the lock
+# through other workspace crates; the `serde_json` entry only adds
+# `raw_value`, which keeps a Kraken `price` / `qty` JSON number's exact text,
+# trailing zeros included, which a parse into `f64` would drop.
 crc32fast = "1"
 futures-util = { version = "0.3", default-features = false, features = [
   "sink",

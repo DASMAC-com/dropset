@@ -34,24 +34,30 @@ struct BookData<'a> {
     checksum: u32,
 }
 
+/// Any frame, read only far enough to route it.
+#[derive(Deserialize)]
+struct Head {
+    channel: Option<String>,
+}
+
+/// A `book` snapshot or update, parsed strictly.
 #[derive(Deserialize)]
 struct Frame<'a> {
-    channel: Option<String>,
     #[serde(rename = "type")]
-    kind: Option<String>,
-    #[serde(borrow, default)]
+    kind: String,
+    #[serde(borrow)]
     data: Vec<BookData<'a>>,
 }
 
-/// A price's exact value as an integer at a fixed scale of 10^-18, so levels
-/// order exactly without a float.
-fn price_key(text: &str) -> u128 {
+/// A decimal's exact value as an integer at a fixed scale of 10^-18: prices
+/// order exactly without a float, and a quantity tests zero exactly.
+fn decimal_key(text: &str) -> u128 {
     let (whole, frac) = text.split_once('.').unwrap_or((text, ""));
-    assert!(frac.len() <= 18, "price {text} is finer than the key scale");
+    assert!(frac.len() <= 18, "{text} is finer than the key scale");
     let digits = format!("{whole}{frac:0<18}");
     digits
         .parse()
-        .unwrap_or_else(|e| panic!("price {text}: {e}"))
+        .unwrap_or_else(|e| panic!("decimal {text}: {e}"))
 }
 
 /// One side of the book: price key → (price text, qty text).
@@ -66,8 +72,8 @@ struct Book {
 fn apply(side: &mut Side, levels: &[Level<'_>]) {
     for level in levels {
         let (price, qty) = (level.price.get(), level.qty.get());
-        let key = price_key(price);
-        if price_key(qty) == 0 {
+        let key = decimal_key(price);
+        if decimal_key(qty) == 0 {
             side.remove(&key);
         } else {
             side.insert(key, (price.to_owned(), qty.to_owned()));
@@ -109,18 +115,19 @@ fn replay(fixture: &str, depth: usize) -> usize {
     let mut verified = 0;
     for (n, line) in fixture.lines().enumerate() {
         let (_, text) = line.split_once('\t').expect("a `<micros>\\t<frame>` line");
-        let frame: Frame<'_> = match serde_json::from_str(text) {
-            Ok(frame) => frame,
-            // Acknowledgement, status and heartbeat frames have no `book`
-            // shape.
-            Err(_) => continue,
-        };
-        if frame.channel.as_deref() != Some("book") {
+        // Route on the channel alone first: acknowledgement, status and
+        // heartbeat frames are skipped here, and a `book` frame that fails
+        // the strict parse below fails the test rather than vanishing.
+        let head: Head = serde_json::from_str(text)
+            .unwrap_or_else(|e| panic!("line {}: not a JSON object: {e}", n + 1));
+        if head.channel.as_deref() != Some("book") {
             continue;
         }
+        let frame: Frame<'_> = serde_json::from_str(text)
+            .unwrap_or_else(|e| panic!("line {}: malformed `book` frame: {e}", n + 1));
         for data in &frame.data {
             let book = books.entry(data.symbol.clone()).or_default();
-            if frame.kind.as_deref() == Some("snapshot") {
+            if frame.kind == "snapshot" {
                 *book = Book::default();
             }
             book.update(data, depth);

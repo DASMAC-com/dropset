@@ -14,7 +14,8 @@
 //! - Kraken WebSocket v2 `book`, depth 10 and depth 100 on separate sockets
 //!   (a `book` message names its symbol but not its depth, so one socket
 //!   carrying both depths would be ambiguous). The depth-10 socket also
-//!   subscribes `instrument`, whose precision fields rebuild trimmed digits.
+//!   subscribes `instrument`, whose precision fields would rebuild the
+//!   checksum digits if the wire trimmed trailing zeros (it does not).
 //! - Coinbase Advanced Trade `level2` plus `heartbeats` on one socket.
 //! - Coinbase Exchange `level2_batch`.
 //!
@@ -189,7 +190,9 @@ async fn capture(feed: Feed, dir: PathBuf, target: usize, window: Duration) -> R
         };
         let text = match next {
             Message::Text(text) => text.to_string(),
-            Message::Binary(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+            // None of these feeds sends binary; a lossy decode would break
+            // the byte-for-byte promise, so stop rather than record it.
+            Message::Binary(_) => break "unexpected binary frame".to_owned(),
             Message::Close(frame) => break format!("server closed: {frame:?}"),
             // tungstenite answers pings itself.
             Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => continue,
@@ -261,7 +264,7 @@ fn report(dir: &Path, name: &str, result: Result<Outcome>) {
 async fn main() -> Result<()> {
     let (dir, updates, minutes) = parse_args()?;
     tokio::fs::create_dir_all(&dir).await?;
-    let window = Duration::from_secs(minutes * 60);
+    let window = Duration::from_secs(minutes.checked_mul(60).context("--minutes is too large")?);
     let mut tasks = Vec::new();
     for feed in feeds() {
         let name = feed.name;
