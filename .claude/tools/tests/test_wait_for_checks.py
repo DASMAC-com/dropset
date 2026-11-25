@@ -2351,7 +2351,8 @@ class DismissNotificationsTests(unittest.TestCase):
         def fake(args):
             calls.append(args)
             if args[:2] == ["api", "-X"]:
-                return delete_code, "", "HTTP 404" if delete_code else ""
+                # Not a 404: that counts as dismissed (a concurrent sweep).
+                return delete_code, "", "HTTP 500" if delete_code else ""
             return list_reply
 
         # The shared tool owns the gh calls; the watcher's own `_gh` is unused.
@@ -2430,7 +2431,7 @@ class DismissNotificationsTests(unittest.TestCase):
                 "unsubscribed": 0,
                 "failed": 4,
                 "held": [],
-                "error": "HTTP 404",
+                "error": "HTTP 500",
             },
         )
 

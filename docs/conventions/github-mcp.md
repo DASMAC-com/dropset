@@ -150,7 +150,7 @@ which drifted behind it twice:
   single call** for that one id, because it embeds the complete
   repository object (every `*_url` template) once per notification.
   The dismissal is best-effort — a failure is reported in the verdict's
-  `notifications` field, and the settled sweep below is the fallback.
+  `notifications` field, and the repo-wide sweep below is the fallback.
   **On a merge, a thread that wants a reply is held, not dismissed**
   (`--hold-attention`: a mention, a review request, an assignment, or a
   conversation whose latest comment is another human's — read once per
@@ -160,28 +160,41 @@ which drifted behind it twice:
   answers each, and its `close_session.py` run dismisses every
   remaining thread.
 
-- **The settled-PR notification sweep** (`pr_notifications.py`) — the
-  one rule every other caller applies: `dismiss --settled` dismisses
-  every thread whose PR is merged or closed, **whatever its issue's
-  Linear state** (a merged PR whose issue sits In Review is settled
-  code), never an open PR's. `dismiss --pr N` instead dismisses every
-  thread on the named PRs **whatever their state**, unsubscribing unless
-  `--keep-subscription` says they are not merged. **Unsubscribe only on
-  merge, on the `--pr` path**: there a merged PR's thread is two calls,
-  never mark-all — ignore it, then mark it done — while a PR not merged
-  is marked done only; dry run unless `--apply`. The ignore is a `PUT`
-  with `ignored=true`, never a `DELETE` on the subscription, which
-  GitHub documents as not holding for a watcher of the repository.
-  **`--settled` is one call per thread**, the mark-done alone: the
-  merge tail already unsubscribed each merged PR's thread and `init-pr`
-  muted it at creation, so the sweep's second, sequential call per
-  thread was doubled work (a 128-thread backlog ran 220 seconds).
-  Dismissal waits for the PR to settle, so the merge or close is the
-  earliest point. The upkeep pass
-  runs `--settled` armed every morning, the planning close-out runs it,
-  and `close_session.py` calls
-  the `--pr` path in-process for its branch's PRs (having already
-  refused an open one) before removing the worktree.
+- **The PR notification sweep** (`pr_notifications.py`) — the one rule
+  every caller applies, so **no PR notification is left showing**, for
+  an open PR as much as a merged one. `dismiss --all` selects every PR
+  thread on the repo **whatever the PR's state and its issue's Linear
+  state**; `dismiss --pr N` selects every thread on the named PRs,
+  unsubscribing unless `--keep-subscription` says they are not merged.
+  **Unsubscribe only on merge**: a merged PR's thread is two calls,
+  never mark-all — ignore it, then mark it done — while any other
+  (open, closed, or a PR whose state did not resolve) is marked done
+  with its subscription kept, so new activity re-creates it; dry run
+  unless `--apply`. The ignore is a `PUT` with `ignored=true`, never a
+  `DELETE` on the subscription, which GitHub documents as not holding
+  for a watcher of the repository. **A 404 on the mark-done counts as
+  dismissed**, never failed: a stand-down and the shutdown sweep can
+  race on one thread. Only a thread whose subject is a PR on the repo
+  is selected; the list is paged to 500 threads, a larger backlog
+  draining over successive runs; an unreadable list is a note, never a
+  failed gate.
+
+  **The callers.** The two repo-wide sweeps are the scheduler's: the
+  upkeep pass's `notifications` step runs `--all` armed at startup,
+  and the planning close-out runs it at shutdown, so a missed shutdown
+  is cleared by the next startup. A session clears its own PR's
+  threads three ways, each `--pr` in-process: the queue watch's exit
+  (above), `close_session.py` before removing the worktree (having
+  already refused an open PR), and a park's stand-down
+  (`close_session.py --park`), which keeps the open PR's
+  subscription. A thread that arrives mid-day on an open PR therefore
+  shows until its session stands down, its PR leaves the queue, or the
+  shutdown sweep — accepted. `--settled` (merged or closed PRs only,
+  one mark-done per thread) remains for a by-hand run; no caller uses
+  it. **Rejected**: an `--all` from every session at every tool touch
+  (twenty sessions racing on one inbox for what the shutdown sweep
+  gives), a call per commit or a push hook, and ignoring an open PR's
+  threads — the next step only if threads still show.
 
 - **Unsubscribing from a new PR's notifications** (`init-pr`) — right
   after the draft PR is created, so its lifecycle (CI, assignment,

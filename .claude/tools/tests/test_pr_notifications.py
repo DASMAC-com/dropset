@@ -49,7 +49,9 @@ class FakeGh:
         unsubscribe_fails=(),
         comments=None,
         viewer="me",
+        delete_gone=(),
     ):
+        self.delete_gone = set(delete_gone)
         self.comments = comments or {}
         self.viewer = viewer
         self.pages = [THREADS] if pages is None else pages
@@ -93,6 +95,8 @@ class FakeGh:
                 return (1, "", "HTTP 403") if fails else (0, "", "")
             assert method == "DELETE", args
             tid = path.rsplit("/", 1)[1]
+            if tid in self.delete_gone:
+                return 1, "", "gh: Not Found (HTTP 404)"
             return (1, "", "HTTP 500") if tid in self.delete_fails else (0, "", "")
         raise AssertionError(f"unexpected gh call {args}")
 
@@ -161,6 +165,70 @@ class SettledTests(unittest.TestCase):
         _, out = dismiss(gh, None, apply=False)
         self.assertIn("PR list failed", out["notice"])
         self.assertEqual({t["pr"] for t in out["selected"]}, {663})
+
+
+class AllTests(unittest.TestCase):
+    def test_every_pr_thread_is_selected_whatever_its_state(self):
+        gh = FakeGh()  # #12 is unresolved: outside the list, its view fails
+        rc, out = dismiss(gh, None, apply=True, every=True)
+        self.assertEqual((rc, out["mode"]), (0, "all"))
+        # The open PR's thread too; never the issue's or the other repo's.
+        self.assertEqual(sorted(gh.deletes()), ["c1", "m1", "m2", "o1", "x1"])
+        self.assertEqual(out["unresolved"], [])
+
+    def test_only_a_merged_prs_thread_is_ignored(self):
+        gh = FakeGh(views={12: "MERGED"})
+        _, out = dismiss(gh, None, apply=True, every=True)
+        # Open #677 and closed #660 keep their subscriptions.
+        self.assertEqual(sorted(gh.unsubscribes()), ["m1", "m2", "x1"])
+        self.assertEqual((out["dismissed"], out["unsubscribed"]), (5, 3))
+
+    def test_an_unresolved_pr_keeps_its_subscription(self):
+        gh = FakeGh(pages=[[THREADS[4]]])  # x1, on #12, unresolved
+        _, out = dismiss(gh, None, apply=True, every=True)
+        self.assertEqual((gh.deletes(), gh.unsubscribes()), (["x1"], []))
+
+    def test_a_dry_run_names_the_kept_subscriptions(self):
+        _, out = dismiss(FakeGh(), None, apply=False, every=True)
+        self.assertEqual(
+            summary(out),
+            "would dismiss 5 notification(s), unsubscribing 2 (3 kept subscribed:"
+            " not merged)",
+        )
+
+    def test_an_unreadable_list_is_a_notice_and_dismisses_nothing(self):
+        gh = FakeGh(list_fails=True)
+        rc, out = dismiss(gh, None, apply=True, every=True)
+        self.assertEqual(rc, 1)
+        self.assertIn("notification list failed", out["notice"])
+        self.assertEqual(gh._writes(), [])
+
+    def test_the_page_cap_holds(self):
+        per = pr_notifications.PER_PAGE
+        full = [
+            {"id": f"t{i}", "subject": {"url": URL.format("pulls", 663)}}
+            for i in range(per)
+        ]
+        gh = FakeGh(pages=[full] * (pr_notifications.MAX_PAGES + 3))
+        _, out = dismiss(gh, None, apply=False, every=True)
+        self.assertEqual(len(out["selected"]), per * pr_notifications.MAX_PAGES)
+
+    def test_named_prs_refuse_it(self):
+        with self.assertRaises(ValueError):
+            dismiss(FakeGh(), {663}, apply=False, every=True)
+
+
+class GoneTests(unittest.TestCase):
+    def test_a_404_on_the_mark_done_counts_as_dismissed(self):
+        gh = FakeGh(delete_gone=["m2"])
+        _, out = dismiss(gh, {663}, apply=True)
+        self.assertEqual((out["dismissed"], out["failed"]), (2, []))
+        self.assertIsNone(out["error"])
+        self.assertEqual(summary(out), "dismissed 2 notification(s), unsubscribed 2")
+
+    def test_another_failure_is_still_failed(self):
+        _, out = dismiss(FakeGh(delete_fails=["m2"]), {663}, apply=True)
+        self.assertEqual(out["failed"], ["m2"])
 
 
 class PrModeTests(unittest.TestCase):
@@ -283,9 +351,10 @@ class HoldTests(unittest.TestCase):
         ):
             self.assertEqual(pr_notifications.main(), 0)
         self.assertEqual(seen, [({663}, True)])
-        argv = ["prog", "dismiss", "--settled", "--hold-attention"]
-        with mock.patch("sys.argv", argv), self.assertRaises(SystemExit):
-            pr_notifications.main()
+        for which in ("--settled", "--all"):
+            argv = ["prog", "dismiss", which, "--hold-attention"]
+            with mock.patch("sys.argv", argv), self.assertRaises(SystemExit):
+                pr_notifications.main()
 
 
 class ApplyTests(unittest.TestCase):
@@ -421,7 +490,11 @@ class CliTests(unittest.TestCase):
         self.assertFalse(args.apply)
 
     def test_exactly_one_selector_is_required(self):
-        for argv in (["dismiss"], ["dismiss", "--pr", "1", "--settled"]):
+        for argv in (
+            ["dismiss"],
+            ["dismiss", "--pr", "1", "--settled"],
+            ["dismiss", "--all", "--settled"],
+        ):
             with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
                 self.parse(*argv)
 
@@ -429,9 +502,14 @@ class CliTests(unittest.TestCase):
         seen = []
 
         def fake_dismiss(
-            gh, prs, apply, keep_subscription=frozenset(), hold_attention=False
+            gh,
+            prs,
+            apply,
+            keep_subscription=frozenset(),
+            hold_attention=False,
+            every=False,
         ):
-            seen.append((prs, apply, set(keep_subscription)))
+            seen.append((prs, apply, set(keep_subscription), every))
             return 0, {
                 "mode": "settled" if prs is None else "pr",
                 "dry_run": not apply, "threads": 0, "held": [],
@@ -444,6 +522,7 @@ class CliTests(unittest.TestCase):
         with mock.patch.object(pr_notifications, "dismiss", fake_dismiss):
             for argv in (
                 ["dismiss", "--settled", "--apply"],
+                ["dismiss", "--all", "--apply"],
                 ["dismiss", "--pr", "7"],
                 ["dismiss", "--pr", "8", "--keep-subscription"],
             ):
@@ -453,7 +532,13 @@ class CliTests(unittest.TestCase):
                 ):
                     self.assertEqual(pr_notifications.main(), 0)
         self.assertEqual(
-            seen, [(None, True, set()), ({7}, False, set()), ({8}, False, {8})]
+            seen,
+            [
+                (None, True, set(), False),
+                (None, True, set(), True),
+                ({7}, False, set(), False),
+                ({8}, False, {8}, False),
+            ],
         )
         self.assertIn(
             '"summary": "would unsubscribe and dismiss 0 notification(s)"',

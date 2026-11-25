@@ -37,8 +37,8 @@ a dropped step.
 1. **Relay the merged line.** Print its
    `Today's merge count is now N.` sentence exactly (or its
    "unavailable" one; never count by hand). Say so only when the
-   notification dismissal failed — upkeep's settled-PR sweep is the
-   fallback, so never dismiss by hand or `mark_all_notifications_read`.
+   notification dismissal failed — the scheduler's repo-wide sweep is
+   the fallback, so never dismiss by hand or `mark_all_notifications_read`.
    Typed on its own, read the PR's terminal state once:
 
    ```sh

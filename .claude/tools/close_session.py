@@ -36,8 +36,11 @@ frees while the PR stays open; it is also the fleet wind-down's stand-down
 (``fleet_winddown.py``), for a pauser with no PR yet as much as a finisher.
 It takes no ``--state`` and writes none (the
 issue keeps the state it has), keeps the worktree and branch for the resume,
-dismisses no notification threads (the PR is live), and appends the cost line
-when ``--session-id`` is given. Its gates replace the open-PR one: the tree is
+and appends the cost line when ``--session-id`` is given. Then, at the
+stand-down, it marks the held PR's notification threads done with the
+subscription kept (``pr_notifications``' ``--pr`` path, best-effort — a
+failure is a note), so a parked PR leaves no thread showing while new activity
+still re-creates one. Its gates replace the open-PR one: the tree is
 clean and pushed (the same check as below), and the issue body carries a
 resume brief. When the branch has an open PR, the paragraph holding the last
 ``resume brief`` mention must name that PR after it (``#N``, ``PR N`` or a
@@ -47,7 +50,7 @@ stale one cannot vouch. Each refuses with
 the missing precondition named. The open-PR refusal
 is unchanged for every other mode, Done and Canceled included.
 
-After the cost line and before the kill, a park gives its own tab the green
+After the dismissal and before the kill, a park gives its own tab the green
 attend mark and moves it to the leftmost position in its window
 (``iterm_api.signal_parked``), best-effort and silent on failure, so the
 operator sees one green tab at the left edge per parked session and closes
@@ -123,7 +126,7 @@ a park ends, or
 on a dry run would; ``state`` is ``None`` and ``keep_worktree`` true on a park;
 ``leftovers`` the ledger's item count, ``None`` when none
 was read; ``notifications`` the dismissal's one-line summary, ``None`` when no
-PR or no write). Exit 0 on a complete
+PR, no write, or a park with no PR open). Exit 0 on a complete
 close; 1 on a refusal or error before any removal — a gate refusal changes
 nothing, while a write reported "unconfirmed" may have landed; 2 when the state
 landed but the removal did not.
@@ -487,8 +490,9 @@ def write_state(issue: str, state: str, dry_run: bool) -> None:
 
 def dismiss_threads(run: Runner, prs: list[dict], result: dict) -> None:
     """Dismiss the branch's PR threads, before the removal. Best-effort: the
-    state already landed and the gates passed, so a failure is a note — and
-    upkeep's settled run collects whatever is left the next morning."""
+    state already landed (or, on a park, the cost line did) and the gates
+    passed, so a failure is a note — and the scheduler's repo-wide sweep
+    collects whatever is left at shutdown or the next startup."""
     numbers = {int(p["number"]) for p in prs if p.get("number") is not None}
     if not numbers:
         return
@@ -595,9 +599,11 @@ def parked(
     result: dict,
     coster: Callable[[str | None, list[str]], str | None],
     appender: Callable[[str, str], None],
+    run: Runner = real_run,
 ) -> tuple[int, dict]:
-    """The park's act, once its gates passed: the cost line and nothing else —
-    no state, no removal, no dismissal of a live PR's threads."""
+    """The park's act, once its gates passed: the cost line, then the held
+    PR's threads marked done with the subscription kept (best-effort) — no
+    state, no removal."""
     line = coster(args.session_id, result["notes"])
     if args.dry_run:
         result["cost_line"] = line
@@ -617,6 +623,10 @@ def parked(
             )
             return 1, result
     held = result["pr"]
+    if held:
+        # The stand-down's own-PR dismissal: the PR is open, so the
+        # subscription stays and new activity re-creates the thread.
+        dismiss_threads(run, [held], result)
     what = f"PR #{held.get('number')} open" if held else "no PR open"
     result["notes"].append(
         f"parked: {what}, state unchanged, worktree and branch kept for the resume"
@@ -747,7 +757,7 @@ def close(
                     alive,
                     run,
                 )
-            return parked(args, result, coster, appender)
+            return parked(args, result, coster, appender, run)
         if args.state is None:
             raise Refusal("--state is required unless --park")
         if (

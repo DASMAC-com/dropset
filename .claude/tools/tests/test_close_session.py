@@ -613,7 +613,7 @@ class ParkTests(unittest.TestCase):
 
     def _park(self, body=BRIEF, session_id=None, dry_run=False, no_exit=False, **fake):
         fake.setdefault("prs", self.OPEN)
-        runner = FakeRun(**fake)
+        runner = NotifyingRun(**fake)
         writer = Writer()
         appended: list[tuple] = []
         rc, result = close(
@@ -652,15 +652,35 @@ class ParkTests(unittest.TestCase):
         self.assertEqual(appended, [("ENG-1669", "cost sid-9\n")])
         self.assertEqual(result["cost_line"], "cost sid-9\n")
         self.assert_untouched(runner, writer)
-        # The PR is live: no notification thread is touched.
-        self.assertFalse([c for c in runner.calls if c[:2] == ["gh", "api"]])
+        self.assertEqual(
+            result["notifications"], "dismissed 0 notification(s), unsubscribed 0"
+        )
+
+    def test_park_marks_its_own_prs_threads_done_and_keeps_the_subscription(self):
+        rc, result, runner, _, _ = self._park(threads=[("t1", 715), ("t2", 777)])
+        self.assertEqual(rc, 0, result)
+        writes = [c[3:5] for c in runner.calls if c[:3] == ["gh", "api", "-X"]]
+        # Only the held PR's thread, and never an ignore: the PR is open.
+        self.assertEqual(writes, [["DELETE", "/notifications/threads/t1"]])
+        self.assertEqual(
+            result["notifications"], "dismissed 1 notification(s), unsubscribed 0"
+        )
+
+    def test_a_failed_park_dismissal_is_a_note_never_a_refusal(self):
+        rc, result, *_ = self._park(threads=[("t1", 715)], delete_fails=["t1"])
+        self.assertEqual(rc, 0, result)
+        self.assertIsNone(result["refused"])
+        self.assertTrue(any(n.startswith("notifications:") for n in result["notes"]))
 
     def test_park_dry_run_appends_nothing(self):
-        rc, result, _, writer, appended = self._park(session_id="s", dry_run=True)
+        rc, result, runner, writer, appended = self._park(
+            session_id="s", dry_run=True, threads=[("t1", 715)]
+        )
         self.assertEqual(rc, 0, result)
         self.assertEqual(appended, [])
         self.assertEqual(result["cost_line"], "cost s\n")
         self.assertEqual(writer.calls, [])
+        self.assertFalse([c for c in runner.calls if c[:3] == ["gh", "api", "-X"]])
 
     def test_park_refuses_a_dirty_tree(self):
         rc, result, runner, writer, appended = self._park(status=" M src/lib.rs\n")
@@ -713,6 +733,13 @@ class ParkTests(unittest.TestCase):
                 self.assertIsNone(result["pr"])
                 self.assertIn("no PR open", " ".join(result["notes"]))
                 self.assert_untouched(runner, writer)
+
+    def test_park_with_no_open_pr_reads_no_notifications(self):
+        brief = "spec\n\n**Resume brief**: next step, finish the parser tests\n"
+        rc, result, runner, *_ = self._park(body=brief, prs=[], threads=[("t1", 9)])
+        self.assertEqual(rc, 0, result)
+        self.assertIsNone(result["notifications"])
+        self.assertFalse([c for c in runner.calls if c[:2] == ["gh", "api"]])
 
     def test_park_with_no_open_pr_still_needs_a_brief(self):
         rc, result, *_ = self._park(body="spec only\n", prs=[])

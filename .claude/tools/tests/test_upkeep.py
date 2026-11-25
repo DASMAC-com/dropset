@@ -401,20 +401,20 @@ class PassTests(unittest.TestCase):
         self.assertIn("--closed-file", prune_call)
         self.assertNotIn("--merged-file", prune_call)
         dismiss = tool_calls(run, "pr_notifications.py")[0]
-        self.assertEqual(dismiss[2:], ["dismiss", "--settled"])
+        self.assertEqual(dismiss[2:], ["dismiss", "--all"])
         line = next(s for s in ctx.steps if s["step"] == "notifications")["line"]
         self.assertEqual(line, "would dismiss 2 notification(s)")
 
     def test_the_dismissal_is_armed_on_its_own_flag_without_a_board_gate(self):
         # eng-11's issue is still started (In Review, say), but its PR merged:
-        # the settled run is not narrowed by the board, and it applies even
+        # the sweep is not narrowed by the board, and it applies even
         # though the prune stays a dry run.
         run = FakeRun(notifications=[("t10", 10), ("t11", 11)])
         ctx = make_ctx(run, dismiss=True)
         run_pass(ctx)
         self.assertIn("--dry-run", tool_calls(run, "prune_worktrees.py")[0])
         dismiss = tool_calls(run, "pr_notifications.py")[0]
-        self.assertEqual(dismiss[2:], ["dismiss", "--settled", "--apply"])
+        self.assertEqual(dismiss[2:], ["dismiss", "--all", "--apply"])
         step = next(s for s in ctx.steps if s["step"] == "notifications")
         self.assertEqual(step["line"], "dismissed 2 notification(s)")
         self.assertTrue(step["ok"])
