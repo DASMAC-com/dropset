@@ -225,7 +225,7 @@ Then state, in a few lines:
   resulting window.
 
 **Rank the pool.** Priority in Backlog is review order, so the
-Urgent set leads, and meta work follows launch work.
+Urgent set leads, and meta work follows product work.
 
 ## The pool
 

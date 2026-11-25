@@ -104,10 +104,9 @@ per-router mappings:
 - **titan** — the `TradingVenue` trait; closest to drop-in (no closed enum).
 
 beethoven is **not** an off-chain adapter — it's an on-chain Pinocchio CPI
-integration, so per interface.md §6 it belongs in the future `no_std`,
-entrypoint-free CPI crate — the on-chain CPI tier, a sibling of
-`dropset-math-core` — not here, and not `dropset-interface` (which is
-off-chain). Blocked on a swap-context extension.
+integration, so per interface.md §6 it is out of this crate's scope and
+of `dropset-interface`'s (which is off-chain); no on-chain CPI crate
+exists. Blocked on a swap-context extension.
 
 ## Verification
 

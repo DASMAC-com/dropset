@@ -2252,14 +2252,11 @@ running because it might be needed. The shared database is the **one
 deliberate always-on exception**, because a gap in collection is
 unrecoverable in a way an idle compute stack never is.
 
-Its placement is staged:
-
-1. **EC2 running the compose stack, with scheduled dumps to S3.** Cheap,
-   identical to the local shape, and enough to start recording.
-1. **Aurora Serverless v2** once recording-for-real starts, with S3 as
-   the archival tier. The store sink targets a `PgPool`, so this is a
-   connection-string change and a restore — one engine, one `sqlx` and
-   migration toolchain, no dialect port.
+It runs on **EC2 as the compose stack, with scheduled dumps to S3** —
+cheap, and identical to the local shape. The store sink targets a
+`PgPool`, so moving it to a managed Postgres is a connection-string
+change and a restore — one engine, one `sqlx` and migration toolchain,
+no dialect port.
 
 **A hosted collector gets environment variables, not files.** ECS supplies
 configuration as environment variables (and secrets as references resolved

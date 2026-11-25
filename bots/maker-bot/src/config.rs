@@ -852,7 +852,7 @@ impl Default for BotConfig {
                     // a frozen FX session does go stale here rather than
                     // reading as perpetually fresh. Recalibratable; the
                     // supporting measurements are dev-stack figures recorded in
-                    // the issue, not a production measurement.
+                    // the issue, not production figures.
                     tape: Duration::from_secs(15 * 60),
                     // The reference bound is the crate default, sized to clear
                     // the longest gap between two published fixes rather than

@@ -14,10 +14,9 @@
 //!   enum; `generate_swap_instruction` returns the program's own ix).
 //!
 //! beethoven CPI composability is **not** here: it's an on-chain Pinocchio
-//! integration, so per interface.md §6 it belongs in the future `no_std`,
-//! entrypoint-free CPI crate (the on-chain CPI tier, a sibling of
-//! `dropset-math-core`), not this off-chain SDK and not `dropset-interface`
-//! (which is off-chain too). It's blocked on a swap-context extension.
+//! integration, so per interface.md §6 it is out of scope for this
+//! off-chain SDK and for `dropset-interface` (which is off-chain too); no
+//! on-chain CPI crate exists. It's blocked on a swap-context extension.
 
 pub mod amm;
 pub mod dflow;

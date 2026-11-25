@@ -631,8 +631,8 @@ from the fixture, and the primary market deliberately gives sector 0 the
 
 On-chain CPI builders (instruction builders + account layouts for a `no_std`,
 entrypoint-free CPI parser, shared with the engine and any router doing an
-on-chain integration) remain a separate future concern; the SDK above is the
-off-chain artifact and CPIs do not live there.
+on-chain integration) are not built and are out of the SDK's scope; the SDK
+above is the off-chain artifact and CPIs do not live there.
 
 ______________________________________________________________________
 
