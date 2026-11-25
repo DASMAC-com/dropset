@@ -177,7 +177,35 @@ class ResolveTests(unittest.TestCase):
         v = resolve("eng-1051", self.fx.repo)
         self.assertEqual(v["mode"], "resume")
         self.assertEqual(v["session_id"], "afce0c54")
-        self.assertEqual(v["run_from"], str(self.fx.repo))
+        # The worktree, never the base checkout: a live worktree is where the
+        # session's relative paths and the edit-path guard point (ENG-2468).
+        self.assertEqual(v["run_from"], str(wt))
+        self.assertEqual(
+            v["adopt_from"],
+            str(self.fx.projects / slugify(self.fx.repo) / "afce0c54.jsonl"),
+        )
+
+    def test_a_worktree_slug_only_session_needs_no_adoption(self):
+        wt = self.fx.worktree("2468")
+        self.fx.transcript(wt, "own", [str(wt)])
+        v = resolve("2468", self.fx.repo)
+        self.assertEqual((v["mode"], v["run_from"]), ("continue", str(wt)))
+        self.assertNotIn("adopt_from", v)
+
+    def test_a_session_under_both_slugs_continues_in_the_worktree(self):
+        wt = self.fx.worktree("2469")
+        self.fx.transcript(self.fx.repo, "both", [str(wt)])
+        self.fx.transcript(wt, "both", [str(wt)])
+        v = resolve("2469", self.fx.repo)
+        self.assertEqual((v["mode"], v["run_from"]), ("continue", str(wt)))
+        self.assertNotIn("adopt_from", v)
+
+    def test_a_pruned_worktree_keeps_the_base_fallback(self):
+        wt = self.fx.repo / ".claude" / "worktrees" / "2470"
+        self.fx.transcript(self.fx.repo, "gone", [str(wt)])
+        v = resolve("2470", self.fx.repo)
+        self.assertEqual((v["mode"], v["run_from"]), ("picker", str(self.fx.repo)))
+        self.assertNotIn("adopt_from", v)
 
     def test_a_pre_rename_architect_worktree_is_reached_by_number(self):
         # The live miss: `task resume 1572` (typed by `fleet`) looked only for
@@ -291,7 +319,58 @@ class CliTests(unittest.TestCase):
             "--tag", "22", "--repo", str(self.fx.repo), "--format", "lines"
         )
         self.assertEqual(rc, 0)
-        self.assertEqual(out.splitlines(), ["resume", "sid22", str(self.fx.repo)])
+        self.assertEqual(out.splitlines(), ["resume", "sid22", str(wt)])
+
+    def test_adopt_links_a_base_filed_transcript_into_the_worktree_slug(self):
+        wt = self.fx.worktree("eng-24")
+        base = self.fx.transcript(self.fx.repo, "sid24", [str(wt)])
+        rc, out, err = self._invoke(
+            "--tag",
+            "24",
+            "--repo",
+            str(self.fx.repo),
+            "--format",
+            "lines",
+            "--adopt",
+        )
+        self.assertEqual((rc, err), (0, ""))
+        self.assertEqual(out.splitlines(), ["resume", "sid24", str(wt)])
+        linked = self.fx.projects / slugify(wt) / "sid24.jsonl"
+        # A hard link: one inode, so the resumed session's appends land in both.
+        self.assertTrue(os.path.samefile(linked, base))
+        # And the next resume takes the worktree-slug fast path.
+        self.assertEqual(resolve("24", self.fx.repo)["mode"], "continue")
+
+    def test_a_failed_link_refuses_rather_than_reopening_in_base(self):
+        wt = self.fx.worktree("eng-25")
+        self.fx.transcript(self.fx.repo, "sid25", [str(wt)])
+        with mock.patch.object(rs.os, "link", side_effect=OSError("cross-device link")):
+            rc, out, err = self._invoke(
+                "--tag",
+                "25",
+                "--repo",
+                str(self.fx.repo),
+                "--format",
+                "lines",
+                "--adopt",
+            )
+        self.assertEqual(rc, 1)
+        self.assertEqual(out.splitlines(), ["refuse", "sid25", str(self.fx.repo)])
+        self.assertIn("claude --resume sid25", err)
+        self.assertIn(f"EnterWorktree with path={wt}", err)
+
+    def test_adopt_session_reports_each_outcome(self):
+        wt = self.fx.worktree("eng-26")
+        self.assertEqual(rs.adopt_session("sid26", wt)[0], "absent")
+        self.fx.transcript(self.fx.repo, "sid26", [str(wt)])
+        rc, out, _ = self._invoke("--adopt-session", "sid26", "--worktree", str(wt))
+        self.assertEqual((rc, out), (0, "linked\n"))
+        rc, out, _ = self._invoke("--adopt-session", "sid26", "--worktree", str(wt))
+        self.assertEqual((rc, out), (0, "present\n"))
+        gone = self.fx.repo / ".claude" / "worktrees" / "eng-27"
+        rc, out, err = self._invoke("--adopt-session", "sid26", "--worktree", str(gone))
+        self.assertEqual((rc, out), (1, "refused\n"))
+        self.assertIn("no worktree", err)
 
     def test_the_lines_format_keeps_three_lines_when_there_is_no_id(self):
         # The line count must be CONSTANT, or a caller doing three reads has

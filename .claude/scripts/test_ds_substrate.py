@@ -28,6 +28,7 @@ the easy half.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -838,14 +839,72 @@ class VerbLaunch(SubstrateHarness):
         )
         self.assertIn("/worktrees/ceo-12 ARGS=--resume", out, result.stderr)
 
-    def test_a_base_slug_copy_beside_a_live_worktree_stays_in_the_base(self):
+    def _real_resolver(self):
+        """Put the real `resolve_session.py` where the scratch repo calls it."""
+        tools = self.repo / ".claude" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        (tools / "resolve_session.py").symlink_to(
+            INIT.parent.parent / "tools" / "resolve_session.py"
+        )
+
+    def test_a_base_slug_copy_beside_a_live_worktree_resumes_in_the_worktree(self):
+        # ENG-2468: a base-filed session reopened in base, where its relative
+        # paths and the worktree edit-path guard point at the wrong tree. The
+        # copy is hard-linked under the worktree's slug, then resumed there.
+        self._real_resolver()
+        wt = self.repo / ".claude" / "worktrees" / "ceo-12"
+        wt.mkdir(parents=True)
+        result, out = self._launch(
+            self._CWD_STUB + f"{self._transcript('PWD')}architect 12"
+        )
+        sid = next(ln[4:] for ln in out.splitlines() if ln.startswith("SID="))
+        self.assertIn(f"/worktrees/ceo-12 ARGS=--resume {sid}", out, result.stderr)
+        base = self.claude_home / "projects" / re.sub(r"[/.]", "-", str(self.repo))
+        linked = self.claude_home / "projects" / re.sub(r"[/.]", "-", str(wt))
+        self.assertTrue(
+            os.path.samefile(base / f"{sid}.jsonl", linked / f"{sid}.jsonl")
+        )
+
+    def test_a_base_slug_copy_that_cannot_be_linked_launches_nothing(self):
         (self.repo / ".claude" / "worktrees" / "ceo-12").mkdir(parents=True)
+        refuse = (
+            "python3() { print -u2 'refusing: claude --resume x'; "
+            "print refused; return 1; }; "
+        )
+        result, out = self._launch(
+            self._CWD_STUB + refuse + f"{self._transcript('PWD')}architect 12"
+        )
+        self.assertNotIn("ARGS=", out, result.stderr)
+        self.assertIn("RC=1", out)
+        self.assertIn("refusing: claude --resume x", result.stderr)
+
+    def test_a_pruned_worktree_still_resumes_in_the_base_with_its_warning(self):
+        # No worktree directory: nothing to adopt into, so the old fallback.
         result, out = self._launch(
             self._CWD_STUB + f"{self._transcript('PWD')}architect 12"
         )
         line = next(ln for ln in out.splitlines() if ln.startswith("CWD="))
         self.assertNotIn("/worktrees/", line, result.stderr)
         self.assertIn("ARGS=--resume", line)
+        self.assertIn("is gone", result.stderr)
+
+    def test_task_resume_launches_nothing_on_a_refused_adoption(self):
+        result, out = self._launch(
+            "python3() { print refuse; print sid-9; print -r -- $_DS_REPO; }; "
+            "task resume 9"
+        )
+        self.assertNotIn("ARGS=", out, result.stderr)
+        self.assertIn("RC=1", out)
+
+    def test_task_resume_runs_a_resume_verdict_from_the_worktree(self):
+        wt = self.repo / ".claude" / "worktrees" / "9"
+        wt.mkdir(parents=True)
+        result, out = self._launch(
+            'claude() { print -r -- "CWD=$PWD ARGS=$*"; }; '
+            f"python3() {{ print resume; print sid-9; print -r -- {wt}; }}; "
+            "task resume 9"
+        )
+        self.assertIn(f"CWD={wt} ARGS=--resume sid-9", out, result.stderr)
 
     def test_architect_refuses_a_topic_and_zero(self):
         for verb in ("architect pricing", "architect 0"):

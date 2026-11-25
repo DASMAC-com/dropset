@@ -42,7 +42,8 @@ exists (see :func:`worktree_candidates`):
       "worktree_exists": true,
       "mode": "resume",
       "session_id": "afce0c54-1874-4276-a77b-38df146d0000",
-      "run_from": "/…/dropset",
+      "run_from": "/…/.claude/worktrees/1051",
+      "adopt_from": "/…/projects/-…-dropset/afce0c54-….jsonl",
       "reason": "the worktree has no transcript of its own; …"
     }
 
@@ -52,8 +53,13 @@ exists (see :func:`worktree_candidates`):
   ``claude --continue``, the original fast path. ``session_id`` names the
   newest transcript, the one ``--continue`` reaches; the launcher's exit
   estimate reads it. Branch on ``mode``, never on whether the id is set.
-* ``resume`` — a base-slug transcript's ``cwd`` stamps point into this
-  worktree; run ``claude --resume <session_id>`` from ``run_from``.
+* ``resume`` — a transcript under another slug (the base's, usually) stamps
+  its ``cwd`` into this live worktree; ``run_from`` is the **worktree**, never
+  the base checkout. ``--adopt`` first hard-links ``adopt_from`` under the
+  worktree's slug (:func:`adopt_session`), so ``claude --resume <session_id>``
+  run from there finds it under its own project directory.
+* ``refuse`` — only under ``--adopt``: that link failed. Launch nothing; the
+  instruction that works is on stderr and in ``reason``.
 * ``picker`` — nothing resolved deterministically; fall back to
   ``claude --resume <tag>``, which filters the picker rather than resuming.
 
@@ -290,13 +296,21 @@ def resolve(tag: str, repo: Path) -> dict:
     for slug_dir in searched:
         for transcript in transcripts_in(slug_dir):
             if stamps_into(transcript, worktree):
+                # Run from the WORKTREE, never the base checkout: a session
+                # reopened in base has every relative path in its history, and
+                # the worktree edit-path guard, pointed at the wrong tree. The
+                # caller first links the transcript under the worktree's slug
+                # (`adopt_session`, the `--adopt` flag), so the client finds it
+                # from there whatever its cross-project lookup does.
                 verdict["mode"] = "resume"
                 verdict["session_id"] = transcript.stem
-                verdict["run_from"] = str(repo)
+                verdict["run_from"] = str(worktree)
+                verdict["adopt_from"] = str(transcript)
                 verdict["reason"] = (
                     f"the worktree has no transcript of its own, but "
                     f"{transcript.name} under {slug_dir.name} stamps its cwd "
-                    f"into the worktree — resume it by id from the base repo"
+                    f"into the worktree — link it under the worktree's slug "
+                    f"and resume it by id from the worktree"
                 )
                 return verdict
 
@@ -305,6 +319,66 @@ def resolve(tag: str, repo: Path) -> dict:
         f"stamps its cwd into it — the session may never have started"
     )
     return verdict
+
+
+def refusal(session_id: str, worktree: Path, cause: str) -> str:
+    """The one instruction that works when a transcript cannot be adopted.
+
+    Measured on a base-filed session (11-24): resumed from the base checkout,
+    then Claude Code's own ``EnterWorktree`` tool given the worktree's path
+    moves the live session into it on its branch, no relaunch.
+    """
+    return (
+        f"{cause} — refusing to reopen {session_id} in the base checkout. "
+        f"From the base checkout run `claude --resume {session_id}`, then ask "
+        f"the session to call EnterWorktree with path={worktree}"
+    )
+
+
+def adopt_session(session_id: str, worktree: Path) -> tuple[str, str]:
+    """Make ``session_id``'s transcript reachable from inside ``worktree``.
+
+    Returns ``(status, detail)``: ``present`` (already under the worktree's
+    slug), ``linked`` (hard-linked there now), ``absent`` (no transcript under
+    any slug: a first launch, nothing to adopt) or ``refused`` (it exists but
+    could not be linked; ``detail`` is :func:`refusal`'s instruction).
+
+    A **hard link**, not a copy or a symlink: one inode under both names, so
+    every append the resumed session makes is visible under both, nothing is
+    doubled on disk, and pruning either name leaves the other whole. Once
+    linked, the session is in the worktree-slug layout, and every later resume
+    takes the ``continue`` fast path. The ``<id>/`` sidecar directory (sub-agent
+    transcripts, persisted tool results) stays under the old slug, where the
+    transcript's absolute paths already point.
+    """
+    if not worktree.is_dir():
+        return "refused", refusal(session_id, worktree, f"no worktree at {worktree}")
+    projects = claude_home() / "projects"
+    target = projects / slugify(worktree) / f"{session_id}.jsonl"
+    if target.is_file():
+        return "present", str(target)
+    sources = (
+        sorted(
+            (p for p in projects.glob(f"*/{session_id}.jsonl") if p.is_file()),
+            key=_mtime,
+            reverse=True,
+        )
+        if projects.is_dir()
+        else []
+    )
+    if not sources:
+        return "absent", f"no transcript for {session_id} under {projects}"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.link(sources[0], target)
+    except FileExistsError:
+        # A concurrent adopt won the race; the name is there either way.
+        return "present", str(target)
+    except OSError as e:
+        return "refused", refusal(
+            session_id, worktree, f"could not link {sources[0]} to {target}: {e}"
+        )
+    return "linked", f"{sources[0]} -> {target}"
 
 
 #: The kinds `.claude/shell/init.zsh` actually seeds a daily id with — the
@@ -491,7 +565,41 @@ def run(argv: list[str]) -> int:
         help="json (default, for humans and jq) or lines — mode, session id "
         "and run-from directory on three lines, for a shell `read`",
     )
+    parser.add_argument(
+        "--adopt",
+        action="store_true",
+        help="with --tag: when the session is filed under another slug, "
+        "hard-link its transcript under the worktree's slug before answering; "
+        "a link that fails turns the verdict into mode `refuse`, its "
+        "instruction on stderr — the form a resuming caller passes",
+    )
+    parser.add_argument(
+        "--adopt-session",
+        default=None,
+        metavar="SID",
+        help="link session SID's transcript under --worktree's slug, print "
+        "the outcome (present / linked / absent / refused) and exit — for a "
+        "caller that already knows its id",
+    )
+    parser.add_argument(
+        "--worktree",
+        default=None,
+        metavar="DIR",
+        help="the worktree directory for --adopt-session",
+    )
     args = parser.parse_args(argv[1:])
+
+    if args.adopt_session:
+        if not args.worktree:
+            raise ResolveSessionError("--adopt-session needs --worktree DIR")
+        status, detail = adopt_session(
+            args.adopt_session, Path(os.path.abspath(args.worktree))
+        )
+        print(status)
+        if status == "refused":
+            print(detail, file=sys.stderr)
+            return 1
+        return 0
 
     # `abspath`, NOT `resolve()`. Claude Code derives the slug from the working
     # directory **string** it was given, so the slug has to be computed from
@@ -544,6 +652,17 @@ def run(argv: list[str]) -> int:
         raise ResolveSessionError("--tag is required (or pass --daily-id KIND)")
 
     verdict = resolve(normalize_tag(args.tag), repo)
+    if args.adopt and verdict.get("adopt_from"):
+        status, detail = adopt_session(verdict["session_id"], Path(verdict["worktree"]))
+        if status in ("present", "linked"):
+            verdict["adopted"] = status
+        else:
+            # Never a silent base-checkout reopen: the caller gets a mode it
+            # must not launch on, and the operator the instruction that works.
+            verdict["mode"] = "refuse"
+            verdict["run_from"] = str(repo)
+            verdict["reason"] = detail
+            print(detail, file=sys.stderr)
     if args.format == "lines":
         # Three fixed lines in a fixed order, so a shell reads them positionally
         # with no JSON parsing. The session id is empty rather than absent when
