@@ -161,9 +161,14 @@ def discover(projects: Path, base: Path, since_ts: float) -> list[Path]:
     """Transcripts of the base checkout and its worktrees written since
     ``since_ts``, oldest first. Slugs are matched exactly or by the worktree
     segment, never by bare prefix, which would catch a sibling repo
-    (``dropset-beta``)."""
+    (``dropset-beta``).
+
+    One file per inode: ``resolve_session.adopt_session`` hard-links a
+    base-filed transcript under its worktree's slug, so one session can sit
+    under two names, and digesting both would double its row and its dollars.
+    The worktree-slug name is the one kept, the one later resumes read."""
     slug = sm.slugify(base)
-    found: list[tuple[float, Path]] = []
+    found: dict[tuple[int, int], tuple[float, Path]] = {}
     if not projects.is_dir():
         return []
     for project in projects.iterdir():
@@ -174,12 +179,15 @@ def discover(projects: Path, base: Path, since_ts: float) -> list[Path]:
             continue
         for transcript in project.glob("*.jsonl"):
             try:
-                mtime = transcript.stat().st_mtime
+                st = transcript.stat()
             except OSError:
                 continue
-            if mtime >= since_ts:
-                found.append((mtime, transcript))
-    return [p for _, p in sorted(found)]
+            if st.st_mtime < since_ts:
+                continue
+            key = (st.st_dev, st.st_ino)
+            if key not in found or name != slug:
+                found[key] = (st.st_mtime, transcript)
+    return [p for _, p in sorted(found.values())]
 
 
 @dataclass

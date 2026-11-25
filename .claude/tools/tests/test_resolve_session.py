@@ -341,6 +341,29 @@ class CliTests(unittest.TestCase):
         # And the next resume takes the worktree-slug fast path.
         self.assertEqual(resolve("24", self.fx.repo)["mode"], "continue")
 
+    def test_adopt_symlinks_the_sub_agent_sidecar_beside_the_link(self):
+        # A cost reader resolving the worktree-slug name reads sub-agents from
+        # `<slug>/<id>/subagents`; without the sidecar it under-prices.
+        wt = self.fx.worktree("eng-28")
+        base = self.fx.transcript(self.fx.repo, "sid28", [str(wt)])
+        (base.parent / "sid28" / "subagents").mkdir(parents=True)
+        self.assertEqual(rs.adopt_session("sid28", wt, base)[0], "linked")
+        sidecar = self.fx.projects / slugify(wt) / "sid28"
+        self.assertTrue(sidecar.is_symlink())
+        self.assertTrue((sidecar / "subagents").is_dir())
+
+    def test_adopt_links_the_transcript_the_verdict_matched(self):
+        # A same-id copy under a third slug is newer, but the verdict matched
+        # the base copy by its stamps; the link must name that one.
+        wt = self.fx.worktree("eng-29")
+        base = self.fx.transcript(self.fx.repo, "sid29", [str(wt)])
+        other = self.fx.transcript(Path("/elsewhere"), "sid29", ["/elsewhere"])
+        os.utime(base, (1, 1))
+        os.utime(other, (10**9, 10**9))
+        self._invoke("--tag", "29", "--repo", str(self.fx.repo), "--adopt")
+        linked = self.fx.projects / slugify(wt) / "sid29.jsonl"
+        self.assertTrue(os.path.samefile(linked, base))
+
     def test_a_failed_link_refuses_rather_than_reopening_in_base(self):
         wt = self.fx.worktree("eng-25")
         self.fx.transcript(self.fx.repo, "sid25", [str(wt)])

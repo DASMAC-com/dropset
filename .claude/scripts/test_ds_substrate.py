@@ -889,12 +889,21 @@ class VerbLaunch(SubstrateHarness):
         self.assertIn("is gone", result.stderr)
 
     def test_task_resume_launches_nothing_on_a_refused_adoption(self):
+        # The stub echoes its argv to stderr: that pins both the `--adopt`
+        # the call must pass and that its stderr (the refusal's instruction)
+        # still reaches the operator rather than `/dev/null`.
         result, out = self._launch(
-            "python3() { print refuse; print sid-9; print -r -- $_DS_REPO; }; "
+            'python3() { print -u2 -r -- "RESOLVER $*"; print refuse; '
+            "print sid-9; print -r -- $_DS_REPO; }; "
             "task resume 9"
         )
         self.assertNotIn("ARGS=", out, result.stderr)
         self.assertIn("RC=1", out)
+        line = next(
+            ln for ln in result.stderr.splitlines() if "resolve_session.py" in ln
+        )
+        self.assertIn("--tag 9", line)
+        self.assertIn("--adopt", line)
 
     def test_task_resume_runs_a_resume_verdict_from_the_worktree(self):
         wt = self.repo / ".claude" / "worktrees" / "9"

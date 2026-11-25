@@ -112,8 +112,12 @@ class LaunchKeysTest(unittest.TestCase):
     def test_a_resume_from_the_base_slug_still_gets_the_worktree_s_keys(
         self,
     ) -> None:
-        # A transcript filed under the base checkout's slug resumes without the
-        # `cd` into the worktree, so no `chpwd` keys it.
+        # A transcript filed under another slug is first adopted into the
+        # worktree's (`resolve_session.py --adopt-session`, copied in beside
+        # the init), and the keying must not depend on that `cd` either.
+        tools = self.repo / ".claude" / "tools"
+        tools.mkdir(parents=True)
+        shutil.copy(SHELL.parent / "tools" / "resolve_session.py", tools)
         slug = Path(self.tmp.name) / "projects" / "-base-slug"
         slug.mkdir(parents=True)
         (slug / "sid-2.jsonl").write_text("{}\n")
@@ -121,7 +125,9 @@ class LaunchKeysTest(unittest.TestCase):
         # The resume branch ran, not the fresh one (same keys, other flags).
         self.assertIn("--resume sid-2", self.argv)
         self.assertEqual(out["in"], self.keys_of(self.worktree, "-1"))
-        self.assertEqual(out["after"], self.keys_of(self.repo, ""))
+        # The resume ran from inside the worktree, so the tab is left there,
+        # keyed for it, exactly as after a worktree-slug resume.
+        self.assertEqual(out["after"], self.keys_of(self.worktree, "-1"))
 
     def test_a_worded_tag_is_refused_before_the_pool_is_keyed(self) -> None:
         # Its worktree would exist only once the CLI made it, after the keying,

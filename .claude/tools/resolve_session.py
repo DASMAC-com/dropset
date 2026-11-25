@@ -24,8 +24,10 @@ caller did.
 
 **That filing rule has since changed.** Current Claude Code files a `-w`
 session under the *worktree's* slug (measured 2026-10-13), which the
-``continue`` mode below already reaches. Both layouts remain on disk, so both
-paths stay; neither is dead code.
+``continue`` mode below already reaches. Both layouts remain on disk, and base
+filing recurred for some 11-23 sessions, cause unknown, so both paths stay;
+neither is dead code. ``--adopt`` moves a base-filed session with a live
+worktree into the worktree-slug layout.
 
 Usage::
 
@@ -335,8 +337,14 @@ def refusal(session_id: str, worktree: Path, cause: str) -> str:
     )
 
 
-def adopt_session(session_id: str, worktree: Path) -> tuple[str, str]:
+def adopt_session(
+    session_id: str, worktree: Path, source: Path | None = None
+) -> tuple[str, str]:
     """Make ``session_id``'s transcript reachable from inside ``worktree``.
+
+    ``source`` is the transcript to adopt — the one :func:`resolve` matched by
+    its stamps, so the verdict and the link name the same file; without it, the
+    newest ``<id>.jsonl`` under any slug.
 
     Returns ``(status, detail)``: ``present`` (already under the worktree's
     slug), ``linked`` (hard-linked there now), ``absent`` (no transcript under
@@ -344,12 +352,17 @@ def adopt_session(session_id: str, worktree: Path) -> tuple[str, str]:
     could not be linked; ``detail`` is :func:`refusal`'s instruction).
 
     A **hard link**, not a copy or a symlink: one inode under both names, so
-    every append the resumed session makes is visible under both, nothing is
-    doubled on disk, and pruning either name leaves the other whole. Once
-    linked, the session is in the worktree-slug layout, and every later resume
-    takes the ``continue`` fast path. The ``<id>/`` sidecar directory (sub-agent
-    transcripts, persisted tool results) stays under the old slug, where the
-    transcript's absolute paths already point.
+    nothing is doubled on disk and pruning either name leaves the other whole.
+    A reader that walks every slug must count one file per inode
+    (``session_digest.discover`` does). Once linked, the session is in the
+    worktree-slug layout, and every later resume takes the ``continue`` fast
+    path.
+
+    The ``<id>/`` **sidecar** directory (sub-agent transcripts, persisted tool
+    results) is **symlinked** beside the link, so a cost reader resolving the
+    worktree-slug name finds every sub-agent, and the ones the resumed session
+    spawns land in the same directory as the ones before it. A sidecar already
+    under the worktree's slug is left alone.
     """
     if not worktree.is_dir():
         return "refused", refusal(session_id, worktree, f"no worktree at {worktree}")
@@ -357,28 +370,39 @@ def adopt_session(session_id: str, worktree: Path) -> tuple[str, str]:
     target = projects / slugify(worktree) / f"{session_id}.jsonl"
     if target.is_file():
         return "present", str(target)
-    sources = (
-        sorted(
-            (p for p in projects.glob(f"*/{session_id}.jsonl") if p.is_file()),
-            key=_mtime,
-            reverse=True,
+    if source is None or not source.is_file():
+        sources = (
+            sorted(
+                (p for p in projects.glob(f"*/{session_id}.jsonl") if p.is_file()),
+                key=_mtime,
+                reverse=True,
+            )
+            if projects.is_dir()
+            else []
         )
-        if projects.is_dir()
-        else []
-    )
-    if not sources:
-        return "absent", f"no transcript for {session_id} under {projects}"
+        if not sources:
+            return "absent", f"no transcript for {session_id} under {projects}"
+        source = sources[0]
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        os.link(sources[0], target)
+        os.link(source, target)
     except FileExistsError:
         # A concurrent adopt won the race; the name is there either way.
         return "present", str(target)
     except OSError as e:
         return "refused", refusal(
-            session_id, worktree, f"could not link {sources[0]} to {target}: {e}"
+            session_id, worktree, f"could not link {source} to {target}: {e}"
         )
-    return "linked", f"{sources[0]} -> {target}"
+    sidecar = source.parent / session_id
+    sidecar_target = target.parent / session_id
+    if sidecar.is_dir() and not os.path.lexists(sidecar_target):
+        try:
+            sidecar_target.symlink_to(sidecar, target_is_directory=True)
+        except OSError:
+            # Best-effort: the transcript is reachable, which is the resume;
+            # a missing sidecar link costs only the sub-agent accounting.
+            pass
+    return "linked", f"{source} -> {target}"
 
 
 #: The kinds `.claude/shell/init.zsh` actually seeds a daily id with — the
@@ -653,7 +677,11 @@ def run(argv: list[str]) -> int:
 
     verdict = resolve(normalize_tag(args.tag), repo)
     if args.adopt and verdict.get("adopt_from"):
-        status, detail = adopt_session(verdict["session_id"], Path(verdict["worktree"]))
+        status, detail = adopt_session(
+            verdict["session_id"],
+            Path(verdict["worktree"]),
+            Path(verdict["adopt_from"]),
+        )
         if status in ("present", "linked"):
             verdict["adopted"] = status
         else:
