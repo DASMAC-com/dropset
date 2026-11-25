@@ -20,10 +20,11 @@ WORKDIR /app
 # ahead of every source COPY, so a source change never re-pays the toolchain
 # download. `rustup toolchain install` takes no argument on purpose: the file
 # is the one pin. Asserted by `.claude/tools/dockerfile_stages.py`; see
-# docs/ci.md §1.
+# docs/ci.md §1. cargo-chef is pinned like the bases: a release that raised
+# its minimum Rust above the toolchain pin would break every cold build.
 COPY rust-toolchain.toml ./
 RUN rustup toolchain install \
-    && cargo install cargo-chef --locked
+    && cargo install cargo-chef --version 0.1.78 --locked
 
 FROM chef AS planner
 COPY . .
