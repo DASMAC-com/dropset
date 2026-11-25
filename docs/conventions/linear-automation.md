@@ -1038,8 +1038,9 @@ reads against is in `local-integrations.md` → "The verb table".
 token-less title launches as `task <n>`, full stop. At filing, the
 filer writes the verb's **default substrate** from the verb table
 unless the issue states a reason to differ — web research (Bedrock has
-no web search or fetch) or subscription budget — so the substrate judgment is
-made once, in the table, rather than re-argued per issue.
+no web search; web fetch works there) or subscription budget — so the
+substrate judgment is made once, in the table, rather than re-argued
+per issue.
 
 **Who writes it.** `linear-task` asks for the verb and substrate and
 omits the token for a default task; `plan` writes `[Explore/Bedrock]`
