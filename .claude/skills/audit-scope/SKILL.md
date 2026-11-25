@@ -5,8 +5,6 @@ disable-model-invocation: false
 user-invocable: true
 ---
 
-<!-- cspell:word Gstack -->
-
 <!-- cspell:word unvalidated -->
 
 # `audit-scope`
@@ -20,13 +18,11 @@ Notes), in the same destination and
 format `linear-task` uses. Use when a project
 milestone lands, a feature ships, or before declaring a
 subsystem "stable" — or, with `--rotation N`, for a broad
-random sweep.
+random sweep. The measured incidents and retired designs
+behind the rules are in [`history.md`](history.md).
 
-This replaces the old `audit-codebase`, which wrote a
-gitignored checklist. Findings now live as real Linear
-issues — so they dedup and search like any other — but
-**parked**, so filing them does not put work in the pull
-queue. **The operator ratifies every finding with this
+Findings are parked Linear issues, so filing them does not
+put work in the pull queue. **The operator ratifies every finding with this
 session, in its tab** (operator ruling, 2026-10-23), through
 the shared `ratify-staged` skill (step 8); planning is
 consulted for feedback, never for ratification.
@@ -51,11 +47,6 @@ with it. If sub-agent tooling is genuinely unavailable,
 **stop and ask**: never substitute an inline pass, which is
 the trade `review-pr` deleted its inline path to prevent,
 and never silently skip the fan-out.
-
-**`review-pr` works the same way.** Invoking it pre-approves
-its regular fan-out; its one entry question exists only to
-offer an abridged tier on a small diff, and an unanswered one
-proceeds at the regular tier.
 
 **This skill is what an audit issue runs.** Auditing reaches
 the board as a first-class Backlog issue filed by the
@@ -116,12 +107,9 @@ Four duties this skill owns directly:
   per the `architect` skill's marker rule.
 - **The audit issue stays In Progress while the findings
   loop is open** — In Review only after step 8's close gate
-  — and reaches Done only on the operator's sign-off. Marking
-  it Done at the handoff is the measured mistake that
-  produced the rule — under the no-PR shape the
-  issue state is the only signal that the work is live, so
-  an honest state is the whole of this skill's obligation.
-  Run `/session-metrics`, the shared tail, just before the
+  — and reaches Done only on the operator's sign-off: under
+  the no-PR shape the issue state is the only signal that
+  the work is live. Run `/session-metrics`, the shared tail, just before the
   final state write; at ratification plus fold, close with
   `close_session.py --state Done --issue ENG-### --session-id <uuid>`
   and `--leftovers-file <path>` (it appends the cost line), per
@@ -129,10 +117,7 @@ Four duties this skill owns directly:
 - **Read-only toward source.** No source edit, no commit, no
   push, no local state — Linear is the record, so a wiped
   worktree loses nothing. A rotation's ff-only sync to
-  `main` is the one repo operation (`rotation.md`). Note the
-  transcript is *not* covered by the issue's state: the
-  conversation purge protects only a transcript on an open
-  PR, which an audit never has.
+  `main` is the one repo operation (`rotation.md`).
 
 ## Input
 
@@ -172,12 +157,10 @@ Optional (ask on a scoped run if not provided):
    doc-named symbols still existing, unreferenced dictionary
    words — is marked **mechanical** and runs on the helper
    tier (spelled `sonnet` in the Agent call; the launcher
-   binds that slot to it). That is not the standing rejection of Sonnet-tier
-   task workers (2026-09-11), which covers implementers: a
-   read-only lane whose error mode is a false positive the
-   skeptic kills downstream is not one (operator-confirmed,
-   2026-10-22). No lane pins `haiku` — a lane that cheap is
-   a Python tool.
+   binds that slot to it) — a read-only lane, not a task
+   worker the Sonnet-tier rejection covers (`history.md`).
+   No lane pins `haiku` — a lane that cheap is a Python
+   tool.
 
 1. **Classify the scope by platform kind.** Match the
    scope's paths to a platform/subsystem so the right
@@ -223,16 +206,12 @@ Optional (ask on a scoped run if not provided):
    audit is meant to look anywhere in the repo.
 
    **Split a dimension that would invite
-   self-decomposition, at plan time.** The brief now tells
-   every agent not to spawn sub-agents of its own, but a
-   dimension whose scope spans obviously separable lanes
-   invites exactly that: comment-accuracy over source
-   comments *plus* a spec doc *plus* five READMEs is three
-   jobs wearing one name. One such agent fanned out four
-   grandchildren for ≈8.8M of per-turn input that no skill
-   asked for, and the fan-out was invisible to the
-   rotation's own plan. If a dimension reads as lanes,
-   make it separate agents here, where they are counted.
+   self-decomposition, at plan time.** A dimension whose
+   scope spans obviously separable lanes (comment-accuracy
+   over source comments *plus* a spec doc *plus* five
+   READMEs) invites an uncounted fan-out of its own
+   (`history.md`). If a dimension reads as lanes, make it
+   separate agents here, where they are counted.
    A dimension with a **mechanical half** (hierarchy's child
    counts, doc-freshness's symbol sweep) splits the same
    way: spawn the mechanical lane first and pass its output
@@ -240,8 +219,7 @@ Optional (ask on a scoped run if not provided):
 
    **A comment-accuracy lane gets about 25–30 non-test
    source files**, counted at plan time; over budget, split
-   by feature directory. Two unbudgeted lanes once cost
-   ≈ \$12 of one audit's fan-out, at 73 and 44 turns.
+   by feature directory.
 
    At minimum (spelling and term consistency are **not**
    lanes — cspell runs under `make lint`, and step 5 drops
@@ -325,21 +303,10 @@ Optional (ask on a scoped run if not provided):
      **A quoted MIGRATION inverts the usual instinct.**
      When a doc quotes or paraphrases a claim from
      `db-schema/migrations/**`, check it against HEAD
-     *behavior*, never against the migration text. An
-     applied migration is immutable — the runner hashes the
-     raw bytes and rejects any change, so even a comment
-     cannot be reworded — which makes it the **least**
+     *behavior*, never against the migration text: an
+     applied migration is immutable, so it is the **least**
      authoritative statement of current behavior while
-     looking like the most authoritative one. Measured
-     instances: an asymmetry claim in migrations 0003 and
-     0008 was copied into two prose docs and both went
-     stale silently when the world it described was
-     corrected, and migration 0009 states a false invariant
-     (that a source writes bars or ticks and never both,
-     untrue for the coinbase source) whose correction lives
-     in 0010's text instead. Anything reasoning off a
-     migration's stated invariant may be reasoning off a
-     false premise that can never be fixed in place.
+     looking like the most authoritative (`history.md`).
 
    - **Instruction integrity** — when the scope is agent
      infra, this is the dimension that matters most, and it
@@ -347,9 +314,7 @@ Optional (ask on a scoped run if not provided):
      above. Look for: a rule stated in `CLAUDE.md` or a
      convention doc that **no skill implements**; a skill
      step prescribing a command, flag, or output field its
-     tool doesn't actually support (a real instance: the
-     sub-agent brief named `--count` / `--files` on
-     `search_source.py`, which has neither); prose that
+     tool doesn't actually support; prose that
      contradicts a sibling convention; and index↔doc↔skill
      cross-references left dangling by a rename. Verify a
      prescribed command against the tool's **argument
@@ -376,10 +341,7 @@ Optional (ask on a scoped run if not provided):
    **Every dimension prompt ends with the self-deflation
    clause** from `docs/conventions/sub-agent-brief.md`,
    appended verbatim — not optional boilerplate but the
-   cheapest noise gate in this skill. Measured: five
-   dimension agents returned **46** findings and two
-   skeptics killed **37**, an ~80% false-positive rate
-   upstream of the skeptic, which earns its cost.
+   cheapest noise gate in this skill (`history.md`).
 
 1. **Adversarial cross-check.** Spawn a fresh skeptic
    sub-agent (brief it with the same sub-agent brief; no
@@ -390,8 +352,7 @@ Optional (ask on a scoped run if not provided):
    defend or retract; iterate at most 2 more rounds, then
    accept the survivors. This is the primary noise gate.
 
-   Brief the skeptic with two further duties, both
-   borrowed from Gstack's review and cso skills:
+   Brief the skeptic with two further duties:
 
    - **Sideways sweep.** For each finding it upholds, search
      the fingerprinted pattern — the offending code or text,
@@ -474,26 +435,9 @@ Optional (ask on a scoped run if not provided):
      `--parent`: the audit issue; `--rotation` omits it.
      Team, project and assignee default from `LINEAR_*`.
 
-     **Not `save_issue`.** The MCP echoes the entire stored
-     body back on a *create* as well, which makes it worst
-     for precisely this caller: an audit files folded issues
-     with a part and a fingerprint per finding, so the bodies
-     are long **by design** and the cost grows with exactly
-     the thing the fold rule encourages. Measured (session
-     fa6fc519, the ENG-978 seam audit): `save_issue` was the
-     top main-loop sink at **9 calls / ≈22.8k**, supplying
-     six of the session's eight largest single results, while
-     the entire rest of the main loop's tool results came to
-     roughly 23k combined — one shape, about half the cost.
-     Every echoed byte was content the session had just
-     authored, so nothing decision-relevant is lost.
-
-     State, milestone and priority are writer *parameters*,
-     which is what lets one filer serve this skill's
-     Backlog + `Session pending` staging and the
-     scheduler's plain Backlog follow-up filings
-     (27 calls / ≈30.1k in one measured pass) without a
-     second implementation.
+     **Not `save_issue`**, which echoes the whole stored
+     body on a create too — worst for an audit's long folded
+     bodies (`history.md`).
 
      **Meta-work prefix.** If every path the finding's fix
      will edit sits under the meta surface (`.claude/**`,
@@ -511,21 +455,15 @@ Optional (ask on a scoped run if not provided):
 
      **Dependencies — file none.** A blocking edge is
      **human-curated** (`CLAUDE.md` → "Blocking
-     relations"), and filing here is **autonomous**:
-     there is nobody to answer an `AskUserQuestion`
-     mid-rotation, and step 8's review asks about
-     findings, never edges, so the default is **no
-     edge**. So pass no `blockedBy` /
-     `blocks` at all. When a finding really does look
+     relations"), and filing here is **autonomous**, so the
+     default is **no edge**: pass no `blockedBy` / `blocks`
+     at all. When a finding really does look
      ordered behind another issue, write that into the
      body as prose instead: a `**Suspected dependency**:`
      line naming the issue it likely needs first and the
      evidence for it. A human can then place the edge from
-     the same information you had.
-     A spurious edge drops an issue out of the board's
-     available set; a missing one costs a rebase.
-     (Coupling that means *one PR* is the merged-issue
-     case in Notes, and is unaffected by this.)
+     the same information you had. (Coupling that means
+     *one PR* is the merged-issue case in Notes.)
 
      The body must let a cold agent act on it in its own
      worktree (literal newlines, not `\n`):
@@ -568,38 +506,25 @@ Optional (ask on a scoped run if not provided):
        `rotation.md`.)
 
        **The fingerprint is the stable key; a `file:line`
-       is not.** Every citation and quoted snippet above is
-       a snapshot of the commit the finding was *discovered*
-       at, and an issue may sit in the Backlog for months
-       while unrelated PRs rewrite around it. One session's
-       surfaced task named four line-anchored citations
-       across two files and **all four** had been rewritten
-       away, with one named file carrying no relevant
-       references at all — the work item was moot, at the
-       cost of four exploratory greps to establish it. So
-       write the fingerprint to name the *thing*, not its
-       coordinates, and say in the body that the citations
-       are as-of-discovery. The implementer re-derives the
-       location; the fingerprint is what survives.
+       is not** — every citation is a snapshot of the
+       discovery commit (`history.md`). Write the
+       fingerprint to name the *thing*, not its coordinates,
+       and say in the body that the citations are
+       as-of-discovery.
 
      - `**Discovered by**: audit-scope <scope> @ <SHA>` —
        a rotation writes `rotation <unit>` as the scope;
        the SHA is what
        dates every citation above it.
 
-     **No `**Touches**:` line.** The declared-scope glob
-     field is retired (see `CLAUDE.md` → "Structured filing
-     fields"): nothing consumed it once the collision
-     machinery went. Name the affected files in the finding's
-     prose instead, where an implementer will read them.
+     **No `**Touches**:` line** (retired): name the
+     affected files in the finding's prose instead, where an
+     implementer will read them.
 
    **Record no collision links, and no relations of any
-   kind.** The automated file-collision machinery is
-   **retired**: there is no per-issue sweep here, nothing to
-   build around one, and nothing to reintroduce. Collision
-   reconciliation belongs to a scheduler session, judged on
-   content from its own board read. Blocking edges remain
-   human-curated (`CLAUDE.md` → "Blocking relations").
+   kind.** The collision machinery is retired; reconciling
+   overlap is a scheduler session's, judged on content
+   (`history.md`).
 
 1. **Report.** Print a short tally — findings by
    dimension and severity, deduped count, and the filed
@@ -608,8 +533,7 @@ Optional (ask on a scoped run if not provided):
 
    **Every audit record opens with a coverage line per
    planned lane** — the tally here, and the record a pulled
-   audit issue receives (`linear_issue.py append`) —
-   borrowed from Gstack's cso skill:
+   audit issue receives (`linear_issue.py append`):
 
    ```txt
    COVERAGE <lane> (<tier>): complete
@@ -663,16 +587,9 @@ Optional (ask on a scoped run if not provided):
   **That floor bounds what may be *separated*, not how large
   one issue may grow.** A coherent set larger than a short
   session splits into **sequential PRs** of roughly 4–5
-  findings each, because session cost is roughly quadratic in
-  session length — see `docs/conventions/context-economy.md`
-  → "Session length is itself a cost lever". Where the two
-  pull against each other, coherence wins at the floor and
-  the size bound wins at the ceiling: never fold across a
-  deploy unit to reach 4–5, and never carry a coherent set
-  past a short session to avoid a second issue. Full rule:
-  `CLAUDE.md` → "Structured filing fields" /
-  `docs/conventions/linear-automation.md` → "Fold coupled
-  findings into one issue".
+  findings each: never fold across a deploy unit to reach
+  4–5, and never carry a coherent set past a short session
+  to avoid a second issue (`history.md`).
 
 - Shell discipline (per `CLAUDE.md`): every command is one
   bare call reducing to an allow-glob — no `&&`, pipes,
