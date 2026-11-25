@@ -36,9 +36,8 @@ living state" section names and nothing else: superseded
 phases, dated addenda and the session's incremental notes
 disappear (it is still no append log: `In-session notes` is
 swept), and no ruling, doctrine or method text survives outside
-`In-session notes`. **Restore `Discuss with operator` to a
-single blank checkbox**, once its items are acted on, and carry
-no operator-actions list: an open operator action is an
+`In-session notes`. Carry no operator-actions list: an open
+operator action is an
 `[Operator]` issue, never document text. **Write only the
 sections that changed**, never the whole body: put each changed
 top-level section in one file and run

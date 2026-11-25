@@ -1641,6 +1641,14 @@ _ds_model_probe() {
     print -ru2 -- "dropset: $profile does not answer on Bedrock (HTTP $code) —" \
       'refusing to open a session that would fail every turn:'
     print -ru2 -- "  ${out%$'\n'*}"
+    # A body naming Marketplace actions is the missing account-level model
+    # agreement (the 1898 incident), which no key or policy edit fixes.
+    if [[ "$out" == *Marketplace* || "$out" == *marketplace* ]]; then
+      print -ru2 -- \
+        "dropset: the account's Bedrock model agreement is missing — accept" \
+        'it once from the admin SSO login; this is neither a credential' \
+        "failure nor a principal's policy."
+    fi
     return 1
   fi
 }

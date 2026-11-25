@@ -256,7 +256,10 @@ the document's state sections.
    a chore when a session can do the
    surrounding work, which runs its normal course to In Review.
    An operator action is an ask or an Urgent task, never a list
-   entry (2026-10-26, amended 2026-10-27).
+   entry (2026-10-26, amended 2026-10-27). Anything required for
+   launch, or that could result in a program update, is never left
+   under a parking milestone; it sits in the un-parked Backlog at
+   High or above for the operator's review (2026-10-23).
 
 1. **Cost telemetry is reconciled against the bill.**
    Session-reported costs are projections;
@@ -329,6 +332,17 @@ the document's state sections.
    `docs/ci.md` → "8. Local-first remote runs" (operator's
    direction, 2026-10-31).
 
+1. **No edit outside a ratified body; a merged PR closes its
+   worktree.** The scheduler never tells a worker to edit a file
+   beyond what the worker's ratified issue body says, by message or
+   any other channel. A change that surfaces mid-flight goes to the
+   curator, who files it as its own task for the operator's review.
+   When a PR merges, its issue is marked Done and its worktree is
+   closed; anything further is done in another task, never added
+   late in the same worktree, whether by the scheduler's message,
+   the worker's own initiative or anyone else's. A Done issue gets
+   no follow-up PR (operator, 2026-10-31).
+
 ## Rulings index (beyond the numbered set)
 
 - **The lever reservoir**: file only turn-eliminating,
@@ -340,8 +354,29 @@ the document's state sections.
 - **The staging-time scope band**: 4 to 5 parts, 300 to 800
   lines, split at 1,000, with test-heavy and prose-deletion
   overages accepted as one PR when a split would ship inert code.
+  The upper figures are ceilings, not targets: the target is the
+  smallest coherent PR that opens, builds, reviews and merges inside
+  one two-to-three-hour session, since PRs that waited over a
+  weekend doubled or tripled in cost, and an issue whose files sit
+  in a live collision cluster is sized smaller still so it lands
+  before the neighbor moves (2026-10-19).
 - **Guards stay on under auto mode.**
 - **Per-tab ratification outranks planning holds.**
+- **Planning never relays per-tab asks.** The scheduler's reports
+  never say which tab needs a Done mark, a ratification or an
+  enqueue yes, since the iTerm integration colors a waiting tab and
+  the operator attends to those; they carry only what a tab cannot
+  show — board decisions, edges, filings, fleet-wide holds
+  (2026-10-19).
+- **No skill-size exceptions.** The headroom ratchet (ruling 4)
+  governs until the frozen baseline is empty, no new baseline entry
+  is ever added, and the mechanism retires with 1996 (2026-10-20).
+- **The adversarial cross-check runs at every tier.** It is skipped
+  only for a trivial diff, and only through an explicit
+  `AskUserQuestion`, never silently (2026-10-20).
+- **Lens agents are never a trim lever.** A lever that thins the
+  review fan-out is rejected at filing, as a model downgrade is
+  (2026-10-20).
 - ~~**Follow-ups park under the Follow-ups milestone.**~~ Struck
   2026-10-26: follow-ups file un-parked and are messaged to the
   curator.
