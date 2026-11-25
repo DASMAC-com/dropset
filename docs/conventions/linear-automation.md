@@ -1044,8 +1044,8 @@ per issue.
 
 **Who writes it.** `linear-task` asks for the verb and substrate and
 omits the token for a default task; `plan` writes `[Explore/Bedrock]`
-on an audit issue (`[Explore/Anthropic]` when the audit needs the
-web), `[Chore/Bedrock]` on operator-attended agent work, and
+on an audit issue (`[Explore/Anthropic]` when the audit needs web
+search), `[Chore/Bedrock]` on operator-attended agent work, and
 `[Operator]` on an item the operator executes; `architect` writes it on
 each task it files. Audit findings, trim batches and merge outputs are
 default tasks and carry no token. **The dispatch gate reads it**:

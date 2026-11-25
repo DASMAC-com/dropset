@@ -135,8 +135,8 @@ Otherwise, the full bootstrap:
    criterion fired, with evidence) and its **sequencing** as prose.
    It competes in the queue like any capacity spend — an audit that
    cannot win that argument should not run this week. Title it
-   `[Explore/Bedrock]` (`[Explore/Anthropic]` when it needs the
-   web): it runs as `explore`, never `task` (operator rule,
+   `[Explore/Bedrock]` (`[Explore/Anthropic]` when it needs web
+   search): it runs as `explore`, never `task` (operator rule,
    2026-09-11) — a
    temporary worktree, no PR
    (`docs/conventions/local-integrations.md` → "Architect and
