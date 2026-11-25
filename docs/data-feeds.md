@@ -2617,9 +2617,7 @@ ______________________________________________________________________
 
   **Still open: the other 11 currencies.** BRL, CHF, GBP, IDR, JPY, MXN,
   MYR, NGN, SGD, TRY and ZAR are unverified on both vendors, so the
-  upper-bound caveat in §9 stands for them unchanged. It is tracked as
-  its own post-validation issue rather than deferred inside this one, and
-  under the lean-MVP posture it is deliberately not on the critical path.
+  upper-bound caveat in §9 stands for them unchanged.
   Pyth's column of that matrix is measured and complete above as
   *published* coverage rather than as collected data — the feed itself
   currently collects nothing (§9); MYR and

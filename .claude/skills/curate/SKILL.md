@@ -219,7 +219,7 @@ Then state, in a few lines:
 
 - **The posture** for the day — **hold**, **expand** or **cut** —
   defaulted from the document's direction, saying which you took.
-- **The ranking criteria**: launch relevance and checkpoint;
+- **The ranking criteria**: relevance to the document's direction;
   whether the fix republishes the program; whether it changes an
   account layout (a layout change lands before the ceremony); the
   resulting window.
@@ -246,7 +246,6 @@ Out of the pool, never shown:
 | ----------------- | ------------------------------------------------- |
 | `Session pending` | another session's review, in its own tab          |
 | `Audit findings`  | the scheduler promotes them while the lane drains |
-| `Post-validation` | the operator's deferral                           |
 
 The listing is the **state**. Re-list before every batch, so an
 arrival joins and a lost message costs latency, not work.
@@ -420,11 +419,8 @@ follow. Then, per ticked task:
 - **A comment asking to drop it**: cancel it, the reason in the
   reply (`approve --pool inbox --cancel <id>`).
 
-- **A comment asking to defer it**: move it to `Post-validation`
-  **only if the comment names that milestone**, with
-  `board_batch.py fields --updates <file>` (rehearsed with
-  `--dry-run`). Otherwise it stays in the pool, the thread resolved
-  and the deferral noted in the reply.
+- **A comment asking to defer it**: it stays in the pool, the
+  thread resolved and the deferral noted in the reply.
 
 - **A comment saying the design is open**: the architecture
   spin-off, below.
@@ -531,8 +527,7 @@ document's header line says so.
 
 - a priority without the same-turn message to the scheduler;
 - an edge, kill or merge the operator did not tick;
-- a milestone, except `Post-validation` when a comment names it
-  and its own `Curator pending` mark;
+- a milestone, except its own `Curator pending` mark;
 - a title's leading token: a retitle keeps it, and the one
   exception is `approve --chore` on the operator's
   `attended chore` comment;

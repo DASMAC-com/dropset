@@ -491,30 +491,29 @@ scope but never loosen the shell rules.
 
 ## Docs and skills prose
 
-Refer to users in the abstract, never by name, in any committed doc or
-skill. **Rust intra-doc links are gated** by the `rustdoc` hook
-(workspace doc build, `-D warnings`). Two authoring rules follow, both
-because the failure surfaces somewhere other than the file you edit: a
-doc comment on an **IDL-captured** item takes a code span, never a
-link (Codama copies it verbatim into `sdk/rs/src/generated/`, where the
-path resolves to nothing), and **never widen an item's visibility** to
-make a link resolve — degrade it to a code span, or re-path it.
-**Spelling (cspell):** `cfg/dictionary.txt` is for terms in
-**≥ 2 files**; a word in just one file gets a top-of-file inline
-`cspell:word` escape (one word per directive). The dictionary carries
-`merge=union`, so **never hand-resolve a
-conflict in it** — the `--unique` sorter hook re-sorts and de-duplicates
-at the next `make lint`, not at commit time (a deleted word it
-resurrects does not heal). A sorted list generates merge conflicts, so
-each Makefile target declares its own `.PHONY` beside its rule, never
-in one central sorted block.
-**Never copy a claim out of an applied migration into prose** — the
-runner hashes the raw bytes, so a shipped migration (comments included)
-can never be corrected. Reference the migration and state the *current*
-claim in the mutable doc; a shipped comment that proves wrong gets its
-correction recorded elsewhere with a back-reference. Immutability makes
-a migration the **least** authoritative statement of current behavior
-(`audit-scope`'s doc-freshness lens). Full detail:
+Refer to users in the abstract, never by name, in any committed doc or skill.
+**No roadmap in the repo**: checkpoints, milestones, dated plans and commercial
+reasoning live in Linear and the Planning document; committed text states what
+exists or is about to be coded. **Rust intra-doc links are gated** by the
+`rustdoc` hook (workspace doc build, `-D warnings`). Two authoring rules follow,
+both because the failure surfaces somewhere other than the file you edit: a doc
+comment on an **IDL-captured** item takes a code span, never a link (Codama
+copies it verbatim into `sdk/rs/src/generated/`, where the path resolves to
+nothing), and **never widen an item's visibility** to make a link resolve —
+degrade it to a code span, or re-path it. **Spelling (cspell):**
+`cfg/dictionary.txt` is for terms in **≥ 2 files**; a word in just one file gets
+a top-of-file inline `cspell:word` escape (one word per directive). The
+dictionary carries `merge=union`, so **never hand-resolve a conflict in it** —
+the `--unique` sorter hook re-sorts and de-duplicates at the next `make lint`,
+not at commit time (a deleted word it resurrects does not heal). A sorted list
+generates merge conflicts, so each Makefile target declares its own `.PHONY`
+beside its rule, never in one central sorted block. **Never copy a claim out of
+an applied migration into prose** — the runner hashes the raw bytes, so a
+shipped migration (comments included) can never be corrected. Reference the
+migration and state the *current* claim in the mutable doc; a shipped comment
+that proves wrong gets its correction recorded elsewhere with a back-reference.
+Immutability makes a migration the **least** authoritative statement of current
+behavior (`audit-scope`'s doc-freshness lens). Full detail:
 `docs/conventions/docs-and-style.md`.
 
 ## Audit registry

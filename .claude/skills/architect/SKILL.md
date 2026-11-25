@@ -450,8 +450,8 @@ transcript:
 
 State one, and commit to it, at the top of the conversation:
 **hold**, **expand**, or **cut**. Default it from context —
-what the operator asked for, what phase the roadmap is in —
-and say which you took.
+what the operator asked for and the board's current direction
+— and say which you took.
 
 Naming the posture is the substantive part. An unstated
 posture defaults to hold by inertia, which is how a design
