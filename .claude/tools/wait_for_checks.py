@@ -1215,8 +1215,10 @@ def wait_queue(
     required check still running it is ``auto_merge_waiting``,
     ``last.pending_checks`` naming any non-required holdout
     (``classic_auto_merge`` restores waiting, for a repo with no queue). An
-    entry with no run on its queue branch for ``await_group_seconds`` is
-    ``queued_no_group``; ``first_run_seen_at`` records when a run appeared.
+    entry with no run created since its enqueue for ``await_group_seconds`` is
+    ``queued_no_group`` (:func:`_group_runs`; an earlier cycle's run inside a
+    stale window never counts); ``first_run_seen_at`` records when such a run
+    appeared.
     """
     probe = probe or QueueProbe(clock=clock)
     client = getattr(probe, "client", None)

@@ -66,10 +66,10 @@ And another session's handoff note, under the one heading it may write::
     python3 .claude/tools/planning_doc.py append-under --file <note.md> \
         [--heading 'Notes for the next planning session'] [--dry-run]
 
-The heading resolves by its text at any depth, the note lands after the
-section's last line, and a note breaking the document's composition rules (an
-inline code span, emphasis across a line break, a bare file name with its
-extension) is refused before anything is written.
+The heading resolves by its text at any depth, the note lands at the end of
+the heading's own text (before any subheading), and a note with an inline code
+span, an emphasis or strikethrough span open across a line break, or a bare
+file name with its extension is refused before anything is written.
 
 **A live scheduler is still the better source when there is one.** It
 answers the question rather than the text — one session that read the document
@@ -553,8 +553,10 @@ def run_patch(argv: list[str]) -> int:
     )
 
 
-#: File extensions whose ``name.ext`` is also a hostname Linear linkifies —
-#: most are country-code TLDs (``.py``, ``.rs``, ``.md``, ``.sh``).
+#: File extensions refused in a bare ``name.ext``. Some are country-code TLDs
+#: Linear linkifies (``.py``, ``.rs``, ``.md``, ``.sh``, ``.so``); the rest are
+#: kept on purpose, since which names its linkifier takes is unmeasured and an
+#: over-refusal costs only a reword, where an under-refusal mangles the write.
 _LINKIFIED_EXTS = (
     "py|rs|md|ts|tsx|js|json|toml|yaml|yml|sh|zsh|sql|txt|lock|css|html|so"
 )
@@ -569,8 +571,10 @@ def composition_problems(note: str) -> list[str]:
 
     The document re-parses on every write, so the shapes the convention's
     write-mangle rules name are refused before the write rather than repaired
-    after it: an inline code span, an emphasis span left open across a line
-    break, and a bare ``name.ext`` (linkified as a hostname). Measured: one
+    after it: an inline code span, a ``*`` / ``**`` / ``~~`` span left open
+    across a line break, and a bare ``name.ext`` (linkified as a hostname).
+    Only those shapes are checked, not every rule the convention states.
+    Measured: one
     handoff note took a third ``save_document`` only to strip code spans the
     document's header forbids, which the writer had no way to check.
     """
@@ -583,6 +587,10 @@ def composition_problems(note: str) -> list[str]:
             problems.append(f"line {n}: a ** emphasis span not closed on its line")
         elif body.replace("**", "").count("*") % 2:
             problems.append(f"line {n}: a * emphasis span not closed on its line")
+        # `_` is not checked: an underscore inside a word (a snake_case name)
+        # is not emphasis, and counting it would refuse ordinary prose.
+        if line.count("~~") % 2:
+            problems.append(f"line {n}: a ~~ strikethrough not closed on its line")
         for match in _BARE_NAME_EXT.finditer(line):
             problems.append(
                 f"line {n}: bare {match.group(0)!r} is linkified as a hostname "
@@ -596,9 +604,11 @@ def append_under(content: str, heading: str, note: str) -> str:
 
     The heading is matched by its text at any depth, so the caller never
     guesses its markdown level (a guessed level was a measured aborted
-    anchor); exactly one match, else nothing is composed. The section runs to
-    the next heading at the same or a shallower depth, so a subsection stays
-    inside it. The note follows the section's last non-blank line — directly
+    anchor); exactly one match, else nothing is composed. The note lands at
+    the end of the heading's OWN text, before its first subheading: several
+    sessions write under the notes heading, and a note placed after its last
+    subsection would read as that subsection's (an ``### From the architect``
+    block, say). The note follows the last non-blank line of that text — directly
     when both are list items, so a bullet list stays one list, else after a
     blank line — and the blank lines before the next heading are kept.
     """
@@ -615,8 +625,8 @@ def append_under(content: str, heading: str, note: str) -> str:
             f"heading {wanted!r} matches {len(found)} stored heading(s), not "
             "exactly one — run --headings and use its exact text"
         )
-    start, depth = found[0]
-    end = next((i for i, d, _ in heads if i > start and d <= depth), len(lines))
+    start = found[0][0]
+    end = next((i for i, _, _ in heads if i > start), len(lines))
     last = end
     while last > start + 1 and not plain[last - 1].strip():
         last -= 1

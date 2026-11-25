@@ -473,8 +473,9 @@ Both, not either — they fail differently.
    them to one heading is what lets the `plan` bootstrap
    consolidate in a single rewrite. Write it in one zero-echo call,
    `planning_doc.py append-under --file <note.md>` (that heading is
-   its default), which resolves the heading by text and refuses a
-   note breaking the document's composition rules before it writes.
+   its default), which resolves the heading by text and refuses an
+   inline code span, an emphasis span open across a line break or a
+   bare file name with its extension before it writes.
 
    This channel is **durable across session death**, which is
    why it is not optional.

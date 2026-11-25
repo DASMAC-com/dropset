@@ -583,12 +583,13 @@ class AppendUnder(unittest.TestCase):
     def test_the_heading_resolves_by_text_at_any_depth(self):
         # No `##` given: the caller never guesses the stored level.
         out = pd.append_under(NOTES_DOC, "Notes for the next planning session", "x")
-        self.assertIn("a nested note\n\nx\n\n# Standing decisions", out)
+        self.assertIn("- an earlier note\n\nx\n\n### From the architect", out)
 
-    def test_the_note_lands_after_a_subsection_not_inside_the_next_section(self):
+    def test_the_note_never_joins_a_subsection(self):
+        # After the last subsection it would read as the architect's note.
         out = pd.append_under(NOTES_DOC, "## Notes for the next planning session", "x")
-        self.assertLess(out.index("a nested note"), out.index("\nx\n"))
-        self.assertLess(out.index("\nx\n"), out.index("# Standing decisions"))
+        self.assertLess(out.index("\nx\n"), out.index("### From the architect"))
+        self.assertIn("a nested note\n\n# Standing decisions", out)
         self.assertTrue(out.endswith("never hardcode slot duration\n"))
 
     def test_a_bullet_after_a_bullet_stays_one_list(self):
@@ -633,6 +634,12 @@ class CompositionProblems(unittest.TestCase):
         self.assertIn("line 3: a ** emphasis", problems[2])
         self.assertIn("line 4: a * emphasis", problems[3])
         self.assertIn("line 5: bare 'foo.py'", problems[4])
+
+    def test_a_strikethrough_open_across_a_line_is_refused_not_an_underscore(self):
+        problems = pd.composition_problems("~~old\ntext~~\nplanning_doc_tool\n")
+        self.assertEqual(len(problems), 2)
+        self.assertIn("line 1: a ~~ strikethrough", problems[0])
+        self.assertIn("line 2: a ~~ strikethrough", problems[1])
 
 
 class AppendUnderRun(unittest.TestCase):
@@ -685,6 +692,15 @@ class AppendUnderRun(unittest.TestCase):
         code, _, err, calls = self._run([self.doc(NOTES_DOC)], "x\n", "--dry-run")
         self.assertEqual((code, len(calls)), (0, 1))
         self.assertIn("WOULD APPEND", err)
+
+    def test_the_heading_flag_overrides_the_default(self):
+        code, _, err, calls = self._run(
+            [self.doc(NOTES_DOC)], "x\n", "--heading", "Standing decisions", "--dry-run"
+        )
+        self.assertEqual((code, len(calls)), (0, 1))
+        self.assertIn("under 'Standing decisions'", err)
+        with self.assertRaisesRegex(pd.PlanningDocError, "matches 0"):
+            self._run([self.doc(NOTES_DOC)], "x\n", "--heading", "Nowhere")
 
     def test_a_concurrent_edit_is_re_applied_over(self):
         fresh = NOTES_DOC.replace("today", "today, later")
