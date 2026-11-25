@@ -55,5 +55,7 @@ pub use generated::{accounts, errors, instructions, programs, shared, types};
 pub use generated::programs::DROPSET_ID;
 // That constant is the localnet id. The generated instruction builders take
 // a `Deployment` instead (`sdk/codama/generate.mjs`), resolved in `cluster`.
-pub use cluster::{Deployment, LocalnetIdOffLocalnet, DROPSET_MAINNET_ID};
+pub use cluster::{
+    Deployment, LocalnetIdOffLocalnet, SelfCpiAccount, SelfCpiAccountMismatch, DROPSET_MAINNET_ID,
+};
 pub use compute_budget::SWAP_COMPUTE_UNIT_LIMIT;

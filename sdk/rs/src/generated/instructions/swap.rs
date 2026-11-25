@@ -120,6 +120,15 @@ impl Swap {
     ) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(deployment, args, &[])
     }
+    /// [`Self::instruction`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    pub fn try_instruction(
+        &self,
+        deployment: crate::Deployment,
+        args: SwapInstructionArgs,
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        self.try_instruction_with_remaining_accounts(deployment, args, &[])
+    }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
@@ -224,6 +233,17 @@ impl Swap {
             accounts,
             data,
         }
+    }
+    /// [`Self::instruction_with_remaining_accounts`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    pub fn try_instruction_with_remaining_accounts(
+        &self,
+        deployment: crate::Deployment,
+        args: SwapInstructionArgs,
+        remaining_accounts: &[solana_instruction::AccountMeta],
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        crate::cluster::check_self_cpi_accounts(deployment, self.program, self.event_authority)?;
+        Ok(self.instruction_with_remaining_accounts(deployment, args, remaining_accounts))
     }
 }
 
@@ -585,6 +605,68 @@ impl SwapBuilder {
         };
 
         accounts.instruction_with_remaining_accounts(deployment, args, &self.__remaining_accounts)
+    }
+    /// [`Self::instruction`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    #[allow(clippy::clone_on_copy)]
+    pub fn try_instruction(
+        &self,
+        deployment: crate::Deployment,
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        let accounts = Swap {
+            taker: self.taker.expect("taker is not set"),
+            market: self.market.expect("market is not set"),
+            base_mint: self.base_mint.expect("base_mint is not set"),
+            quote_mint: self.quote_mint.expect("quote_mint is not set"),
+            base_token_program: self
+                .base_token_program
+                .expect("base_token_program is not set"),
+            quote_token_program: self
+                .quote_token_program
+                .expect("quote_token_program is not set"),
+            taker_base_ata: self.taker_base_ata.expect("taker_base_ata is not set"),
+            taker_quote_ata: self.taker_quote_ata.expect("taker_quote_ata is not set"),
+            market_base_treasury: self
+                .market_base_treasury
+                .expect("market_base_treasury is not set"),
+            market_quote_treasury: self
+                .market_quote_treasury
+                .expect("market_quote_treasury is not set"),
+            clock: self.clock.unwrap_or(solana_pubkey::pubkey!(
+                "SysvarC1ock11111111111111111111111111111111"
+            )),
+            platform_fee_authority: self.platform_fee_authority,
+            platform_fee_ata: self.platform_fee_ata,
+            associated_token_program: self.associated_token_program.unwrap_or(
+                solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+            ),
+            system_program: self
+                .system_program
+                .unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
+            event_authority: self
+                .event_authority
+                .unwrap_or_else(|| crate::cluster::event_authority(&deployment.program_id())),
+            program: self.program.unwrap_or(deployment.program_id()),
+        };
+        let args = SwapInstructionArgs {
+            side: self.side.clone().expect("side is not set"),
+            amount_in: self.amount_in.clone().expect("amount_in is not set"),
+            limit_price_bits: self
+                .limit_price_bits
+                .clone()
+                .expect("limit_price_bits is not set"),
+            min_out: self.min_out.clone().expect("min_out is not set"),
+            platform_fee_bps: self
+                .platform_fee_bps
+                .clone()
+                .expect("platform_fee_bps is not set"),
+        };
+
+        accounts.try_instruction_with_remaining_accounts(
+            deployment,
+            args,
+            &self.__remaining_accounts,
+        )
     }
 }
 
