@@ -352,9 +352,10 @@ class HoldTests(unittest.TestCase):
             self.assertEqual(pr_notifications.main(), 0)
         self.assertEqual(seen, [({663}, True)])
         for which in ("--settled", "--all"):
-            argv = ["prog", "dismiss", which, "--hold-attention"]
-            with mock.patch("sys.argv", argv), self.assertRaises(SystemExit):
-                pr_notifications.main()
+            for flag in ("--hold-attention", "--keep-subscription"):
+                argv = ["prog", "dismiss", which, flag]
+                with mock.patch("sys.argv", argv), self.assertRaises(SystemExit):
+                    pr_notifications.main()
 
 
 class ApplyTests(unittest.TestCase):
@@ -510,8 +511,9 @@ class CliTests(unittest.TestCase):
             every=False,
         ):
             seen.append((prs, apply, set(keep_subscription), every))
+            mode = "pr" if prs is not None else "all" if every else "settled"
             return 0, {
-                "mode": "settled" if prs is None else "pr",
+                "mode": mode,
                 "dry_run": not apply, "threads": 0, "held": [],
                 "selected": [], "dismissed": 0, "unsubscribed": 0,
                 "failed": [], "unsubscribe_failed": [], "error": None,

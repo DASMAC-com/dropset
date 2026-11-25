@@ -160,24 +160,22 @@ which drifted behind it twice:
   answers each, and its `close_session.py` run dismisses every
   remaining thread.
 
-- **The PR notification sweep** (`pr_notifications.py`) — the one rule
-  every caller applies, so **no PR notification is left showing**, for
-  an open PR as much as a merged one. `dismiss --all` selects every PR
-  thread on the repo **whatever the PR's state and its issue's Linear
-  state**; `dismiss --pr N` selects every thread on the named PRs,
-  unsubscribing unless `--keep-subscription` says they are not merged.
-  **Unsubscribe only on merge**: a merged PR's thread is two calls,
-  never mark-all — ignore it, then mark it done — while any other
-  (open, closed, or a PR whose state did not resolve) is marked done
-  with its subscription kept, so new activity re-creates it; dry run
-  unless `--apply`. The ignore is a `PUT` with `ignored=true`, never a
-  `DELETE` on the subscription, which GitHub documents as not holding
-  for a watcher of the repository. **A 404 on the mark-done counts as
-  dismissed**, never failed: a stand-down and the shutdown sweep can
-  race on one thread. Only a thread whose subject is a PR on the repo
-  is selected; the list is paged to 500 threads, a larger backlog
-  draining over successive runs; an unreadable list is a note, never a
-  failed gate.
+- **The PR notification sweep** (`pr_notifications.py`) — the one rule every
+  caller applies, so **no PR notification is left showing**, for an open PR as
+  much as a merged one. `dismiss --all` selects every PR thread on the repo
+  **whatever the PR's state and its issue's Linear state**; `dismiss --pr N`
+  selects every thread on the named PRs, unsubscribing unless
+  `--keep-subscription` says they are not merged. **Unsubscribe only on merge,
+  on the `--pr` and `--all` paths**: a merged PR's thread is two calls, never
+  mark-all — ignore it, then mark it done — while any other (open, closed, or a
+  PR whose state did not resolve) is marked done with its subscription kept, so
+  new activity re-creates it; dry run unless `--apply`. The ignore is a `PUT`
+  with `ignored=true`, never a `DELETE` on the subscription, which GitHub
+  documents as not holding for a watcher of the repository. **A 404 on the
+  mark-done counts as dismissed**, never failed: a stand-down and the shutdown
+  sweep can race on one thread. Only a thread whose subject is a PR on the repo
+  is selected; the list is paged to 500 threads, a larger backlog draining over
+  successive runs; an unreadable list is a note, never a failed gate.
 
   **The callers.** The two repo-wide sweeps are the scheduler's: the
   upkeep pass's `notifications` step runs `--all` armed at startup,

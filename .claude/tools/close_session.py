@@ -50,7 +50,8 @@ stale one cannot vouch. Each refuses with
 the missing precondition named. The open-PR refusal
 is unchanged for every other mode, Done and Canceled included.
 
-After the dismissal and before the kill, a park gives its own tab the green
+After the cost line (and the open PR's dismissal, if any) and before the
+kill, a park gives its own tab the green
 attend mark and moves it to the leftmost position in its window
 (``iterm_api.signal_parked``), best-effort and silent on failure, so the
 operator sees one green tab at the left edge per parked session and closes
