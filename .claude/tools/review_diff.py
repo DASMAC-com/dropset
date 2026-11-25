@@ -91,6 +91,7 @@ Prints JSON::
                          "has_source": true}},
       "code_crates": 1,           // trees with an actual source change
       "tier": {"name": "meta", "reason": "…"},  // a proposal; echo or override
+      "mirrored_literal": false,  // one value swapped in every copy (rewiring)
       "lenses": [{"lens": "correctness", "why": "tier", "required": true,
                   "ask_to_skip": false}, …, {"lens": "cross-check", …}],
       "gates": {"security": {"fires": false, "path": null}, "freshness": …,
@@ -177,6 +178,7 @@ import review_tier
 from review_tier import diff_header_path as _diff_header_path
 from review_tier import matches as matches  # re-exported for callers
 from review_tier import matches_any
+from scratch_path import shared_root_refusal
 
 # Generated families excluded from the review diff: machine-authored, reviewed
 # by their regeneration gate (step 9) rather than by eye, and large enough to
@@ -1786,6 +1788,7 @@ def review_shape(
     )
     return {
         "tier": tier,
+        "mirrored_literal": review_tier.mirrored_literal(diffs, kinds),
         "lenses": review_tier.lenses_for(tier["name"], gate_set),
         "gates": gate_set,
         # The inventory, lock files included: the entry gate's threshold is
@@ -2324,6 +2327,9 @@ def run(argv: list[str]) -> int:
             "--out is required (except with --gate-only or --print-grep-excludes)"
         )
     else:
+        refusal = shared_root_refusal(args.out)
+        if refusal is not None:
+            raise ReviewDiffError(refusal)
         verdict = run_gate(Path(args.out))
     # Narrow AFTER gating, never instead of it: the exit status below and the
     # blockers both have to reflect the full computation, so --gate-only is a

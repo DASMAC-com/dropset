@@ -441,6 +441,23 @@ class UnderTieringRegressionTests(unittest.TestCase):
             tier_of(fl, diff("bots/src/a.rs", new, old)), "reduced-rewiring"
         )
 
+    def test_one_id_mirrored_across_languages_is_a_mirrored_literal(self):
+        # Double quotes in the TS copy too: the literal pattern reads `'…'` as
+        # a Rust char literal only.
+        lib, ts = "programs/dropset/src/lib.rs", "sdk/ts/src/id.ts"
+        text = diff(lib, ['declare_id!("NewId");'], ['declare_id!("OldId");'])
+        text += diff(ts, ['export const ID = "NewId";'], ['export const ID = "OldId";'])
+        diffs = rt.parse_diff(text)
+        kinds = kinds_of([d.path for d in diffs])
+        self.assertTrue(rt.mirrored_literal(diffs, kinds))
+
+    def test_two_different_swaps_are_not_a_mirrored_literal(self):
+        old = [f"const C{i}: u64 = {i};" for i in range(4)]
+        new = [f"const C{i}: u64 = {i + 100};" for i in range(4)]
+        diffs = rt.parse_diff(diff("bots/src/a.rs", new, old))
+        self.assertTrue(rt.is_rewiring(diffs, {"bots/src/a.rs": "source"}))
+        self.assertFalse(rt.mirrored_literal(diffs, {"bots/src/a.rs": "source"}))
+
     def test_one_test_line_beside_new_logic_is_not_small_single_crate(self):
         src = [f"if a{i} {{ b(); }}" for i in range(200)]
         fl = files(("tui/src/a.rs", 200), ("tui/tests/a.rs", 2))

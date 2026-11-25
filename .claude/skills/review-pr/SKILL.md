@@ -405,9 +405,15 @@ migrations or generation inputs, and whether it spans crates.
    session scratchpad** and hand every agent that path, never inlined
    copies (`CLAUDE.md` → "Context economy"); `/tmp` is shared across
    sessions, so a sibling's stale `review-diff.txt` can sit at the same
-   path (`history.md` → "Diff hygiene"). One `review_diff.py` call does
-   the fetch, range checks and excluded diff, and returns one verdict
-   that also **proposes the tier, its lenses and the lens gates**:
+   path (`history.md` → "Diff hygiene"). **When the environment lists
+   no scratchpad**, only the shared temp root, the private directory is
+   `/tmp/eng-<n>/`, keyed by this issue, and every review artifact
+   (diff, facts, briefs, lens material) goes there, never the bare
+   root. `review_diff.py` and `lens_preamble.py` refuse an `--out`
+   directly under a shared root (`scratch_path.py`). One
+   `review_diff.py` call does the fetch, range checks and excluded
+   diff, and returns one verdict that also **proposes the tier, its
+   lenses and the lens gates**:
 
    - **Ref `origin/<base>...HEAD`, from the merge base** — the tool
      fetches the base itself; three dots keep a base that moves later

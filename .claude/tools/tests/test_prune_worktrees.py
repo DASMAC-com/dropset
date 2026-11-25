@@ -56,6 +56,37 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(normalize_branch("  eng-2 "), "eng-2")
 
 
+class BytecodeCacheGateTests(unittest.TestCase):
+    """The dirty check must not refuse a close on the tools' own bytecode,
+    which the close tool's imports write before the check runs."""
+
+    @staticmethod
+    def _reason(status):
+        def git(args):
+            if args[2] == "status":
+                return 0, status, ""
+            return 0, "0\n", ""  # fully pushed
+
+        return prune_worktrees.unsafe_reason("/wt", "eng-1", git)
+
+    def test_an_untracked_cache_alone_is_clean(self):
+        status = "?? .claude/tools/__pycache__/\n?? .claude/tools/tests/__pycache__/\n"
+        self.assertIsNone(self._reason(status))
+
+    def test_a_cache_beside_real_work_counts_only_the_work(self):
+        status = "?? .claude/tools/__pycache__/\n M .claude/tools/x.py\n"
+        self.assertEqual(self._reason(status), "1 uncommitted change(s)")
+
+    def test_only_untracked_cache_entries_are_exempt(self):
+        is_cache = prune_worktrees.is_bytecode_cache
+        self.assertTrue(is_cache("?? .claude/tools/__pycache__/a.cpython-315.pyc"))
+        self.assertTrue(is_cache("?? __pycache__/"))
+        # A tracked, modified file under a cache is still work to protect.
+        self.assertFalse(is_cache(" M .claude/tools/__pycache__/a.pyc"))
+        self.assertFalse(is_cache("?? .claude/tools/not__pycache__/a.py"))
+        self.assertFalse(is_cache("?? .claude/tools/new_tool.py"))
+
+
 class FakeGit:
     """Records calls; ``remove`` fails for paths in ``dirty``.
 
