@@ -77,7 +77,15 @@ the document's state sections.
    the filer messages the live scheduler and curator the set in one
    line; either confirms by silence or rewrites under the agreement
    rule, and with neither live the proposal stands and is named in
-   the handoff. `[Operator]` items stay fixed at Urgent. (Struck
+   the handoff. `[Operator]` items stay fixed at Urgent. **Stale
+   Todo rises by age** (2026-11-24): the curator's bootstrap runs
+   `board_batch.py aged --write` once, raising each unblocked,
+   non-operator item below High one level once its clock — the later
+   of its last Todo entry and its last priority change — reaches
+   `DS_TODO_AGE_BUMP_DAYS`; never to Urgent, a lowered item not
+   exempt, the set one batch messaged as reason aged
+   (`docs/conventions/linear-automation.md` → "Priorities: shared
+   authority, the agreement rule"). (Struck
    2026-10-29: the 2026-10-28 clause "priorities are the
    scheduler's alone", under which the curator only messaged a
    priority it believed wrong and waited.) Both write edges
