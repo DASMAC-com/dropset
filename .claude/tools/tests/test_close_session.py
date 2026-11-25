@@ -701,12 +701,27 @@ class ParkTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("could not read the issue body", result["refused"])
 
-    def test_park_refuses_with_no_open_pr(self):
-        rc, result, *_ = self._park(
-            prs=[{"number": 503, "state": "MERGED", "headRefOid": "abc123"}]
-        )
+    def test_park_with_no_open_pr_needs_only_a_brief(self):
+        # The wind-down's pauser before its PR (and a chore by design): the
+        # brief carries the next step and names no PR.
+        brief = "spec\n\n**Resume brief**: next step, finish the parser tests\n"
+        for prs in ([], [{"number": 503, "state": "MERGED", "headRefOid": "x"}]):
+            with self.subTest(prs=prs):
+                rc, result, runner, writer, _ = self._park(body=brief, prs=prs)
+                self.assertEqual(rc, 0, result)
+                self.assertIsNone(result["pr"])
+                self.assertIn("no PR open", " ".join(result["notes"]))
+                self.assert_untouched(runner, writer)
+
+    def test_park_with_no_open_pr_still_needs_a_brief(self):
+        rc, result, *_ = self._park(body="spec only\n", prs=[])
         self.assertEqual(rc, 1)
-        self.assertIn("needs an open PR", result["refused"])
+        self.assertIn("needs a resume brief", result["refused"])
+
+    def test_park_with_no_open_pr_still_needs_a_clean_tree(self):
+        rc, result, *_ = self._park(prs=[], status=" M src/lib.rs\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("uncommitted", result["refused"])
 
     def test_park_refuses_a_state(self):
         rc, result, _, writer = run_close(ns(state="In Review", park=True))
@@ -821,6 +836,23 @@ class BriefVerdictTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             close_session.brief_verdict(body, 715)
 
+    def test_no_pr_needs_only_a_brief(self):
+        close_session.brief_verdict("Resume brief: next, the parser tests\n", None)
+        with self.assertRaisesRegex(Refusal, "needs a resume brief"):
+            close_session.brief_verdict("spec only\n", None)
+
+
+class SignalTabTests(unittest.TestCase):
+    def test_the_signal_runs_and_a_failure_is_swallowed(self):
+        calls = []
+        close_session.signal_tab(lambda: calls.append("signalled") or [])
+        self.assertEqual(calls, ["signalled"])
+
+        def boom():
+            raise RuntimeError("no iTerm")
+
+        close_session.signal_tab(boom)  # never raises
+
 
 class StillOursTests(unittest.TestCase):
     def test_a_live_ancestor_client(self):
@@ -872,6 +904,7 @@ class EndClientTests(unittest.TestCase):
             mock.patch.object(close_session, "close", return_value=(rc, result)),
             mock.patch.object(close_session, "parse_args"),
             mock.patch.object(close_session, "end_client", order.end),
+            mock.patch.object(close_session, "signal_tab", order.signal),
             mock.patch.object(close_session, "still_ours", return_value=ours),
             mock.patch.object(close_session.sys, "stdout", order.out),
             mock.patch.object(close_session.sys, "stderr", err),
@@ -899,6 +932,22 @@ class EndClientTests(unittest.TestCase):
         )
         order.end.assert_not_called()
         self.assertIn("no longer this session's", err.write.call_args[0][0])
+
+    def test_main_signals_a_parked_tab_after_printing_before_the_kill(self):
+        order, _ = self._main(0, {"dry_run": False, "client_pid": 4242, "park": True})
+        names = [c[0] for c in order.mock_calls]
+        self.assertLess(names.index("out.flush"), names.index("signal"))
+        self.assertLess(names.index("signal"), names.index("end"))
+
+    def test_main_signals_no_tab_off_a_park_or_on_a_dry_run(self):
+        for result in (
+            {"dry_run": False, "client_pid": None},
+            {"dry_run": True, "client_pid": 4242, "park": True},
+        ):
+            order, _ = self._main(0, result)
+            order.signal.assert_not_called()
+        order, _ = self._main(1, {"dry_run": False, "client_pid": 1, "park": True})
+        order.signal.assert_not_called()
 
     def test_main_never_ends_the_client_on_a_dry_run_or_refusal(self):
         for rc, dry in ((0, True), (1, False)):

@@ -32,16 +32,25 @@ would never collect it.
 
 ``--park`` ends a session whose reviewed PR is **held** — behind another PR or
 a CI break (``review-pr``'s park, ``plan``'s hold message) — so its fleet slot
-frees while the PR stays open. It takes no ``--state`` and writes none (the
+frees while the PR stays open; it is also the fleet wind-down's stand-down
+(``fleet_winddown.py``), for a pauser with no PR yet as much as a finisher.
+It takes no ``--state`` and writes none (the
 issue keeps the state it has), keeps the worktree and branch for the resume,
 dismisses no notification threads (the PR is live), and appends the cost line
 when ``--session-id`` is given. Its gates replace the open-PR one: the tree is
-clean and pushed (the same check as below), the branch has an open PR, and the
-issue body carries a resume brief — the paragraph holding the last
-``resume brief`` mention names that PR after it (``#N``, ``PR N`` or a
+clean and pushed (the same check as below), and the issue body carries a
+resume brief. When the branch has an open PR, the paragraph holding the last
+``resume brief`` mention must name that PR after it (``#N``, ``PR N`` or a
 ``/pull/N`` link), so a brief left by an earlier park of another PR does not
-count. Each refuses with the missing precondition named. The open-PR refusal
+count; with none open, the brief's presence is the gate. Each refuses with
+the missing precondition named. The open-PR refusal
 is unchanged for every other mode, Done and Canceled included.
+
+After the cost line and before the kill, a park gives its own tab the green
+attend mark and moves it to the leftmost position in its window
+(``iterm_api.signal_parked``), best-effort and silent on failure, so the
+operator sees one green tab at the left edge per parked session and closes
+it. No tool closes a tab.
 
 A park then **ends its own client**, so the slot frees with no operator hand.
 The client is the pid in the harness's worktree lock, proven an ancestor as
@@ -141,6 +150,7 @@ from pathlib import Path
 from typing import Callable
 
 import board_batch
+import iterm_api
 import linear_issue
 import pr_notifications
 import prune_worktrees
@@ -333,27 +343,29 @@ def pr_verdict(prs: list[dict]) -> dict | None:
     return prs[0] if prs else None
 
 
-def park_pr(prs: list[dict]) -> dict:
-    """The open PR a park holds; raises when there is none to hold."""
+def park_pr(prs: list[dict]) -> dict | None:
+    """The open PR a park holds, or ``None`` for a pauser with none open (an
+    In Progress session before its PR, a chore by design)."""
     open_prs = [p for p in prs if p.get("state") == "OPEN"]
-    if not open_prs:
-        raise Refusal("--park needs an open PR on the branch; none is open")
-    return open_prs[0]
+    return open_prs[0] if open_prs else None
 
 
-def brief_verdict(body: str, number: int) -> None:
-    """Raises unless the paragraph holding the last ``resume brief`` mention in
-    ``body`` names PR ``number`` after it — as ``#N``, ``PR N`` or a
-    ``/pull/N`` link, so a stored autolink still reads. Bounded at the next
-    blank line, so a later checklist naming the PR cannot vouch for a stale
-    brief."""
+def brief_verdict(body: str, number: int | None) -> None:
+    """Raises unless ``body`` carries a resume brief, and — when a PR is held
+    — the paragraph holding the last ``resume brief`` mention names PR
+    ``number`` after it, as ``#N``, ``PR N`` or a ``/pull/N`` link, so a
+    stored autolink still reads. Bounded at the next blank line, so a later
+    checklist naming the PR cannot vouch for a stale brief. With no PR the
+    brief's presence is the whole gate: it carries the next step."""
     marks = list(BRIEF_RE.finditer(body))
     if not marks:
         raise Refusal(
             "--park needs a resume brief on the issue (linear_issue.py append "
-            "a '**Resume brief**: PR #N …' naming the PR, the PR waited on, "
-            "gates owed)"
+            "a '**Resume brief**: …' naming the next step, and the PR when "
+            "one is open)"
         )
+    if number is None:
+        return
     start = marks[-1].start()
     end = body.find("\n\n", start)
     brief = body[start : end if end != -1 else len(body)]
@@ -596,9 +608,10 @@ def parked(
                 "without it once the line is in by hand)"
             )
             return 1, result
+    held = result["pr"]
+    what = f"PR #{held.get('number')} open" if held else "no PR open"
     result["notes"].append(
-        f"parked: PR #{result['pr'].get('number')} open, state unchanged, "
-        "worktree and branch kept for the resume"
+        f"parked: {what}, state unchanged, worktree and branch kept for the resume"
     )
     if result["client_pid"] is not None:
         result["notes"].append(
@@ -717,7 +730,8 @@ def close(
                 body = body_reader(result["issue"])
             except Exception as e:  # noqa: BLE001 — an unread brief is no brief
                 raise Refusal(f"could not read the issue body: {e}") from e
-            brief_verdict(body, int(result["pr"]["number"]))
+            held = result["pr"]
+            brief_verdict(body, int(held["number"]) if held else None)
             if not getattr(args, "no_exit", False):
                 result["client_pid"] = client_pid(
                     lock_reasons(porcelain).get(worktree),
@@ -831,6 +845,8 @@ def main() -> int:
     # line, the session's durable record. The printed result is best-effort —
     # the killed client seldom reads it — which is why a failed append exits 1
     # above and never reaches here.
+    if rc == 0 and not result["dry_run"] and result.get("park"):
+        signal_tab()
     pid = result["client_pid"]
     if rc == 0 and not result["dry_run"] and pid is not None:
         if not still_ours(pid):
@@ -841,6 +857,16 @@ def main() -> int:
                 "close the tab by hand"
             )
     return rc
+
+
+def signal_tab(signal_parked: Callable[[], list[str]] | None = None) -> None:
+    """Mark the parked session's own tab green and move it leftmost, so a
+    park reads at a glance. Best-effort and silent: no iTerm, the integration
+    disabled, or a refused call never blocks the park."""
+    try:
+        (signal_parked or iterm_api.signal_parked)()
+    except Exception:  # noqa: BLE001 — the tab signal is a convenience
+        pass
 
 
 def _warn(text: str) -> int:
