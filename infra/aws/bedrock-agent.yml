@@ -37,13 +37,16 @@ Parameters:
   BudgetAlertEmail:
     Default: ''
     Description: >-
-      Address the monthly spend alert and the daily spend-cap alarms notify.
-      Entered by the operator at deploy time and never committed, which is
-      why the committed parameter file omits it - a redeploy then keeps the
-      previous value rather than wiping it. Left empty, no budget is created
-      at all, because a budget with an undeliverable subscriber is a tripwire
-      that silently never fires, and the spend-cap topic gets no subscriber;
-      the kill switch works either way.
+      Address the monthly spend alert, the daily spend-cap alarms and the
+      cost anomaly subscription notify. Entered by the operator at deploy
+      time and never committed, which is why the committed parameter file
+      omits it - a redeploy then keeps the previous value rather than wiping
+      it. Left empty, no budget or anomaly subscription is created at all,
+      because an alert with an undeliverable subscriber is a tripwire that
+      silently never fires, and the spend-cap topic gets no subscriber; the
+      kill switch works either way. Clearing it on a stack that already
+      holds the imported anomaly subscription does not delete that
+      subscription: Retain orphans it, still mailing the old address.
     Type: 'String'
   BudgetLimitUsd:
     Default: '10000'
@@ -216,6 +219,46 @@ Resources:
         Value: !Sub '${EnvironmentName}-bedrock-agent'
       UserName: !Sub '${EnvironmentName}-bedrock-agent'
     Type: 'AWS::IAM::User'
+  # Cost Anomaly Detection: the account's one AWS-services monitor and its
+  # email subscription. Both were made in the console (the monitor on
+  # 2026-01-27) and are IMPORTED into this stack, never created by it - an
+  # account holds at most one SERVICE-dimension monitor, so a create fails
+  # while the console one exists. The names are the console defaults, kept so
+  # the import maps onto them. Retain on both: deleting this stack, or a
+  # replacement forced by a create-only property (MonitorType,
+  # MonitorDimension, ResourceTags), must never delete the only alert that
+  # sees a sizable non-Bedrock charge. ResourceTags are deliberately absent,
+  # since adding them later forces that replacement. Import procedure:
+  # infra/aws/README.md, "Where alerts go".
+  CostAnomalyMonitor:
+    DeletionPolicy: 'Retain'
+    Properties:
+      MonitorDimension: 'SERVICE'
+      MonitorName: 'Default-Services-Monitor'
+      MonitorType: 'DIMENSIONAL'
+    Type: 'AWS::CE::AnomalyMonitor'
+    UpdateReplacePolicy: 'Retain'
+  CostAnomalySubscription:
+    Condition: 'HasBudgetAlertEmail'
+    DeletionPolicy: 'Retain'
+    Properties:
+      Frequency: 'DAILY'
+      MonitorArnList:
+      - !Ref 'CostAnomalyMonitor'
+      Subscribers:
+      - Address: !Ref 'BudgetAlertEmail'
+        Type: 'EMAIL'
+      SubscriptionName: 'Default-Services-Subscription'
+      # An anomaly alerts only when its total impact is at least 100 USD AND
+      # at least 40 percent of expected spend. Changing either is an operator
+      # call, not a template tidy-up.
+      ThresholdExpression: >-
+        {"And": [{"Dimensions": {"Key": "ANOMALY_TOTAL_IMPACT_ABSOLUTE",
+        "MatchOptions": ["GREATER_THAN_OR_EQUAL"], "Values": ["100.0"]}},
+        {"Dimensions": {"Key": "ANOMALY_TOTAL_IMPACT_PERCENTAGE",
+        "MatchOptions": ["GREATER_THAN_OR_EQUAL"], "Values": ["40.0"]}}]}
+    Type: 'AWS::CE::AnomalySubscription'
+    UpdateReplacePolicy: 'Retain'
   # The three warning alarms and the kill alarm share one metric-math
   # estimate, repeated per alarm because CloudFormation has no way to share
   # it: the four Bedrock token metrics WITHOUT the ModelId dimension (so
