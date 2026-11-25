@@ -21,14 +21,15 @@ of steps ends at anything that carries judgment:
   a skill;
 * a turn with no tool call at all (prose to the operator);
 * a user record that is not purely tool results — the operator typing, a
-  notification, a cross-session message.
-
-* the same command shape again with new arguments — a search survey, each
-  argument chosen from the last result.
+  notification, a cross-session message;
+* the same Bash command shape again with new arguments — a search survey,
+  each argument chosen from the last result.
 
 A ``ToolSearch`` call is neutral: it neither extends nor ends a run. The
 *identical* call repeated folds into one **loop** step (``(loop)``), so a poll
-repeated three times and five times is the same shape.
+repeated three times and five times is the same shape. So does one MCP tool
+called again with new arguments — dismissing each notification a listing
+returned is mechanical, where a Bash survey is not.
 
 A flow shape is an ordered tuple of steps spanning at least two turns that
 recurs at least :data:`MIN_OCCURRENCES` times (non-overlapping, within a run),
@@ -44,8 +45,9 @@ caller hands in its normalizer. Tests live in ``tests/test_flow_shapes.py``.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+import hashlib
 import json
+from collections.abc import Callable, Iterable
 import re
 from dataclasses import dataclass, field
 
@@ -96,9 +98,6 @@ class FlowShape:
         """The turns spent less the one per occurrence a tool run leaves."""
         return self.turns - self.occurrences
 
-    def label(self) -> str:
-        return " → ".join(self.steps)
-
     def to_dict(self) -> dict:
         return {
             "steps": list(self.steps),
@@ -122,22 +121,26 @@ def _prefix(usage: dict) -> int:
     )
 
 
-def _call_sig(item: dict, signature: Signature) -> tuple[str, str] | None:
-    """An act's signature and its raw call (``("", "")`` for a neutral
-    call), or ``None`` for judgment."""
+Call = tuple[str, str, bool]
+
+
+def _call_sig(item: dict, signature: Signature) -> Call | None:
+    """An act's signature, its raw call and whether it is an MCP call
+    (``("", "", False)`` for a neutral call), or ``None`` for judgment."""
     name = item.get("name")
     if not isinstance(name, str):
         return None
     if name in NEUTRAL_TOOLS:
-        return "", ""
+        return "", "", False
     args = item.get("input")
     if name.startswith("mcp__"):
-        return name[len("mcp__") :], json.dumps(args, sort_keys=True, default=str)
+        raw = json.dumps(args, sort_keys=True, default=str)
+        return name[len("mcp__") :], raw, True
     if name == "Bash":
         command = args.get("command") if isinstance(args, dict) else None
         if not isinstance(command, str):
-            return "bash", ""
-        return signature(command) or "bash", command
+            return "bash", "", False
+        return signature(command) or "bash", command, False
     return None
 
 
@@ -161,7 +164,7 @@ class FlowTracker:
         self._turn_id: str | None = None
         self._turn_stamp: str | None = None
         self._turn_prefix = 0
-        self._turn_calls: list[tuple[str, str] | None] = []
+        self._turn_calls: list[Call | None] = []
         self._turn_items: set[str] = set()
 
     def _in_window(self, stamp: str | None) -> bool:
@@ -188,16 +191,18 @@ class FlowTracker:
             if not calls:
                 self._break()
         else:
-            sig = " + ".join(s for s, _ in acts)
-            raw = "\n".join(r for _, r in acts)
+            sig = " + ".join(s for s, _, _ in acts)
+            raw = "\n".join(r for _, r, _ in acts)
+            mcp_only = all(m for _, _, m in acts)
             last = self._run[-1] if self._run else None
-            if last is not None and last.sig == sig and last.raw == raw:
-                # The same call again: a poll, folded into one loop step.
+            if last is not None and last.sig == sig and (last.raw == raw or mcp_only):
+                # The same call again — a poll — or one MCP tool over new
+                # arguments (each id a listing returned): one loop step.
                 last.prefixes.append(self._turn_prefix)
             else:
                 if last is not None and last.sig == sig:
-                    # The same shape with new arguments is a survey: each
-                    # argument was chosen from the last result.
+                    # The same Bash shape with new arguments is a survey:
+                    # each argument was chosen from the last result.
                     self._break()
                 self._run.append(Step(sig, [self._turn_prefix], raw))
         self._turn_id = None
@@ -234,12 +239,16 @@ class FlowTracker:
             return
         if role != "user" or rec.get("isMeta"):
             return
-        self._end_turn()
         only_results = bool(items) and all(
             isinstance(i, dict) and i.get("type") == "tool_result" for i in items
         )
-        if not only_results:
-            self._break()
+        if only_results:
+            # A result can land between two records of one message (its
+            # calls executed as they streamed), so it ends no turn: the next
+            # message id does.
+            return
+        self._end_turn()
+        self._break()
 
     def finish(self) -> list[list[Step]]:
         self._end_turn()
@@ -265,9 +274,21 @@ def runs_from_lines(
     return tracker.finish()
 
 
+def _count_in(inner: tuple[str, ...], outer: tuple[str, ...]) -> int:
+    """Non-overlapping occurrences of ``inner`` inside ``outer``, counted
+    leftmost-first as :func:`rank` counts them in a run."""
+    n, i, count = len(inner), 0, 0
+    while i + n <= len(outer):
+        if outer[i : i + n] == inner:
+            count += 1
+            i += n
+        else:
+            i += 1
+    return count
+
+
 def _contains(inner: tuple[str, ...], outer: tuple[str, ...]) -> bool:
-    n = len(inner)
-    return any(outer[i : i + n] == inner for i in range(len(outer) - n + 1))
+    return _count_in(inner, outer) > 0
 
 
 def rank(sessions: list[list[list[Step]]]) -> list[FlowShape]:
@@ -297,13 +318,14 @@ def rank(sessions: list[list[list[Step]]]) -> list[FlowShape]:
                     )
                     shape.sessions.add(s_idx)
     recurring = [s for s in shapes.values() if s.occurrences >= MIN_OCCURRENCES]
+    # Subsumed: every occurrence of `s` accounted for inside a longer shape's
+    # occurrences — `o` holding `s` k times over its runs covers k × its count.
     kept = [
         s
         for s in recurring
         if not any(
             len(o.steps) > len(s.steps)
-            and o.occurrences >= s.occurrences
-            and _contains(s.steps, o.steps)
+            and o.occurrences * _count_in(s.steps, o.steps) >= s.occurrences
             for o in recurring
         )
     ]
@@ -321,9 +343,11 @@ def _human(n: int) -> str:
     return str(n)
 
 
-def table(shapes: list[FlowShape], top_n: int | None = TOP_N) -> list[str]:
+def table(
+    shapes: list[FlowShape], top_n: int | None = TOP_N, flag: str = "--flows-all"
+) -> list[str]:
     """The Markdown table, the first ``top_n`` rows (every row on ``None``),
-    with an omitted-count line when truncated."""
+    with an omitted-count line naming ``flag`` when truncated."""
     shown = shapes if top_n is None else shapes[:top_n]
     out = [
         "| flow shape | runs | turns | a tool leaves | turns saved | ≈replay saved |",
@@ -339,7 +363,7 @@ def table(shapes: list[FlowShape], top_n: int | None = TOP_N) -> list[str]:
     if omitted > 0:
         out += [
             "",
-            f"_+{omitted} more flow shape(s) omitted; `--flows-all` lists them._",
+            f"_+{omitted} more flow shape(s) omitted; `{flag}` lists them._",
         ]
     return out
 
@@ -353,7 +377,7 @@ def digest_section(
     shapes = rank(sessions)
     if not shapes:
         return ["No flow shape recurred."]
-    out = table(shapes, top_n)
+    out = table(shapes, top_n, "--flows-full")
     shown = shapes if top_n is None else shapes[:top_n]
     out.append("")
     for s in shown:
@@ -365,9 +389,12 @@ def digest_section(
 
 
 def fingerprint(shape: FlowShape) -> str:
-    """``flow:<first>-to-<last>-<n>``: dotless, lowercase, stable per shape."""
+    """``flow:<first>-to-<last>-<n>-<hash>``: dotless, lowercase, stable per
+    shape. The hash covers every step, so two shapes sharing their ends and
+    length (``A → B → C``, ``A → D → C``) never fold into one key."""
     first, last = shape.steps[0], shape.steps[-1]
-    return f"flow:{_slug(first)}-to-{_slug(last)}-{len(shape.steps)}"
+    digest = hashlib.sha256("\x1f".join(shape.steps).encode()).hexdigest()[:6]
+    return f"flow:{_slug(first)}-to-{_slug(last)}-{len(shape.steps)}-{digest}"
 
 
 def _slug(text: str) -> str:

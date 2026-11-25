@@ -55,8 +55,9 @@ block verbatim beside
 that session's numbers (`docs/conventions/context-economy.md` → "The
 daily digest"). `trim-context` is the **fold analyst**: it reads the
 whole day's digest at once — every session's sinks, hardening
-candidates and account, plus any flagged CI lines and the ranked
-`## Wait` causes — and judges which levers clear the reservoir bar
+candidates and account, plus any flagged CI lines, the ranked
+`## Wait` causes and the `## Flows` shapes — and judges which levers
+clear the reservoir bar
 (turn-eliminating, prose-subtracting or hardening, roughly 3k per
 occurrence; a planning-derived lever must be quality-preserving). A
 **wait lever** subtracts a recurring, named wait cause and files under

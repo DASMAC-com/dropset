@@ -190,24 +190,39 @@ def is_build_shaped(command: str) -> bool:
     ``cargo``, anything ``run_quiet.py`` wraps, or ``lint_paths.py``.
 
     Only these count a lock marker in their result as a wait — a search over
-    the ledger's own source prints the marker too, and waited on nothing."""
+    the ledger's own source prints the marker too, and waited on nothing.
+    Leading env assignments and an ``env`` / ``time`` / ``nice`` /
+    ``timeout N`` wrapper are looked through, and a script is the
+    interpreter's first non-flag word, so ``python3 -I`` does not hide it
+    while ``grep … lint_paths.py`` is still a search."""
     try:
-        raw = shlex.split(command, comments=True)
+        tokens = shlex.split(command, comments=True)
     except ValueError:
-        raw = command.split()
-    if any(t.endswith("run_quiet.py") for t in raw[:2]):
-        return True
-    tokens = _tokens(command)
+        tokens = command.split()
+    while tokens:
+        word = Path(tokens[0]).name
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]) or word in _PREFIXES:
+            tokens.pop(0)
+        elif word == "timeout" and len(tokens) > 1:
+            del tokens[:2]
+        else:
+            break
     if not tokens:
         return False
     program = Path(tokens[0]).name
     if program in ("make", "cargo"):
         return True
-    return (
-        program.startswith("python")
-        and len(tokens) > 1
-        and Path(tokens[1]).name == "lint_paths.py"
-    )
+    if not program.startswith("python"):
+        return False
+    # The interpreter's script: its first word that is not a flag.
+    script = next((t for t in tokens[1:] if not t.startswith("-")), "")
+    return Path(script).name in _BUILD_SCRIPTS
+
+
+# Words that run the command after them, looked through by `is_build_shaped`
+# (`timeout` also takes its duration).
+_PREFIXES = ("env", "time", "nice")
+_BUILD_SCRIPTS = ("run_quiet.py", "lint_paths.py")
 
 
 def lock_step(command: str) -> str:

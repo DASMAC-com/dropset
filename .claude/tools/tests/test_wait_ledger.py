@@ -146,12 +146,19 @@ class Ledger(unittest.TestCase):
             "CARGO_TARGET_DIR=/t cargo build",
             "python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install",
             "python3 .claude/tools/lint_paths.py --changed",
+            "python3 -I .claude/tools/lint_paths.py --changed",
+            "env X=1 cargo build",
+            "timeout 900 make test",
+            "time cargo build",
+            "X=1 python3 .claude/tools/run_quiet.py -- pnpm install",
         ):
             with self.subTest(command=command):
                 self.assertTrue(wl.is_build_shaped(command))
         for command in (
             "grep -n lock wait_ledger.py",
             "python3 .claude/tools/search_source.py lock",
+            "grep -n LOCK .claude/tools/lint_paths.py",
+            "python3 .claude/tools/search_source.py run_quiet.py",
             "git push",
             "",
         ):

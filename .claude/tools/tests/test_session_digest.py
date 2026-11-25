@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import flow_shapes
 import session_digest as sd
 import session_metrics as sm
 
@@ -465,6 +466,61 @@ class WaitSectionTests(DigestFixture):
         self.assertIn("memory refusals 1; peak in_use 33.0 GiB", wait)
         self.assertIn("**For the analyst**", wait)
         self.assertEqual(self.twin()["wait"]["launches"], 1)
+
+
+class FlowsSectionTests(DigestFixture):
+    def _session(self, session: str, branch: str, extra_shapes: int = 0) -> None:
+        """One fetch-then-push run, then ``extra_shapes`` distinct fetch-then-
+        MCP runs, each opened by an operator prompt."""
+        runs = [["git fetch origin main", f"git push -u origin {branch}"]]
+        runs += [
+            ["git fetch origin main", f"mcp__linear__step{chr(97 + k)}"]
+            for k in range(extra_shapes)
+        ]
+        records: list[dict] = []
+        n = 0
+        for run in runs:
+            n += 1
+            records.append(prompt(f"2026-10-24T01:{n:02d}:00Z", self.worktree, "go"))
+            for call in run:
+                n += 1
+                stamp = f"2026-10-24T01:{n:02d}:00Z"
+                rec = assistant(f"{session}-m{n}", stamp, self.worktree, READ)
+                tid = f"{session}-t{n}"
+                name, args = (
+                    (call, {})
+                    if call.startswith("mcp__")
+                    else ("Bash", {"command": call})
+                )
+                rec["message"]["content"] = [
+                    {"type": "tool_use", "id": tid, "name": name, "input": args}
+                ]
+                result = {"type": "tool_result", "tool_use_id": tid, "content": "ok"}
+                user = {"role": "user", "content": [result]}
+                records += [rec, record("user", stamp, self.worktree, message=user)]
+        self.write(self.worktree, session, records, mtime=WINDOW_MTIME)
+
+    def test_a_shape_two_sessions_share_is_ranked_under_flows(self):
+        # Different branches: the shape groups by signature, not argument.
+        self._session("s1", "eng-1")
+        self._session("s2", "eng-2")
+        self.run_digest()
+        flows = self.digest_text().split("## Flows")[1].split("## Sessions")[0]
+        self.assertIn("`git fetch origin` → `git push origin`", flows)
+        self.assertIn("`flow:git-fetch-origin-to-git-push-origin-2-", flows)
+        self.assertIn("in 2 session(s)", flows)
+
+    def test_flows_full_lifts_the_top_n(self):
+        extra = flow_shapes.TOP_N
+        self._session("s1", "eng-1", extra)
+        self._session("s2", "eng-2", extra)
+        self.run_digest()
+        capped = self.digest_text().split("## Flows")[1].split("## Sessions")[0]
+        self.assertIn("_+1 more flow shape(s) omitted", capped)
+        self.run_digest("--flows-full")
+        full = self.digest_text().split("## Flows")[1].split("## Sessions")[0]
+        self.assertNotIn("more flow shape(s) omitted", full)
+        self.assertEqual(full.count("- `flow:"), extra + 1)
 
 
 class CiSectionTests(DigestFixture):

@@ -41,7 +41,8 @@ printenv LINEAR_ASSIGNEE_ID
 ## Steps
 
 **1. Read the digest once, whole.** It is the fold's entire input and
-is bounded by construction (three rows per ranked list per session),
+is bounded by construction (three rows per ranked list per session,
+five day-wide flow shapes),
 so this is the planned multi-region read the context-economy
 convention licenses. Read the day header (its flagged list), the
 `## CI` section (the merge queue's runs and jobs; a flagged CI line

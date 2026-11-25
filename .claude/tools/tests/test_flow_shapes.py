@@ -126,11 +126,14 @@ def act(t: Transcript, kind: str, arg: str) -> None:
     t.bash(arg) if kind == "bash" else t.mcp(arg)
 
 
-def worked_session() -> Transcript:
+def worked_session(branch: str = "eng-1", notifications: int = 1) -> Transcript:
+    """The worked instances in one session. ``branch`` varies the bootstrap's
+    arguments between sessions; ``notifications`` is how many the merged PR
+    had, each dismissed by id."""
     t = Transcript()
     t.typed("/init-pr")
     for kind, arg in BOOTSTRAP:
-        act(t, kind, arg)
+        act(t, kind, arg.replace("eng-1", branch))
     t.turn(("Read", {"file_path": "/tmp/spec.md"}))
     # Noise: a status-then-diff pair, between edits.
     t.bash("git status").bash("git diff --stat")
@@ -138,8 +141,9 @@ def worked_session() -> Transcript:
     t.bash("git status").bash("git diff --stat")
     t.turn(text="the PR merged")
     t.typed("close it out")
-    for kind, arg in DISMISSAL:
-        act(t, kind, arg)
+    t.mcp(DISMISSAL[0][1])
+    for i in range(notifications):
+        t.turn((f"mcp__{DISMISSAL[1][1]}", {"threadID": f"{branch}-{i}"}))
     t.turn(text="done")
     return t
 
@@ -157,6 +161,37 @@ class WorkedInstances(unittest.TestCase):
         labels = [s.steps for s in shapes]
         self.assertIn(
             ("github__list_notifications", "github__dismiss_notification"), labels
+        )
+
+    def test_the_bootstrap_groups_by_shape_across_differing_arguments(self):
+        shapes = fs.rank(
+            [worked_session("eng-1").runs(), worked_session("eng-2").runs()]
+        )
+        self.assertEqual(len(shapes[0].steps), len(BOOTSTRAP))
+        self.assertEqual(len(shapes[0].sessions), 2)
+
+    def test_dismissing_each_notification_folds_into_one_loop_step(self):
+        # Each dismissal's id came from the listing: mechanical, not a survey.
+        shapes = fs.rank(
+            [
+                worked_session(notifications=3).runs(),
+                worked_session(notifications=2).runs(),
+            ]
+        )
+        (pair,) = [s for s in shapes if s.steps[0] == "github__list_notifications"]
+        self.assertEqual(pair.steps[1], "github__dismiss_notification" + fs.LOOP)
+        self.assertEqual((pair.turns, pair.turns_eliminated), (7, 5))
+
+    def test_a_shape_held_twice_in_a_longer_one_is_still_subsumed(self):
+        t = Transcript()
+        for _ in range(2):
+            t.typed("go")
+            for c in ("git fetch", "git push", "git log", "git fetch", "git push"):
+                t.bash(c)
+        shapes = fs.rank([t.runs()])
+        self.assertEqual(
+            [s.steps for s in shapes],
+            [("git fetch", "git push", "git log", "git fetch", "git push")],
         )
 
     def test_a_window_inside_a_longer_shape_is_subsumed(self):
@@ -179,6 +214,24 @@ class WorkedInstances(unittest.TestCase):
 
 
 class Boundaries(unittest.TestCase):
+    def test_a_result_between_two_records_of_one_message_ends_no_turn(self):
+        # Streamed execution: call A's result lands before call B's record.
+        t = Transcript()
+        for _ in range(2):
+            t.typed("go").turn(
+                ("Bash", {"command": "git fetch"}), ("Bash", {"command": "git push"})
+            )
+            first, results = t.records[-2], t.records[-1]
+            a, b = first["message"]["content"]
+            first["message"]["content"] = [a]
+            second = json.loads(json.dumps(first))
+            second["message"]["content"] = [a, b]  # the split repeats `a`
+            t.records[-2:] = [first, results, second]
+            t.bash("git log")
+        (shape,) = fs.rank([t.runs()])
+        self.assertEqual(shape.steps, ("git fetch + git push", "git log"))
+        self.assertEqual(shape.turns, 4)
+
     def test_judgment_tools_prose_and_the_operator_end_a_run(self):
         t = Transcript()
         t.typed("a").bash("git fetch").turn(("Edit", {})).bash("git push")
@@ -274,6 +327,15 @@ class Rendering(unittest.TestCase):
         self.assertIn("in 2 session(s)", prints[0])
         self.assertEqual(fs.digest_section([[]]), ["No flow shape recurred."])
 
+    def test_shapes_sharing_their_ends_get_distinct_fingerprints(self):
+        abc = fs.FlowShape(("git fetch", "git log", "git push"))
+        adc = fs.FlowShape(("git fetch", "git diff", "git push"))
+        self.assertNotEqual(fs.fingerprint(abc), fs.fingerprint(adc))
+        self.assertEqual(
+            fs.fingerprint(abc), fs.fingerprint(fs.FlowShape(abc.steps, occurrences=9))
+        )
+        self.assertNotIn(".", fs.fingerprint(abc))
+
 
 class SessionMetricsWiring(unittest.TestCase):
     def setUp(self) -> None:
@@ -315,6 +377,8 @@ class SessionMetricsWiring(unittest.TestCase):
         self.assertEqual(len(both["flow_shapes"][0]["steps"]), len(BOOTSTRAP))
         self.assertEqual(both["flow_shapes"][0]["turns_left"], 2)
         self.assertIn("flows skip gone", self.stderr)
+        text = self._run(["--session-id", "one", "--flows-across", "two"])
+        self.assertIn("would save, across 2 sessions)", text)
 
     def test_markdown_carries_the_table_and_flows_all_lifts_the_cap(self):
         t = Transcript()
@@ -327,6 +391,8 @@ class SessionMetricsWiring(unittest.TestCase):
         text = self._run(["--session-id", "many"])
         self.assertIn("### Flow shapes", text)
         self.assertIn("_+1 more flow shape(s) omitted", text)
+        full = self._run(["--session-id", "many", "--flows-all"])
+        self.assertNotIn("more flow shape(s) omitted", full)
         data = json.loads(self._run(["--session-id", "many", "--json"]))
         self.assertEqual(
             (len(data["flow_shapes"]), data["flows_omitted"]), (fs.TOP_N, 1)

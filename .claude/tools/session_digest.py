@@ -53,7 +53,8 @@ its median per session and a ``wait:<dimension>:<cause>`` fingerprint.
 
 **The flows section** follows (``flow_shapes.py``): the day's sessions ranked
 together for repeated runs of judgment-free turns, by the prefix replay one
-tool run would save, each with a ``flow:<first>-to-<last>-<n>`` fingerprint —
+tool run would save, each with a ``flow:<first>-to-<last>-<n>-<hash>``
+fingerprint —
 the fold analyst's answer to which turns could have been eliminated. The top
 few by default, every shape with ``--flows-full``.
 
