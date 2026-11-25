@@ -199,14 +199,15 @@ def is_build_shaped(command: str) -> bool:
         tokens = shlex.split(command, comments=True)
     except ValueError:
         tokens = command.split()
-    while tokens:
-        word = Path(tokens[0]).name
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]) or word in _PREFIXES:
-            tokens.pop(0)
-        elif word == "timeout" and len(tokens) > 1:
-            del tokens[:2]
-        else:
-            break
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        tokens.pop(0)
+    if tokens and Path(tokens[0]).name in _PREFIXES:
+        # A wrapper's own flags and values (`nice -n 10`, `timeout -s KILL
+        # 900`, `env -u X Y=1`) end where the command it runs begins.
+        start = next(
+            (i for i, t in enumerate(tokens) if _is_runner(Path(t).name)), None
+        )
+        tokens = tokens[start:] if start is not None else []
     if not tokens:
         return False
     program = Path(tokens[0]).name
@@ -219,10 +220,14 @@ def is_build_shaped(command: str) -> bool:
     return Path(script).name in _BUILD_SCRIPTS
 
 
-# Words that run the command after them, looked through by `is_build_shaped`
-# (`timeout` also takes its duration).
-_PREFIXES = ("env", "time", "nice")
+# Words that run the command after them, looked through by `is_build_shaped`.
+_PREFIXES = ("env", "time", "nice", "timeout")
 _BUILD_SCRIPTS = ("run_quiet.py", "lint_paths.py")
+
+
+def _is_runner(word: str) -> bool:
+    """A program a build-shaped command can start with."""
+    return word in ("make", "cargo") or word.startswith("python")
 
 
 def lock_step(command: str) -> str:

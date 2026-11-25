@@ -2100,7 +2100,8 @@ def to_markdown(report: dict, session_label: str) -> str:
         out.append(
             "\n\n_A tool run leaves one turn per run; **turns saved** are the "
             "rest, and **≈replay saved** is the prefix those turns re-paid. "
-            "`(loop)` folds consecutive identical turns._\n"
+            "`(loop)` folds consecutive identical turns, and an MCP write "
+            "repeated over new arguments._\n"
         )
 
     return "".join(out)

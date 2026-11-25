@@ -285,6 +285,14 @@ class Boundaries(unittest.TestCase):
             t.bash("grep -n 'Baz(' c.py")
         self.assertEqual(fs.rank([t.runs()]), [])
 
+    def test_an_mcp_lookup_over_new_arguments_is_a_survey(self):
+        t = Transcript()
+        for _ in range(2):
+            t.typed("go").turn(("mcp__github__get_file_contents", {"path": "a.py"}))
+            t.turn(("mcp__github__get_file_contents", {"path": "b.py"}))
+            t.turn(("mcp__github__get_file_contents", {"path": "c.py"}))
+        self.assertEqual(fs.rank([t.runs()]), [])
+
     def test_one_occurrence_is_an_incident_not_a_shape(self):
         t = Transcript()
         t.typed("go").bash("git fetch").bash("git push")

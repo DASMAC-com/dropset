@@ -22,14 +22,21 @@ of steps ends at anything that carries judgment:
 * a turn with no tool call at all (prose to the operator);
 * a user record that is not purely tool results — the operator typing, a
   notification, a cross-session message;
-* the same Bash command shape again with new arguments — a search survey,
-  each argument chosen from the last result.
+* the same Bash command shape, or the same MCP lookup (``get_`` /
+  ``search_`` / ``list_`` / ``read_`` …), again with new arguments — a
+  survey, each argument chosen from the last result.
 
 A ``ToolSearch`` call is neutral: it neither extends nor ends a run. The
 *identical* call repeated folds into one **loop** step (``(loop)``), so a poll
-repeated three times and five times is the same shape. So does one MCP tool
+repeated three times and five times is the same shape. So does one MCP write
 called again with new arguments — dismissing each notification a listing
-returned is mechanical, where a Bash survey is not.
+returned is mechanical, where a survey is not.
+
+**Known limits.** Judgment is inferred from the call shape alone, so a write
+whose arguments were reasoned out still folds, and an operator's refusal at a
+permission prompt (it returns as a tool result) ends no run. A record the
+transcript carries without a message (an attachment, a queued command) is
+not seen, so it ends no run either.
 
 A flow shape is an ordered tuple of steps spanning at least two turns that
 recurs at least :data:`MIN_OCCURRENCES` times (non-overlapping, within a run),
@@ -60,6 +67,9 @@ MAX_STEPS = 16
 TOP_N = 5
 
 NEUTRAL_TOOLS = frozenset({"ToolSearch"})
+# An MCP tool that reads rather than acts (`github__get_file_contents`,
+# `linear__list_issues`): called again with new arguments, it is a survey.
+_LOOKUP = re.compile(r"(?:^|__)(?:get|search|list|read|query|fetch)_")
 LOOP = " (loop)"
 
 Signature = Callable[[str], str]
@@ -68,8 +78,8 @@ Signature = Callable[[str], str]
 @dataclass
 class Step:
     """One step of a run: a turn's call signature, each turn's prefix in
-    tokens (more than one for a folded loop), and the raw calls that only an
-    identical repeat may fold into."""
+    tokens (more than one for a folded loop), and its raw calls, which an
+    identical repeat (or an MCP write over new arguments) folds into."""
 
     sig: str
     prefixes: list[int] = field(default_factory=list)
@@ -193,16 +203,17 @@ class FlowTracker:
         else:
             sig = " + ".join(s for s, _, _ in acts)
             raw = "\n".join(r for _, r, _ in acts)
-            mcp_only = all(m for _, _, m in acts)
+            mcp_writes = all(m and not _LOOKUP.search(s) for s, _, m in acts)
             last = self._run[-1] if self._run else None
-            if last is not None and last.sig == sig and (last.raw == raw or mcp_only):
-                # The same call again — a poll — or one MCP tool over new
+            if last is not None and last.sig == sig and (last.raw == raw or mcp_writes):
+                # The same call again — a poll — or one MCP write over new
                 # arguments (each id a listing returned): one loop step.
                 last.prefixes.append(self._turn_prefix)
             else:
                 if last is not None and last.sig == sig:
-                    # The same Bash shape with new arguments is a survey:
-                    # each argument was chosen from the last result.
+                    # The same Bash shape or MCP lookup with new arguments
+                    # is a survey: each argument was chosen from the last
+                    # result.
                     self._break()
                 self._run.append(Step(sig, [self._turn_prefix], raw))
         self._turn_id = None

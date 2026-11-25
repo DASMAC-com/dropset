@@ -150,6 +150,9 @@ class Ledger(unittest.TestCase):
             "env X=1 cargo build",
             "timeout 900 make test",
             "time cargo build",
+            "nice -n 10 cargo build",
+            "timeout -s KILL 900 make test",
+            "env -u X Y=1 make lint",
             "X=1 python3 .claude/tools/run_quiet.py -- pnpm install",
         ):
             with self.subTest(command=command):
@@ -158,6 +161,7 @@ class Ledger(unittest.TestCase):
             "grep -n lock wait_ledger.py",
             "python3 .claude/tools/search_source.py lock",
             "grep -n LOCK .claude/tools/lint_paths.py",
+            "timeout 60 grep -rn lock .claude/tools",
             "python3 .claude/tools/search_source.py run_quiet.py",
             "git push",
             "",
