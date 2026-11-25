@@ -203,10 +203,11 @@ repos:
     pass_filenames: false
   repo: 'local'
 # A Docker-gated test runs only in the `Tests (Postgres)` job, and only for the
-# crates `make test-postgres` selects, so a crate that gains one without a `-p`
-# there is coverage CI silently never runs. The gated set is derived from the
-# tree, not listed. `always_run` because the omission is a property of the
-# whole tree: the edit that creates it touches only the new crate's `.rs`.
+# crates the Makefile's POSTGRES_TEST_CRATES names, so a crate that gains one
+# without joining that list is coverage CI silently never runs. The gated set
+# is derived from the tree, not listed. `always_run` because the omission is a
+# property of the whole tree: the edit that creates it touches only the new
+# crate's `.rs`.
 - hooks:
   - always_run: true
     entry: 'python3 .claude/tools/postgres_ci_wiring.py'

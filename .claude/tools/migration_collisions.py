@@ -518,9 +518,9 @@ def next_free_number(taken) -> int:
     merged since the merge-base is in neither comparison set (see the bound
     above) — whereas one past the maximum is unclaimed in every set that was
     consulted. Filling a gap is also what produces the out-of-order applied
-    state; that state is *tolerated* by the runner
-    (`db-schema/tests/schema_fence.rs`), so this is about keeping the claim
-    verifiable, not about avoiding a wedge.
+    state; that state is *tolerated* by the runner (`docs/data-feeds.md`, "A
+    gap beneath an applied version is filled"), so this is about keeping the
+    claim verifiable, not about avoiding a wedge.
     """
     numbers = set(taken)
     return max(numbers) + 1 if numbers else 1

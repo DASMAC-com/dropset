@@ -116,7 +116,7 @@ Bumping the compiler is a deliberate PR, never a surprise:
 Worth knowing before you touch this file for any reason: the cache key also
 embeds **the file's own hash**, so editing even a comment in
 `rust-toolchain.toml` invalidates every Rust cache and costs one cold run
-across all six jobs. That is not a reason to leave the comments wrong — it is
+across all five jobs. That is not a reason to leave the comments wrong — it is
 a reason not to reformat the file idly.
 
 Do the bump on its own PR when convenient rather than under deadline: it is
@@ -125,8 +125,8 @@ the one change guaranteed to cost a full cold rebuild across every job.
 ## 3. What the caches are expected to do
 
 Rust work is cached in up to four layers, each expected to hit in the jobs
-that use it — `test-postgres` builds no program, so it has neither the SBF
-nor the Solana-toolchain layer:
+that use it. `test-postgres` builds nothing while its crate list is empty, so
+it uses none of them:
 
 - **`Swatinem/rust-cache`**, scoped per `shared-key` — the registry plus
   dependency build artifacts. Workspace crates are deliberately pruned.
@@ -243,17 +243,17 @@ a single PR ref there were four entries with identical dependency hashes —
 per-repo limit, so entries were being evicted continuously, which is the real
 explanation for the `pre-commit` cache's roughly even hit/miss split.
 
-`test-postgres` deliberately keeps its own key. It builds no program and
-needs none of the SBF-era `target/`, so pointing it at the shared key would
-make it restore well over a gigabyte it never reads.
+`test-postgres` no longer keeps a cache at all. Its crate list is empty, so
+it builds nothing (section 6, "Tests (Postgres)"), and its old
+`rust-postgres` entry is no longer saved.
 
 ### The visibility guard
 
-Every Rust test job ends with a `Cache effectiveness summary` step writing
-`sccache --show-stats` into the run summary, fenced so the column-aligned
-table survives Markdown rendering. The three program-building jobs also
-report their SBF cache hit flag; `test-postgres` omits it, having no such
-step. The step runs on failure but not on cancellation, and it is
+Every Rust test job that compiles ends with a `Cache effectiveness summary`
+step writing `sccache --show-stats` into the run summary, fenced so the
+column-aligned table survives Markdown rendering. All three also report their
+SBF cache hit flag. `test-postgres` compiles nothing, so it has no such step.
+The step runs on failure but not on cancellation, and it is
 `continue-on-error` — a visibility guard must never be the thing that reds
 an otherwise-green job. The point is that a regression to cold compiles
 shows up in the run that suffers it, instead of being reconstructed weeks
@@ -362,6 +362,29 @@ path neither the graph nor the fixture scan can see. A test reading a file
 by a path built at runtime is one example; a crate that starts loading the
 `.so` without joining the table is another. The full run catches both.
 `review-pr` iterates on the abridged form through the race below.
+
+### Tests (Postgres)
+
+The `Tests (Postgres)` job is the slot for tests that need a running
+Postgres, and today it holds none. Those tests are `#[ignore]`d, because each
+starts its own database in a Docker container, so the default suite skips
+them. The job runs `make test-postgres`, which runs only the crates its
+`POSTGRES_TEST_CRATES` variable names. `postgres_ci_wiring.py`, the
+`postgres-ci-wiring` lint hook, fails when a crate gains such a test without
+being named there.
+
+The old stack's Postgres-backed tests in feeds, indexer, market-data and the
+schema crate were deleted on 2026-11-24. Its code stays until the node is
+deployed, and with those tests gone a change that breaks the old database code
+shows up only on `make demo`. The variable is empty, so the target prints a
+line and succeeds. The job keeps its required-check name, so the ruleset was
+not edited. With nothing to build, the job is just a checkout and that one
+step: no toolchain, no nextest and no Rust cache. The `rust-postgres` cache
+entry is no longer saved.
+
+The node's migration tests will name their crates in the variable. The same
+change puts the Rust toolchain, nextest and a rust-cache step back into the
+job, since the empty target needs none of them.
 
 ## 7. Racing local against CI
 

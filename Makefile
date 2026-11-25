@@ -315,38 +315,28 @@ test-no-teardown: program-no-teardown
 test-parity: check-nextest program-parity
 	DROPSET_REQUIRE_PARITY_ORACLE=1 cargo nextest run --test asm_parity
 
-# The SQL-backed crates' container-backed suites, `#[ignore]`d because they
-# need a Docker daemon, plus the feature-gated unit tests a `-p` selection
-# leaves off. The required `Tests (Postgres)` CI job runs exactly this target,
-# so a local run selects what CI's does, and `postgres_ci_wiring.py` (a lint
-# hook) fails when a crate gains a Docker-gated test without a `-p` here.
+# The crates whose suites need a running Postgres, `#[ignore]`d because they
+# start one in a Docker container. The required `Tests (Postgres)` CI job runs
+# exactly this target, so a local run selects what CI's does, and
+# `postgres_ci_wiring.py` (a lint hook) fails when a crate gains a Docker-gated
+# test without being named in POSTGRES_TEST_CRATES.
 #
-# One invocation over all the crates so the shared dependency graph compiles
-# once. `oanda_direction` is filtered out because it is one of the two
-# `#[ignore]`d targets among them gated on something other than Docker: it
-# needs a network and the OANDA credential, and a required check must not
-# depend on a live third-party venue. It stays operator-run, and its own module
-# doc says so.
-# `tls_distrust` is filtered out for the same reason: it needs the network to
-# reach the eMudhra probe hosts, and runs as `make tls-distrust-check`. One
-# `-E`, since nextest unions several: two `not` filters would select all.
-# Excluded by `binary_id` rather than by package, so the rest of
-# `dropset-market-data` is still covered, and rather than by bare `binary`,
-# which matches the unqualified name in every selected crate. A rename fails
-# closed: nextest errors on a filter expression that matches no binary. The
-# feeds transports are named explicitly because a `-p` selection does not
-# enable them.
-POSTGRES_TEST_FEATURES := store http rpc stream
-POSTGRES_TEST_EXCLUDED := binary_id(dropset-market-data::oanda_direction) \
-	| binary_id(dropset-feeds::tls_distrust)
+# The list is empty: the old stack's Postgres tests were deleted, and the
+# node's migration tests have not landed yet. An empty list runs nothing and
+# succeeds, since nextest given no test to run exits non-zero. A crate added
+# here runs under nextest, in one invocation so the shared dependency graph
+# compiles once; the CI job then needs its toolchain steps back too
+# (docs/ci.md, "Tests (Postgres)").
+POSTGRES_TEST_CRATES :=
 
 .PHONY: test-postgres
-test-postgres: check-nextest
+test-postgres: $(if $(strip $(POSTGRES_TEST_CRATES)),check-nextest)
+ifeq ($(strip $(POSTGRES_TEST_CRATES)),)
+	@echo 'test-postgres: POSTGRES_TEST_CRATES is empty; nothing to run'
+else
 	cargo nextest run --run-ignored all \
-		-E 'not ($(POSTGRES_TEST_EXCLUDED))' \
-		-p dropset-feeds -p dropset-indexer -p dropset-market-data \
-		-p dropset-db-schema \
-		--features '$(addprefix dropset-feeds/,$(POSTGRES_TEST_FEATURES))'
+		$(addprefix -p ,$(POSTGRES_TEST_CRATES))
+endif
 
 # Prove the Rust TLS stack refuses the distrusted eMudhra intermediates: the
 # feeds HTTP client (rustls, compiled-in roots, the same lock every binary and

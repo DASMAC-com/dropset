@@ -578,12 +578,11 @@ mod tests {
     /// empty, so without it this test is compiled away and the command exits 0
     /// having verified nothing.
     ///
-    /// **`#[ignore]` is not what keeps this out of CI**, which is the trap it
-    /// looks like it avoids: the Postgres job runs `nextest --run-ignored all`
-    /// precisely so the store suites execute, so this runs there too. An
-    /// machine with no vault set is therefore a **skip**, not a failure — the
-    /// absence of a vault is that job's normal state, and panicking on it
-    /// reds the build for a machine that was never meant to resolve anything.
+    /// **A machine with no vault set is a skip, not a failure.** `#[ignore]`
+    /// keeps this out of every CI job today, but a job that runs
+    /// `nextest --run-ignored all` over this crate would run it too, and no
+    /// such job has a vault: panicking there would red the build for a machine
+    /// that was never meant to resolve anything.
     ///
     /// It asserts only that each credential resolves to something non-empty,
     /// and never prints a value.

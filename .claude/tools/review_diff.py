@@ -442,12 +442,14 @@ REASON_PATHS = 3
 #: The attribute an `#[ignore]`d test carries, with or without a reason.
 IGNORE_ATTR = "#[ignore"
 
-#: What `make test-postgres` selects — the crates its `-p` flags name, less the
-#: binary its `-E` filter excludes. An ignored test outside this set runs in no
-#: CI job, so its change triggers nothing. Mirror the target when it changes;
-#: `postgres_ci_wiring.py` keeps the target itself honest.
-POSTGRES_TEST_ROOTS = ("feeds/**", "indexer/**", "market-data/**", "db-schema/**")
-POSTGRES_TEST_EXCLUDES = ("market-data/tests/oanda_direction.rs",)
+#: What `make test-postgres` selects — the trees of the crates its
+#: `POSTGRES_TEST_CRATES` names, less any test file it filters out. An ignored
+#: test outside this set runs in no CI job, so its change triggers nothing.
+#: Both are empty while that list is: the old stack's Postgres tests were
+#: deleted. Mirror the target when it changes; `postgres_ci_wiring.py` keeps
+#: the target itself honest.
+POSTGRES_TEST_ROOTS: tuple[str, ...] = ()
+POSTGRES_TEST_EXCLUDES: tuple[str, ...] = ()
 
 
 def ignored_test_files(paths, read=None) -> list[str]:

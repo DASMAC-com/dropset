@@ -1,9 +1,11 @@
+# cspell:word addprefix
 """Stdlib ``unittest`` tests for the Postgres CI wiring guard.
 
 The load-bearing assertions are the bug class itself — a crate that gains a
-Docker-gated test without joining the job's selection fails — and the
-zero-match failure, without which a drifted attribute spelling would make the
-guard approve everything. Run via the repo's ``make tools-tests``.
+Docker-gated test without joining the job's selection fails — and the drift
+check that replaced the zero-match failure: a file using the container library
+with no gate attribute is reported, so a drifted attribute spelling cannot make
+the guard approve everything. Run via the repo's ``make tools-tests``.
 """
 
 from __future__ import annotations
@@ -16,12 +18,19 @@ import postgres_ci_wiring as pcw
 
 GATE = '#[ignore = "requires a Docker daemon (Postgres container)"]\n'
 
+#: The shape the real Makefile has: a conditional recipe over the variable.
 MAKEFILE = (
+    "POSTGRES_TEST_CRATES := dropset-feeds \\\n"
+    "\tdropset-indexer\n"
+    "\n"
     ".PHONY: test-postgres\n"
-    "test-postgres: check-nextest\n"
+    "test-postgres: $(if $(strip $(POSTGRES_TEST_CRATES)),check-nextest)\n"
+    "ifeq ($(strip $(POSTGRES_TEST_CRATES)),)\n"
+    "\t@echo 'nothing to run'\n"
+    "else\n"
     "\tcargo nextest run --run-ignored all \\\n"
-    "\t\t-p dropset-feeds -p dropset-indexer \\\n"
-    "\t\t--features dropset-feeds/store\n"
+    "\t\t$(addprefix -p ,$(POSTGRES_TEST_CRATES))\n"
+    "endif\n"
     "\n"
     "other:\n"
     "\tcargo test -p not-selected\n"
@@ -64,7 +73,7 @@ class WiringTests(unittest.TestCase):
         problems = self.check("ledger/tests/db.rs")
         self.assertEqual(len(problems), 1)
         self.assertIn("dropset-ledger", problems[0])
-        self.assertIn("-p dropset-ledger", problems[0])
+        self.assertIn("POSTGRES_TEST_CRATES", problems[0])
 
     def test_a_flag_in_another_target_does_not_count(self):
         self.crate("x", "not-selected")
@@ -103,10 +112,43 @@ class WiringTests(unittest.TestCase):
         self.write("tui/src/e2e.rs", '#[ignore = "needs solana-test-validator"]\n')
         self.assertEqual(self.check("tui/src/e2e.rs"), [])
 
-    def test_zero_gated_crates_fails_rather_than_passing(self):
-        self.write("feeds/tests/store.rs", "#[ignore]\nfn t() {}\n")
+    def test_zero_gated_crates_and_an_empty_list_is_wired(self):
+        # Today's tree: the old stack's Postgres tests are gone and the list is
+        # empty. That is a legitimate state, not a drifted spelling.
+        self.write(
+            "Makefile", MAKEFILE.replace(" dropset-feeds \\\n\tdropset-indexer", "")
+        )
+        self.write("feeds/tests/store.rs", "fn t() {}\n")
+        self.assertEqual(self.check(), [])
+
+    def test_a_container_user_without_the_gate_fails(self):
+        # The drift check: a misspelled attribute leaves the file ungated but
+        # still naming the container library, so it is reported, not skipped.
+        self.write(
+            "feeds/tests/store.rs",
+            '#[ignore = "needs Docker"]\nuse testcontainers_modules::postgres;\n',
+        )
         problems = self.check()
-        self.assertTrue(any("drifted" in p for p in problems))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("uses testcontainers", problems[0])
+
+    def test_a_gated_container_user_is_not_reported_as_ungated(self):
+        self.write(
+            "feeds/tests/store.rs", GATE + "use testcontainers_modules::postgres;\n"
+        )
+        self.assertEqual(self.check(), [])
+
+    def test_a_recipe_not_expanding_the_variable_fails(self):
+        self.write(
+            "Makefile",
+            "POSTGRES_TEST_CRATES := dropset-feeds\n"
+            "test-postgres:\n\tcargo nextest run -p dropset-feeds\n",
+        )
+        self.assertTrue(any("never expands" in p for p in self.check()))
+
+    def test_a_missing_variable_fails(self):
+        self.write("Makefile", "test-postgres:\n\t@echo none\n")
+        self.assertTrue(any("no `POSTGRES_TEST_CRATES`" in p for p in self.check()))
 
     def test_a_workflow_no_longer_running_the_target_fails(self):
         self.write(".github/workflows/test.yml", "run: 'cargo nextest run'\n")
@@ -131,16 +173,21 @@ class ParsingTests(unittest.TestCase):
     def test_package_name_absent(self):
         self.assertIsNone(pcw.package_name('[workspace]\nmembers = ["a"]\n'))
 
-    def test_recipe_joins_continuations_and_stops_at_the_next_rule(self):
-        body = pcw.recipe(MAKEFILE, "test-postgres")
+    def test_variable_joins_continuations(self):
         self.assertEqual(
-            pcw.selected_packages(body), ["dropset-feeds", "dropset-indexer"]
+            pcw.variable(MAKEFILE, "POSTGRES_TEST_CRATES"),
+            ["dropset-feeds", "dropset-indexer"],
         )
 
-    def test_a_feature_flag_is_not_read_as_a_package(self):
-        self.assertEqual(
-            pcw.selected_packages("cargo t -p a --features a/x -E 'not p'"), ["a"]
-        )
+    def test_an_empty_variable_is_an_empty_list_not_absent(self):
+        self.assertEqual(pcw.variable("V :=\n", "V"), [])
+        self.assertIsNone(pcw.variable("W := a\n", "V"))
+
+    def test_recipe_steps_over_conditionals_and_stops_at_the_next_rule(self):
+        body = pcw.recipe(MAKEFILE, "test-postgres")
+        self.assertIn("nothing to run", body)
+        self.assertIn("$(addprefix -p ,$(POSTGRES_TEST_CRATES))", body)
+        self.assertNotIn("not-selected", body)
 
 
 if __name__ == "__main__":

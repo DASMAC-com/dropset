@@ -549,12 +549,13 @@ Two properties are load-bearing:
 **Every migration declares what it produces.** Beside each
 `<version>_<name>.sql` sits a `<version>_<name>.fence` manifest, one
 directive per line — `table <name>`, `view <name>`,
-`column <table>.<column>`, `rows <table> = <n>`, or `none <reason>` — and
-`db-schema/tests/schema_fence.rs` replays the history against a
-throwaway Postgres and probes for each declared relation. A migration
-with no manifest fails the ordinary test run, as does a manifest with no
-migration, so the pairing holds in both directions. The relation probes
-themselves need a Postgres container and run under `--ignored`.
+`column <table>.<column>`, `rows <table> = <n>`, or `none <reason>`. In
+`db-schema/tests/schema_fence.rs`, a migration with no manifest fails the
+ordinary test run, as does a manifest with no migration, so the pairing
+holds in both directions, and every manifest must parse. Nothing checks a
+declared relation against a live database any more: that probe went with
+the old stack's Postgres tests on 2026-11-24 (`docs/ci.md` → "Tests
+(Postgres)").
 
 The manifest is a **declaration, not a derivation**: nothing parses
 `CREATE TABLE` out of the DDL, which would make the check agree with
@@ -581,27 +582,23 @@ holding versions 1–10 plus 13 takes 11 and 12 when a contiguous history
 next runs against it, ends up contiguous, and passes the fence. That
 state is reachable whenever a migration is applied outside a coordinated
 batch while lower-numbered ones are still in flight — it happened once on
-the shared dev instance — and the recovery is simply to migrate. The
-claim is held by
-`migrate_fills_a_gap_beneath_an_already_applied_version` in
-`db-schema/tests/schema_fence.rs`, which stages 1–10 plus 13 by
-*applying* them, so 13's recorded checksum is genuine, then runs the full
-history over the top.
+the shared dev instance — and the recovery is simply to migrate. A
+container test once held the claim by staging 1–10 plus 13 and running
+the full history over the top; it was deleted with the old stack's
+Postgres tests, so the claim now rests on sqlx's behavior alone.
 
 Worth stating because the opposite is easy to assume, and assuming it
 converts a non-event into a hold on every deploy.
 
-Two further limits, from **sqlx's documented behavior rather than from
-anything measured here** — the test above covers neither, so do not read
-its citation as extending to them. The runner does *not* tolerate a
-checksum that no longer matches what was applied, nor — unless
-`ignore_missing` is set — an applied migration absent from the binary's
-own history. Of those two the checksum case is the one with no clean
-remedy: the bytes can always be restored to what was applied, but a
-*correction* to a shipped migration can never be, which is why a
-migration *number* is worth claiming before the file is written
-(`.claude/tools/migration_collisions.py`) even though a gap beneath one
-costs nothing.
+Two further limits, from **sqlx's documented behavior rather than from anything
+measured here**; the deleted test never covered either. The runner does *not*
+tolerate a checksum that no longer matches what was applied, nor — unless
+`ignore_missing` is set — an applied migration absent from the binary's own
+history. Of those two the checksum case is the one with no clean remedy: the
+bytes can always be restored to what was applied, but a *correction* to a
+shipped migration can never be, which is why a migration *number* is worth
+claiming before the file is written (`.claude/tools/migration_collisions.py`)
+even though a gap beneath one costs nothing.
 
 **Table ownership — one writer, unrestricted readers.** Every table has
 exactly one writer app. Reads are deliberately unrestricted; that is the
