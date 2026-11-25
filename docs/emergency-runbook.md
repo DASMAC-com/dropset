@@ -22,7 +22,9 @@ close and drain by its leader.
 - You are in your own terminal. The cockpit refuses an agent's shell
   (`CLAUDECODE` set), sub-agents included.
 - The admin wallet holds some SOL for transaction fees.
-- `DROPSET_MAINNET_RPC_URL` is exported, pointing at a provider endpoint.
+- `DROPSET_MAINNET_RPC_URL` is exported in the profile as a 1Password
+  reference to the provider endpoint, never as the URL itself (see
+  [the cockpit's mainnet RPC URL][rpc-url]).
 
 ## Launch
 
@@ -151,10 +153,13 @@ planned stop, not an emergency one: kill only, never close or drain.
 1. **Wait for the switch to complete.** Poll the new RPC method until it
    returns a certificate rather than `null`. A `-32601 Method not found`
    means the node predates Agave 4.3, not that the switch is pending; use
-   another endpoint.
+   another keyless endpoint. Poll a keyless public endpoint only: the
+   exported variable is a 1Password reference, not a URL, and the keyed
+   URL is never typed.
 
    ```sh
-   curl -s "$DROPSET_MAINNET_RPC_URL" -H 'Content-Type: application/json' \
+   curl -s https://api.mainnet-beta.solana.com \
+     -H 'Content-Type: application/json' \
      -d '{"jsonrpc":"2.0","id":1,"method":"getAgGenesisCert"}'
    ```
 
@@ -173,7 +178,9 @@ line refusing an active vault is the expected answer. Rehearse before every
 live demo.
 
 To rehearse the signed path end to end, point `DROPSET_MAINNET_RPC_URL` at a
-local validator and launch with the rehearsal flag and a log of its own:
+local validator (a loopback URL is the one literal a signing session admits,
+and it never touches 1Password) and launch with the rehearsal flag and a log
+of its own:
 
 ```sh
 make tui-mainnet \
@@ -183,3 +190,5 @@ make tui-mainnet \
 The TUI then accepts only an `http(s)://127.0.0.1` or `localhost` endpoint
 whose genesis is not mainnet-beta, so typing `yes` signs nothing real, and
 every line it logs carries `rehearsal=1`.
+
+[rpc-url]: conventions/local-integrations.md#the-cockpits-mainnet-rpc-url

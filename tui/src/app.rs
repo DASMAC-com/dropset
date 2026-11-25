@@ -1802,7 +1802,9 @@ impl App {
                         &fair,
                         spot,
                     )
-                    .unwrap_or_else(|e| vec![format!("vault view — {e:#}")]),
+                    .unwrap_or_else(|e| {
+                        vec![crate::cluster::redact(&format!("vault view — {e:#}"))]
+                    }),
                 };
                 form.set_sources(fair, spot);
             }
@@ -2377,7 +2379,12 @@ impl App {
     /// trimming the in-memory ring to capacity. Multi-line text — e.g. a
     /// program-log stream folded into one error — is split so each line
     /// renders on its own row.
+    ///
+    /// The one sink for the pane and its file, so the endpoint redaction
+    /// ([`crate::cluster::redact`]) is applied here rather than at each of
+    /// the many sites that format an RPC error.
     fn log(&mut self, kind: LogKind, text: String) {
+        let text = crate::cluster::redact(&text);
         if let Some(file) = self.log_file.as_mut() {
             let _ = writeln!(file, "{text}");
         }

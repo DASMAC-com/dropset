@@ -1508,6 +1508,66 @@ developer endpoint. The
 placeholders, the selector's rules and the Vercel variables live in
 `frontend/.env.example`.
 
+#### The cockpit's mainnet RPC URL
+
+A paid provider's mainnet endpoint carries its API key in the URL, so
+it is never typed: a typed export puts the key in shell history,
+scrollback and the environment of every later process in that tab.
+Instead `DROPSET_MAINNET_RPC_URL` holds a **pointer**, an
+`op://<vault>/<item>/<field>` reference exported once in the profile.
+A reference is not a secret, so it may sit in a config file and in
+every shell's environment. The item holds the whole URL in one
+concealed field and lives with the other API keys, not in the
+private-keys vault: an RPC URL can be rotated and is not a key.
+
+The cockpit binary dereferences the pointer itself, in mainnet mode
+only, after its agent-shell refusal (so an agent shell can never raise
+a 1Password prompt). It runs `op read <reference>` as a direct
+subprocess, with fixed arguments, no shell and a timeout, adding
+`--account` from `DROPSET_OP_ACCOUNT` when that is set;
+`make tui-mainnet` passes the make variable of that name, from the
+collectors' enclave file, into the cockpit's environment. The result
+is held in memory and handed to the RPC client, never placed in the
+process environment, written to a file or printed. Then it runs
+`op signout` for the same account, before the typed confirmation and
+the first frame; a failed signout is one warning line, and the CLI's
+authorization idles out on its own.
+
+The variable's value is treated four ways:
+
+- **An `op://` reference** is dereferenced as above.
+- **A loopback URL** (`http(s)://127.0.0.1` or `localhost`) is
+  admitted untouched for the dress rehearsal; 1Password is not
+  touched, and the rehearsal's own checks apply unchanged.
+- **The keyless public endpoint**, `https://api.mainnet-beta.solana.com`
+  exactly, is admitted only in a session that can spend nothing: the
+  ephemeral wallet with no leader, quote or program key. That is the
+  case `make mainnet-demo` launches, and that target always passes the
+  public endpoint, so the watch-only demo never dereferences the
+  exported pointer.
+- **Anything else**, a literal `https://` URL included, is refused
+  with a message saying a mainnet endpoint is never typed and pointing
+  here. The value is not echoed.
+
+A failed or timed-out `op read` refuses the launch: `op`'s own error
+is shown, then one line naming the variable. An empty result, or one
+that is not an `https://` URL, is refused without being printed.
+
+**One endpoint.** The cockpit takes exactly one endpoint from exactly
+one reference: no secondary variable, no fallback reference, and no
+public-endpoint default when a read fails. Everything downstream (the
+genesis-hash check, the typed confirmation, the client) receives the
+resolved URL exactly as it would a typed one, and every sink that
+renders text (the log pane and its file, the vault view, the launch's
+error exit) reduces the endpoint to its host, since an HTTP client
+error commonly prints the request URL.
+
+The read's prompt is the 1Password CLI's **authorization prompt**, not
+an SSH key prompt, so the rule refusing any private-key prompt from
+anything but the cockpit does not apply to it. An `op` planted earlier
+on `PATH` is **not** defended against: a process that can plant one
+already runs as the operator.
+
 ### The cargo pool
 
 `.claude/shell/init.zsh` exports four variables (`_ds_cargo_pool`) whenever
