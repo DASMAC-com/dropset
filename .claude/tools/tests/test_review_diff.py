@@ -173,6 +173,15 @@ class MatchesTests(unittest.TestCase):
         # sdk/rs is a *consumer* of the generators, not an input to them.
         self.assertFalse(rd.matches_any("sdk/rs/src/events.rs", rd.GENERATION_INPUTS))
 
+    def test_program_tests_are_carved_out_of_the_predicate(self):
+        self.assertTrue(rd.is_program_test("programs/dropset/tests/withdraw.rs"))
+        self.assertFalse(rd.is_program_test("programs/dropset/src/tests/mod.rs"))
+        self.assertFalse(rd.is_program_test("programs/tests"))
+        self.assertFalse(
+            rd.touches_generation_input(["programs/dropset/tests/withdraw.rs"])
+        )
+        self.assertTrue(rd.touches_generation_input(["programs/dropset/build.rs"]))
+
     def test_segment_anywhere_pattern(self):
         """``**/tests/**`` also ends in ``/**``, so it must be recognized as a
         segment-anywhere rule before the subtree rule swallows it."""
@@ -822,6 +831,18 @@ class GateTests(unittest.TestCase):
         v = rd.gate("main", self.out, fetch=False)
         self.assertTrue(v["ready"], v["blockers"])
         self.assertFalse(v["base_drift"]["generation_input"])
+
+    def test_a_test_only_program_base_delta_is_not_a_generation_input(self):
+        # The PR 590 false blocker: the base's only `programs/**` file was an
+        # integration test, which the IDL build never reads.
+        self.advance_base(
+            "programs/dropset/tests/withdraw.rs",
+            "fn t() {}\n",
+            branch_rel="programs/dropset/src/swap.rs",
+        )
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertFalse(v["base_drift"]["generation_input"])
+        self.assertNotIn("generation input", " ".join(v["blockers"]))
 
     def test_a_branch_rename_of_a_file_the_base_edits_is_an_overlap(self):
         # The numstat inventory keeps only a rename's destination, so the overlap
@@ -1719,9 +1740,16 @@ class ArtifactGateSourceOnlyTests(unittest.TestCase):
         verdict = self._gate_flags([self.DOCS_UNDER_INPUT, self.SOURCE_UNDER_INPUT])
         self.assertTrue(verdict["runs_artifact_gates"])
 
-    def test_tests_under_an_input_tree_are_not_discounted(self):
-        # Only docs are discounted, matching the crate rollup's own asymmetry.
+    def test_program_integration_tests_do_not_fire_the_gate(self):
+        # The IDL build never compiles `programs/*/tests/**`, so a test-only
+        # program change cannot stale an artifact.
         verdict = self._gate_flags(["programs/dropset/tests/swap.rs"])
+        self.assertFalse(verdict["runs_artifact_gates"])
+
+    def test_a_program_test_beside_a_source_change_still_fires(self):
+        verdict = self._gate_flags(
+            ["programs/dropset/tests/swap.rs", self.SOURCE_UNDER_INPUT]
+        )
         self.assertTrue(verdict["runs_artifact_gates"])
 
 

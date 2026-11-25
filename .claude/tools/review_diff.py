@@ -329,6 +329,19 @@ GENERATION_INPUTS = (
 )
 
 
+def is_program_test(path: str) -> bool:
+    """Whether ``path`` is a program's integration test (``programs/*/tests/**``).
+
+    Those tests link the built ``.so`` but are never compiled into it, so the
+    IDL build never reads them: a test-only change under ``programs/`` cannot
+    stale any generated artifact. Spelled as a segment check because the
+    path-filter shapes :func:`review_tier.matches` supports have no
+    mid-pattern ``*``.
+    """
+    parts = path.split("/")
+    return len(parts) > 3 and parts[0] == "programs" and parts[2] == "tests"
+
+
 class ReviewDiffError(Exception):
     """A user-facing failure: surfaced to stderr, exits non-zero."""
 
@@ -340,9 +353,13 @@ def touches_generation_input(paths) -> bool:
     delta* rather than a review diff. Sharing the **predicate**, not just
     :data:`GENERATION_INPUTS`, is the point: two copies of the ``any(...)`` can
     drift the moment either grows a qualifying clause, and both callers use the
-    answer to license skipping an expensive regeneration gate.
+    answer to license skipping an expensive regeneration gate. A program's
+    integration tests (:func:`is_program_test`) are carved out of
+    ``programs/**`` here, so both callers inherit the exclusion.
     """
-    return any(matches_any(p, GENERATION_INPUTS) for p in paths)
+    return any(
+        matches_any(p, GENERATION_INPUTS) and not is_program_test(p) for p in paths
+    )
 
 
 def touches_ci_code(paths) -> bool:
