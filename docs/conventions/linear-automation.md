@@ -838,6 +838,38 @@ writers racing on one issue is last-write-wins; the message rule makes
 the loser visible in the same minute, and the third-exchange rule
 bounds a ping-pong.
 
+**Stale Todo is raised by age** (ruling 2). Dispatching on
+priorities as read means a Low item under a steady flow of High and
+Urgent work is never reached, so the curator's bootstrap runs
+`board_batch.py aged --write` once and writes the set as one batch:
+
+- **The clock** runs from the later of the issue's last move into
+  Todo and its last priority change, both read from its history. A
+  bump is a priority change, so it restarts the clock, as does any
+  counter-write; a second bootstrap the same day finds nothing.
+- **The bump**: a clock at or past `DS_TODO_AGE_BUMP_DAYS` (the
+  runtime config's knob; its default lives only in the manifest row)
+  raises the priority one level — none to Low to Medium to High. It
+  never writes Urgent.
+- **Skipped**: a blocked item (its clock is not reset), an
+  `[Operator]` item, an item already High or Urgent, and a parked
+  one. A history that fails to read or is truncated is printed as
+  age unknown and never bumped.
+- **A lowered item is not exempt**: the decrease restarts the clock,
+  and once the threshold passes again it is raised like any other —
+  it is canceled or it comes back up. The bump line is the curator's
+  prompt to cancel it instead.
+
+The write is an ordinary priority write under the rule above: the
+curator messages the live scheduler the set in one line, reason
+aged, in the same turn, and with no scheduler live the write stands
+and is named in the state of play. Rejected, not to be reintroduced:
+age from `updatedAt` (any append resets it) or `createdAt` (it
+counts Backlog time); aging at dispatch, or an age tiebreak with no
+priority write (invisible on the board); raising a blocked item's
+blockers (edge reasoning stays human); exempting a lowered item; the
+threshold as a literal in a tool or skill; a checkbox per bump.
+
 **Every filer proposes.** The `ratify-staged` filing ask carries a
 priority per task, with the filer's reasoning in a word; the yes writes
 it in the creating call; the filer then messages the live scheduler and

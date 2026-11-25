@@ -58,6 +58,7 @@ export CARGO_BUILD_JOBS=8
 # DS_CARGO_POOL=0                  # turn the cargo pool off
 # DS_PLAN_TAB_RIGHTMOST=0          # leave the scheduler tab where it opens
 # export DS_UPKEEP_ARMED=1         # let the upkeep pass prune worktrees
+# export DS_TODO_AGE_BUMP_DAYS=<days>  # Todo age before the curator's bump
 # Per-command toggles, set for one run rather than in the profile:
 # DS_SKIP_UPKEEP=1 plan            # skip the morning upkeep pass
 # DS_BEDROCK_PROBE=1 task <n>      # pay for the Bedrock pre-flight

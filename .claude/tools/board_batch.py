@@ -10,7 +10,7 @@ removal — and paid roughly 40k echoing bodies to confirm changes that fit on
 17 lines. Linear's ``issueUpdate`` returns whatever the caller selects, so
 requesting ``success`` alone makes the echo vanish.
 
-Six subcommands, all reading their config from the environment (no hard-coded
+Seven subcommands, all reading their config from the environment (no hard-coded
 ids, never a committed token):
 
 * ``list`` — compact open-Backlog listing: ``number | priority | title``, one
@@ -36,6 +36,10 @@ ids, never a committed token):
   composed to carry one enum. Through the MCP those cost ~3.6k each.
 * ``edges --pairs FILE [--remove]`` — add or remove **operator-directed**
   blocking edges.
+* ``aged [--write]`` — the curator's Todo age bump: reads un-parked Todo with
+  each issue's history in one query, prints the bump set one line per issue
+  (age, current and proposed level), and with ``--write`` applies it in one
+  batch through the ``fields`` path. The rule is :mod:`todo_age`'s.
 
 Each of ``fields``, ``priorities`` and ``edges`` also takes **one** write as
 flags in place of its file (``--id`` with ``--set`` / ``--priority``;
@@ -99,6 +103,8 @@ Usage:
     python3 .claude/tools/board_batch.py edges --pairs edges.json
     python3 .claude/tools/board_batch.py edges --pairs edges.json --remove
     python3 .claude/tools/board_batch.py edges --blocker ENG-1 --blocked ENG-2
+    python3 .claude/tools/board_batch.py aged
+    python3 .claude/tools/board_batch.py aged --write
 
 ``--dry-run`` prints what each write subcommand *would* do and writes nothing.
 Rehearse an ``edges`` run that way first: a blocking edge drops an issue out
@@ -110,12 +116,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 import linear_api
 import linear_issue
+import todo_age
 
 ENDPOINT = linear_api.ENDPOINT
 
@@ -527,6 +535,115 @@ def fetch_issues_by_number(
             )
         )
     return nodes
+
+
+# The `aged` read: the listing node plus each issue's history, in ONE query, so
+# the bump set costs one call however many Todo items there are. History nests
+# under every issue, which multiplies Linear's complexity score the way the
+# custom-view read does, so the page stays small.
+_AGED_QUERY = (
+    """
+query($filter: IssueFilter, $first: Int!, $after: String, $historyFirst: Int!) {
+  issues(filter: $filter, first: $first, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {"""
+    + _ISSUE_NODE
+    + todo_age.HISTORY_SELECTION
+    + """    }
+  }
+}
+"""
+)
+
+AGED_PAGE_SIZE = 25
+
+
+def fetch_todo_with_history(api_key: str, project_id: str) -> list[dict]:
+    """Every Todo issue in the project, each with its history."""
+    return _page_through(
+        api_key,
+        _AGED_QUERY,
+        {
+            "filter": {
+                "project": {"id": {"eq": project_id}},
+                "state": {"name": {"eq": todo_age.TODO_STATE}},
+            },
+            "historyFirst": todo_age.HISTORY_FIRST,
+        },
+        lambda data: data.get("issues") or {},
+        page_size=AGED_PAGE_SIZE,
+    )
+
+
+def judge_aged(issues: list[dict], days: int, now: datetime) -> list:
+    """The :class:`todo_age.Aged` verdict for each issue, by number.
+
+    The blocked and title-token reads are this tool's, passed in, so the rule
+    module needs no copy of either."""
+    return [
+        todo_age.judge(
+            issue,
+            days=days,
+            now=now,
+            blocked=bool(blockers_of(issue)),
+            tokens=title_token(str(issue.get("title") or "")),
+        )
+        for issue in sorted(issues, key=lambda i: int(i.get("number") or 0))
+    ]
+
+
+def format_aged(verdicts: list) -> tuple[list[str], str]:
+    """The bump set and the unknown ages, one line each, plus a summary.
+
+    An under-threshold or skipped issue prints no line — the set is what the
+    curator says out loud — but is counted, so a short set is visibly a
+    judgment and not a short read."""
+    lines, counts = [], {"bump": 0, "unknown": 0, "under": 0, "skipped": 0}
+    for v in verdicts:
+        level = PRIORITY_LABELS.get(v.priority, "none")
+        if v.proposed is not None:
+            counts["bump"] += 1
+            lines.append(
+                f"BUMP {v.identifier} | {v.age_days}d | {level} -> "
+                f"{PRIORITY_LABELS[v.proposed]} ({v.note})"
+            )
+        elif v.note.startswith("age unknown"):
+            counts["unknown"] += 1
+            lines.append(f"UNKNOWN {v.identifier} | age ? | {level} ({v.note})")
+        elif v.note.startswith("skipped"):
+            counts["skipped"] += 1
+        else:
+            counts["under"] += 1
+    summary = (
+        f"-- {counts['bump']} bump(s), {counts['unknown']} age unknown, "
+        f"{counts['under']} under threshold, {counts['skipped']} skipped, "
+        f"of {len(verdicts)} un-parked Todo"
+    )
+    return lines, summary
+
+
+def run_aged(api_key: str, project_id: str, args: argparse.Namespace) -> int:
+    """``aged``: print the bump set; with ``--write``, apply it in one batch."""
+    days, why = todo_age.resolve_threshold(os.environ)
+    if days is None:
+        print(why)
+        return 0
+    # Parked Todo is dropped, as the curator's `list --state Todo` drops it: a
+    # milestone means the item is not sequenced, so its age is not the gap.
+    issues = drop_milestoned(fetch_todo_with_history(api_key, project_id))
+    verdicts = judge_aged(issues, days, datetime.now(timezone.utc))
+    lines, summary = format_aged(verdicts)
+    for line in lines:
+        print(line)
+    print(f"{summary} (threshold {days}d)", file=sys.stderr)
+    updates = {
+        v.identifier: {"priority": v.proposed}
+        for v in verdicts
+        if v.proposed is not None
+    }
+    if args.write and updates:
+        apply_fields(api_key, updates, index_by_number(issues), dry_run=args.dry_run)
+    return 0
 
 
 def index_by_number(issues: list[dict]) -> dict[int, dict]:
@@ -1250,6 +1367,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     _add_dry_run(edges, top_level=False)
 
+    aged = sub.add_parser(
+        "aged", help="the Todo age bump set; --write applies it in one batch"
+    )
+    aged.add_argument("--write", action="store_true", help="apply the printed bump set")
+    _add_dry_run(aged, top_level=False)
+
     return parser.parse_args(argv[1:])
 
 
@@ -1336,6 +1459,9 @@ def run(argv: list[str]) -> int:
     args = _parse_args(argv)
     api_key = env_var("LINEAR_API_KEY")
     project_id = env_var("LINEAR_PROJECT_ID")
+
+    if args.cmd == "aged":
+        return run_aged(api_key, project_id, args)
 
     if args.cmd in ("list", "view"):
         if args.cmd == "view":

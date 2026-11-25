@@ -108,6 +108,19 @@ Otherwise, the full bootstrap:
    Say three counts: the inbox (untagged Backlog), its Urgent
    subset, and Todo. Pull a body only when a decision turns on it.
 
+1. **Bump stale Todo**, once, beside that read — one atomic
+   batch, no per-item tick (the rule: `linear-automation.md` →
+   "Priorities: shared authority, the agreement rule"):
+
+   ```sh
+   python3 .claude/tools/board_batch.py aged --write
+   ```
+
+   Say the set here and in the first batch ask, and message a live
+   scheduler one line in the same turn: the set, reason aged. None
+   live: the write stands, named in the state of play. A bump on
+   work the direction lowered is the prompt to propose its cancel.
+
 1. **Read Next as the operator sees it** (`board_batch.py view`)
    and **verify it against the holds**: name each row the
    scheduler should not dispatch, with its blocker. A hold is an

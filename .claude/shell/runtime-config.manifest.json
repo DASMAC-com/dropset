@@ -375,6 +375,16 @@
       ]
     },
     {
+      "anchor": "docs/conventions/linear-automation.md \u2192 Priorities: shared authority, the agreement rule",
+      "default": "14",
+      "kind": "knob",
+      "name": "DS_TODO_AGE_BUMP_DAYS",
+      "required": false,
+      "verbs": [
+        "curate"
+      ]
+    },
+    {
       "anchor": "docs/conventions/local-integrations.md \u2192 The family, one line each",
       "default": null,
       "kind": "toggle",
