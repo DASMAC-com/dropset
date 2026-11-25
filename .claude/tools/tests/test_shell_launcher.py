@@ -440,13 +440,19 @@ class FleetVerbTest(unittest.TestCase):
                 self.assertEqual(got.returncode, 0, got.stderr)
                 self.assertIn(f"tool {flags}\n", got.stdout)
 
+    def test_down_reaches_the_winddown_tool(self) -> None:
+        stubs = self.STUBS.replace("${@:2}", "$1")
+        got = run(stubs + "fleet down")
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertIn("fleet_winddown.py", got.stdout)
+
     def test_a_stray_word_is_refused(self) -> None:
-        for words in ("go --over", "go --over-budget now", "stop"):
+        for words in ("go --over", "go --over-budget now", "stop", "down now"):
             with self.subTest(words=words):
                 got = run(self.STUBS + f"fleet {words}")
                 self.assertEqual(got.returncode, 1)
                 self.assertNotIn("tool", got.stdout)
-                self.assertIn("Usage: fleet [go [--over-budget]]", got.stderr)
+                self.assertIn("Usage: fleet [go [--over-budget] | down]", got.stderr)
 
 
 @unittest.skipUnless(shutil.which("zsh"), "needs zsh")

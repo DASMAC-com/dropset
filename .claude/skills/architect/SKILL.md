@@ -510,6 +510,11 @@ must say so as a task**, not as an instruction to a future
 reader. This session cannot commit, so a repo-bound conclusion
 nobody filed is one that will not happen.
 
+**A fleet wind-down message mid-conversation** is a pause: write
+the next step as a resume brief, then stand down by park
+(`docs/conventions/fleet-winddown.md`); the session resumes by
+number tomorrow.
+
 ## A note on the shared substrate
 
 `plan` and this skill share most of their machinery — the model

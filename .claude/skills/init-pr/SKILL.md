@@ -149,6 +149,12 @@ selector, never a free-text prompt, with concrete options and the
 sensible default **first**, labeled "(Recommended)". This mirrors
 `review-pr`'s merge-queue handoff one stage earlier.
 
+## A fleet wind-down message is a pause
+
+Reach the first safe point, push a checkpoint, append the next step
+as a resume brief, then park (`close_session.py --park`, no PR
+needed): `docs/conventions/fleet-winddown.md`.
+
 ## The implement phase: context discipline
 
 The context economy `review-pr` enforces applies equally to the

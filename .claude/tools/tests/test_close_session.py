@@ -5,6 +5,7 @@ Run via the repo's ``make tools-tests`` (discovery adds ``.claude/tools`` as
 the top-level dir so the bare ``import close_session`` below resolves).
 """
 
+import io
 import json
 import os
 import shutil
@@ -701,12 +702,27 @@ class ParkTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("could not read the issue body", result["refused"])
 
-    def test_park_refuses_with_no_open_pr(self):
-        rc, result, *_ = self._park(
-            prs=[{"number": 503, "state": "MERGED", "headRefOid": "abc123"}]
-        )
+    def test_park_with_no_open_pr_needs_only_a_brief(self):
+        # The wind-down's pauser before its PR (and a chore by design): the
+        # brief carries the next step and names no PR.
+        brief = "spec\n\n**Resume brief**: next step, finish the parser tests\n"
+        for prs in ([], [{"number": 503, "state": "MERGED", "headRefOid": "x"}]):
+            with self.subTest(prs=prs):
+                rc, result, runner, writer, _ = self._park(body=brief, prs=prs)
+                self.assertEqual(rc, 0, result)
+                self.assertIsNone(result["pr"])
+                self.assertIn("no PR open", " ".join(result["notes"]))
+                self.assert_untouched(runner, writer)
+
+    def test_park_with_no_open_pr_still_needs_a_brief(self):
+        rc, result, *_ = self._park(body="spec only\n", prs=[])
         self.assertEqual(rc, 1)
-        self.assertIn("needs an open PR", result["refused"])
+        self.assertIn("needs a resume brief", result["refused"])
+
+    def test_park_with_no_open_pr_still_needs_a_clean_tree(self):
+        rc, result, *_ = self._park(prs=[], status=" M src/lib.rs\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("uncommitted", result["refused"])
 
     def test_park_refuses_a_state(self):
         rc, result, _, writer = run_close(ns(state="In Review", park=True))
@@ -821,6 +837,34 @@ class BriefVerdictTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             close_session.brief_verdict(body, 715)
 
+    def test_no_pr_needs_only_a_brief(self):
+        close_session.brief_verdict("Resume brief: next, the parser tests\n", None)
+        with self.assertRaisesRegex(Refusal, "needs a resume brief"):
+            close_session.brief_verdict("spec only\n", None)
+
+    def test_no_pr_refuses_a_brief_that_is_not_last(self):
+        # An earlier park's brief, its cost line after it; or spec prose.
+        for body in (
+            "**Resume brief**: PR #600 waits\n\ncost $1.20\n",
+            "The stand-down appends a resume brief.\n\n## History\n\nfiled\n",
+        ):
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(Refusal, "last paragraph"):
+                    close_session.brief_verdict(body, None)
+        close_session.brief_verdict("spec\n\n**Resume brief**: next step\n\n", None)
+
+
+class SignalTabTests(unittest.TestCase):
+    def test_the_signal_runs_and_a_failure_is_swallowed(self):
+        calls = []
+        close_session.signal_tab(lambda: calls.append("signalled") or [])
+        self.assertEqual(calls, ["signalled"])
+
+        def boom():
+            raise RuntimeError("no iTerm")
+
+        close_session.signal_tab(boom)  # never raises
+
 
 class StillOursTests(unittest.TestCase):
     def test_a_live_ancestor_client(self):
@@ -872,6 +916,7 @@ class EndClientTests(unittest.TestCase):
             mock.patch.object(close_session, "close", return_value=(rc, result)),
             mock.patch.object(close_session, "parse_args"),
             mock.patch.object(close_session, "end_client", order.end),
+            mock.patch.object(close_session, "signal_tab", order.signal),
             mock.patch.object(close_session, "still_ours", return_value=ours),
             mock.patch.object(close_session.sys, "stdout", order.out),
             mock.patch.object(close_session.sys, "stderr", err),
@@ -899,6 +944,43 @@ class EndClientTests(unittest.TestCase):
         )
         order.end.assert_not_called()
         self.assertIn("no longer this session's", err.write.call_args[0][0])
+
+    def test_main_signals_a_parked_tab_after_printing_before_the_kill(self):
+        order, _ = self._main(0, {"dry_run": False, "client_pid": 4242, "park": True})
+        names = [c[0] for c in order.mock_calls]
+        self.assertLess(names.index("out.flush"), names.index("signal"))
+        self.assertLess(names.index("signal"), names.index("end"))
+
+    def test_a_raising_signal_is_named_and_still_reaches_the_kill(self):
+        # The integrity hit's justification: the broad catch exists so the
+        # kill that frees the fleet slot always follows.
+        end = mock.MagicMock(return_value=True)
+        err = io.StringIO()
+        result = {"dry_run": False, "client_pid": 4242, "park": True}
+        boom = mock.MagicMock(side_effect=RuntimeError("iterm exploded"))
+        with (
+            mock.patch.object(close_session, "close", return_value=(0, result)),
+            mock.patch.object(close_session, "parse_args"),
+            mock.patch.object(close_session, "end_client", end),
+            mock.patch.object(close_session, "still_ours", return_value=True),
+            mock.patch.object(close_session.iterm_api, "signal_parked", boom),
+            mock.patch.object(close_session.sys, "stdout", io.StringIO()),
+            mock.patch.object(close_session.sys, "stderr", err),
+        ):
+            self.assertEqual(close_session.main(), 0)
+        boom.assert_called_once()
+        end.assert_called_once_with(4242)
+        self.assertIn("tab signal failed: RuntimeError: iterm exploded", err.getvalue())
+
+    def test_main_signals_no_tab_off_a_park_or_on_a_dry_run(self):
+        for result in (
+            {"dry_run": False, "client_pid": None},
+            {"dry_run": True, "client_pid": 4242, "park": True},
+        ):
+            order, _ = self._main(0, result)
+            order.signal.assert_not_called()
+        order, _ = self._main(1, {"dry_run": False, "client_pid": 1, "park": True})
+        order.signal.assert_not_called()
 
     def test_main_never_ends_the_client_on_a_dry_run_or_refusal(self):
         for rc, dry in ((0, True), (1, False)):

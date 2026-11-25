@@ -2,9 +2,11 @@
 # cspell:word getppid
 """Drive iTerm2 through its Python API. The one owner of iTerm automation.
 
-Two callers, and both now want the same thing: `session_dispatch.py` (open a tab
+Two tab openers, and both now want the same thing: `session_dispatch.py` (open a tab
 per dispatched verb and type it) and `fleet_resume.py` (open one tab per
-in-flight issue and type a resume verb into each). Both used to reach for
+in-flight issue and type a resume verb into each). A third caller signals a
+parked tab rather than opening one: `close_session.py --park` in-process, and
+the handed-off chore through the `--signal-parked` CLI. The openers used to reach for
 AppleScript; this retires it from the toolbox entirely, which was the point of
 consolidating them here rather than letting the second caller grow its own copy.
 
@@ -359,6 +361,46 @@ def mark_attention(tty: str) -> bool:
     return completed.returncode == 0
 
 
+def move_to_first(tty: str) -> bool:
+    """Move the tab holding the session on ``tty`` to the leftmost position of
+    its window. True on success; every failure is a ``False``, never a raise.
+
+    Placement at open time is :func:`insert_index`'s; this is the one move of an
+    existing tab, for a session that has parked and waits only on its close.
+    """
+    try:
+        return bool(_call({"op": "move_to_first", "tty": tty}).get("moved"))
+    except ItermUnavailable:
+        return False
+
+
+def signal_parked(tty: str | None = None) -> list[str]:
+    """Give the caller's own tab the green attend mark, then move it leftmost.
+
+    The park's and the handed-off chore's last visible act: one green tab at
+    the left edge per parked session, waiting on exactly one operator action,
+    its close. Best-effort — returns what could not be done, one line each,
+    and ``[]`` on full success; never raises.
+    """
+    tty = tty or caller_tty()
+    if not tty:
+        return ["no caller tty: the tab is left as it is"]
+    misses = []
+    if not mark_attention(tty):
+        misses.append(f"could not mark {tty}")
+    if not move_to_first(tty):
+        misses.append(f"could not move {tty} leftmost")
+    return misses
+
+
+def first_order(tabs: list, target) -> list | None:
+    """``tabs`` with ``target`` moved to the front, or None when it is absent or
+    already first (no reorder is owed)."""
+    if target not in tabs or tabs[0] is target:
+        return None
+    return [target] + [tab for tab in tabs if tab is not target]
+
+
 def open_tabs(
     commands: list[str],
     *,
@@ -690,6 +732,20 @@ async def _driver_body(connection, request, result):  # pragma: no cover
         result["ok"] = True
         return
 
+    if op == "move_to_first":
+        app = await iterm2.async_get_app(connection)
+        window, tab = await _caller_window(app.terminal_windows, request.get("tty"))
+        if window is None:
+            result["error"] = "no window holds the session on that tty"
+            return
+        desired = first_order(list(window.tabs), tab)
+        if desired is not None:
+            # Preserves the selected tab, as the reorderer relies on.
+            await window.async_set_tabs(desired)
+        result["moved"] = True
+        result["ok"] = True
+        return
+
     if op == "open_tabs":
         app = await iterm2.async_get_app(connection)
         window, caller_tab = await _caller_window(
@@ -818,6 +874,15 @@ def _driver() -> int:  # pragma: no cover - needs iTerm's own interpreter
 if __name__ == "__main__":
     if "--_driver" in sys.argv[1:]:
         sys.exit(_driver())
+    if sys.argv[1:] == ["--signal-parked"]:
+        # The chore's exit tail: best-effort, so always exit 0 and say what
+        # could not be done on one line.
+        misses = signal_parked()
+        print("tab signalled" if not misses else "; ".join(misses))
+        sys.exit(0)
     print(__doc__.strip().splitlines()[0], file=sys.stderr)
-    print("This module is a library; it has no standalone CLI.", file=sys.stderr)
+    print(
+        "This module is a library; its one CLI is --signal-parked.",
+        file=sys.stderr,
+    )
     sys.exit(2)

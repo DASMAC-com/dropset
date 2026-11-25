@@ -93,7 +93,9 @@ shape, which takes its exclude lists from `review_diff.py`),
 `fleet_resume.py` (the fleet-resume launcher behind the `fleet` verb —
 resolves the in-flight issues from Linear, skips the ones already open,
 and opens and resumes the rest in one driver round trip; read-only
-unless `--apply`), `iterm_api.py` (the one owner of iTerm automation,
+unless `--apply`), `fleet_winddown.py` (the wind-down listing behind
+`fleet down` — finish In Review, pause the rest, read-only),
+`iterm_api.py` (the one owner of iTerm automation,
 over iTerm's Python API — the library is not stdlib and is not
 installed, so this stays importable from ordinary `python3` and shells
 out to the interpreter iTerm ships, which carries it; consolidating

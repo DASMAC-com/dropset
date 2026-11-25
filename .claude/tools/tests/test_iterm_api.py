@@ -1111,5 +1111,60 @@ class CallerWindow(unittest.TestCase):
         self.assertIs(window, planning)
 
 
+class MoveToFirst(DriverStub, unittest.TestCase):
+    """The park's leftmost move: one driver op, every failure a ``False``."""
+
+    def test_the_request_names_the_op_and_the_tty(self):
+        self._stub(stdout=json.dumps({"ok": True, "moved": True}))
+        self.assertTrue(iterm_api.move_to_first("/dev/ttys007"))
+        self.assertEqual(
+            self.sent_request(), {"op": "move_to_first", "tty": "/dev/ttys007"}
+        )
+
+    def test_a_driver_failure_is_false_not_a_raise(self):
+        self._stub(stdout=json.dumps({"ok": False, "error": "no window"}))
+        self.assertFalse(iterm_api.move_to_first("/dev/ttys007"))
+
+    def test_an_unavailable_iterm_is_false(self):
+        self._stub(stdout="", preflight="disabled")
+        self.assertFalse(iterm_api.move_to_first("/dev/ttys007"))
+
+
+class FirstOrder(unittest.TestCase):
+    def test_the_target_moves_to_the_front_in_order(self):
+        a, b, c = object(), object(), object()
+        self.assertEqual(iterm_api.first_order([a, b, c], c), [c, a, b])
+
+    def test_no_reorder_when_first_or_absent(self):
+        a, b = object(), object()
+        self.assertIsNone(iterm_api.first_order([a, b], a))
+        self.assertIsNone(iterm_api.first_order([a, b], object()))
+
+
+class SignalParked(unittest.TestCase):
+    def _patch(self, mark, move):
+        for name in ("mark_attention", "move_to_first", "caller_tty"):
+            self.addCleanup(setattr, iterm_api, name, getattr(iterm_api, name))
+        iterm_api.mark_attention = lambda tty: mark
+        iterm_api.move_to_first = lambda tty: move
+        iterm_api.caller_tty = lambda: "/dev/ttys-caller"
+
+    def test_full_success_reports_nothing(self):
+        self._patch(True, True)
+        self.assertEqual(iterm_api.signal_parked(), [])
+
+    def test_each_miss_is_one_line(self):
+        self._patch(False, False)
+        misses = iterm_api.signal_parked("/dev/ttys009")
+        self.assertEqual(len(misses), 2)
+        self.assertIn("mark", misses[0])
+        self.assertIn("leftmost", misses[1])
+
+    def test_no_tty_leaves_the_tab(self):
+        self._patch(True, True)
+        iterm_api.caller_tty = lambda: None
+        self.assertEqual(len(iterm_api.signal_parked()), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

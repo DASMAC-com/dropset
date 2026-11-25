@@ -18,9 +18,15 @@ curator gets one `SendMessage`, "closing for the day", and its
 `curate` stop tail ends in `CLEAR TO CLOSE`. Do not wait for an
 answer. None live: report `curator: not live`.
 
-**A `cycle` skips this gate and the curator stop** — the day
-goes on under the relaunched session — and runs only the
-section-patched write below.
+**Then wind the fleet down** (`docs/conventions/fleet-winddown.md`):
+run `fleet down`, send each open-tab session its message, and count
+the stand-down replies (re-running the listing on each) until every
+session messaged has stood down or gone unreachable; dismiss the
+settled PRs' notifications (below), then print the day report and
+append it under `Session-metrics state`; then the close-out proper.
+
+**A `cycle` skips this gate, the curator stop and the wind-down** — the day goes
+on under the relaunched session — and runs only the section-patched write below.
 
 ## The deliverable: the whole document, section-patched
 
