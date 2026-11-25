@@ -479,11 +479,41 @@ class ParseDiffEdgeTests(unittest.TestCase):
         (fd,) = rt.parse_diff(text)
         self.assertEqual(fd.hunks[0].added, [(1, "a\x0cb"), (2, "c")])
 
-    def test_a_quoted_header_is_recognized(self):
+    def test_a_quoted_header_is_recognized_and_unescaped(self):
         self.assertEqual(
             rt.diff_header_path('diff --git "a/caf\\303\\251.md" "b/caf\\303\\251.md"'),
-            "caf\\303\\251.md",
+            "café.md",
         )
+
+    def test_letter_escapes_are_unescaped(self):
+        self.assertEqual(rt.unquote_c_path('a\\"b\\\\c\\td'), 'a"b\\c\td')
+
+    def test_an_unknown_escape_is_kept(self):
+        self.assertEqual(rt.unquote_c_path("a\\qb"), "a\\qb")
+
+    def test_a_quoted_path_reaches_the_kind_lookup(self):
+        path = "tui/tests/café.rs"
+        text = (
+            'diff --git "a/tui/tests/caf\\303\\251.rs" "b/tui/tests/caf\\303\\251.rs"\n'
+            "@@ -1,1 +1,0 @@\n-assert!(ok);\n"
+        )
+        (fd,) = rt.parse_diff(text)
+        self.assertEqual(fd.path, path)
+        hits = rt.integrity_hits([fd], kinds_of([path]))
+        self.assertEqual([h["kind"] for h in hits], ["assertion-removed"])
+
+
+class SelfMatchTest(unittest.TestCase):
+    """The tagger's own pattern definitions raise no hit on a diff of its file."""
+
+    def test_review_tier_source_tags_nothing(self):
+        import inspect
+
+        lines = inspect.getsource(rt).split("\n")
+        path = ".claude/tools/review_tier.py"
+        text = diff(path, lines, new_file=True)
+        hits = rt.integrity_hits(rt.parse_diff(text), {path: "source"})
+        self.assertEqual(hits, [])
 
 
 class IntegrityAdditionsTests(unittest.TestCase):
@@ -505,6 +535,37 @@ class IntegrityAdditionsTests(unittest.TestCase):
         self.assertIn(
             "assertion-removed", self.kinds(text, {"tui/src/a.rs": [(10, 40)]})
         )
+
+    def hits(self, text):
+        diffs = rt.parse_diff(text)
+        return rt.integrity_hits(diffs, kinds_of([d.path for d in diffs]))
+
+    def test_the_quoted_assertion_is_the_one_dropped(self):
+        # The first assertion is lost; the second is only re-valued, so it
+        # pairs with its replacement by skeleton.
+        text = diff(
+            "tui/tests/a.rs",
+            ["assert_eq!(y, 5);"],
+            ["assert!(x.is_ok());", "assert_eq!(y, 4);"],
+        )
+        hits = [h for h in self.hits(text) if h["kind"] == "assertion-removed"]
+        self.assertEqual([h["text"] for h in hits], ["assert!(x.is_ok());"])
+
+    def test_a_moved_assertion_is_not_a_hit(self):
+        text = diff(
+            "tui/tests/a.rs",
+            ["let z = 1;", "assert!(ok);"],
+            ["assert!(ok);", "let z = 1;"],
+        )
+        self.assertNotIn("assertion-removed", self.kinds(text))
+
+    def test_a_rewritten_assertion_still_nets_out(self):
+        text = diff("tui/tests/a.rs", ["assert!(x.is_some());"], ["assert!(ok);"])
+        self.assertNotIn("assertion-removed", self.kinds(text))
+
+    def test_a_rust_expect_is_not_an_assertion(self):
+        text = diff("tui/tests/a.rs", removed=['let v = f().expect("v");'])
+        self.assertNotIn("assertion-removed", self.kinds(text))
 
     def test_gate_bypass_spellings(self):
         for line in (

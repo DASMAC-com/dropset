@@ -241,6 +241,49 @@ class FileDiff:
     new_file: bool = False
 
 
+_C_ESCAPES = {
+    "a": 7,
+    "b": 8,
+    "t": 9,
+    "n": 10,
+    "v": 11,
+    "f": 12,
+    "r": 13,
+    '"': 34,
+    "\\": 92,
+}
+
+
+def unquote_c_path(text: str) -> str:
+    """Undo git's C-style path quoting (the body between the quotes).
+
+    Git escapes ``"``, ``\\`` and control characters by letter, and every
+    byte of a non-ASCII name as three octal digits, so the octal runs are
+    gathered as bytes and decoded as UTF-8 together. An unknown escape is
+    kept as written.
+    """
+    out = bytearray()
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if char != "\\" or i + 1 == len(text):
+            out += char.encode()
+            i += 1
+            continue
+        nxt = text[i + 1]
+        octal = text[i + 1 : i + 4]
+        if len(octal) == 3 and all(c in "01234567" for c in octal):
+            out.append(int(octal, 8) & 0xFF)
+            i += 4
+        elif nxt in _C_ESCAPES:
+            out.append(_C_ESCAPES[nxt])
+            i += 2
+        else:
+            out += ("\\" + nxt).encode()
+            i += 2
+    return out.decode("utf-8", errors="replace")
+
+
 def diff_header_path(line: str) -> str | None:
     """The destination path from a ``diff --git a/X b/Y`` header, or ``None``.
 
@@ -251,15 +294,19 @@ def diff_header_path(line: str) -> str | None:
     Paths may contain spaces, so the pair is split on the first ``" b/"``; a
     path itself containing that sequence mis-splits, which is accepted. A
     quoted pair (``core.quotePath`` on a non-ASCII path) is split on
-    ``" "b/`` and returned still escaped: a header must never go unrecognized,
-    or its hunks are credited to the previous file.
+    ``" "b/`` and unescaped, so the kind and test-range lookups find the
+    file under its real name. A header must never go unrecognized, or its
+    hunks are credited to the previous file.
     """
     if not line.startswith("diff --git "):
         return None
     rest = line[len("diff --git ") :].rstrip("\n")
     marker = rest.find(' "b/')
     if marker != -1:
-        return rest[marker + 4 :].rstrip('"') or None
+        quoted = rest[marker + 4 :]
+        if quoted.endswith('"'):
+            quoted = quoted[:-1]
+        return unquote_c_path(quoted) or None
     marker = rest.find(" b/")
     if marker == -1:
         return None
@@ -692,6 +739,13 @@ _TEST_MARKER_RE = re.compile(
 
 # Added-line patterns, per kind. Prose files are not scanned for these: a
 # skill or convention doc names these spellings legitimately.
+#
+# No pattern may match its own source text, so a diff of this file tags
+# nothing from these definitions. A literal needle therefore carries a
+# one-character class (`[-]`, `[ ]`, `[:]`) or an escape that the source
+# spells differently from the text it matches. A path allowlist is ruled
+# out: it would blind the tagger in exactly the files where a real bypass
+# hides best. `SelfMatchTest` holds the rule.
 _ADDED_PATTERNS = (
     (
         "test-skipped",
@@ -703,22 +757,23 @@ _ADDED_PATTERNS = (
     (
         "placeholder",
         re.compile(
-            r"\b(todo|unimplemented)!\(|raise NotImplementedError|\bTODO\b|\bFIXME\b|\bXXX\b"
+            r"\b(todo|unimplemented)!\(|raise[ ]NotImplementedError|"
+            r"\bT[O]DO\b|\bF[I]XME\b|\bX[X]X\b"
         ),
     ),
     (
         "suppression",
         re.compile(
             r"#!?\[allow\(|#\s*noqa\b|#\s*type:\s*ignore|@ts-(ignore|expect-error)|"
-            r"eslint-disable|biome-ignore|pragma: no cover|pylint:\s*disable|"
-            r"cspell:disable|yamllint disable|#compound-ok|#destructive-ok"
+            r"eslint[-]disable|biome[-]ignore|pragma[:] no cover|pylint:\s*disable|"
+            r"cspell[:]disable|yamllint[ ]disable|#compound[-]ok|#destructive[-]ok"
         ),
     ),
     (
         "gate-bypass",
         re.compile(
-            r"--no-verify|\[skip ci\]|\bskip-ci\b|continue-on-error:\s*true|"
-            r"--no-gpg-sign|\|\|\s*true\b"
+            r"-[-]no-verify|\[skip ci\]|\bskip[-]ci\b|continue-on-error:\s*true|"
+            r"-[-]no-gpg-sign|\|\|\s*true\b"
         ),
     ),
     (
@@ -747,9 +802,9 @@ _RANGE_ASSERT_RE = re.compile(
 )
 _SNAPSHOT_PATTERNS = ("**/*.snap", "**/__snapshots__/**", "**/snapshots/**")
 
+# No `expect(` branch: in Rust that is an unwrap, not an assertion.
 _ASSERT_RE = re.compile(
-    r"\b(debug_)?assert(_eq|_ne)?!\s*\(|^\s*assert\s|\bself\.assert\w*\(|"
-    r"\bexpect\s*\("
+    r"\b(debug_)?assert(_eq|_ne)?!\s*\(|^\s*assert\s|\bself\.assert\w*\("
 )
 
 INTEGRITY_KINDS = (
@@ -809,13 +864,7 @@ def integrity_hits(
         test_hunks = [
             h for h in fd.hunks if is_test_hunk(fd.path, kind, h, test_ranges or {})
         ]
-        removed_asserts = [
-            t for h in test_hunks for t in h.removed if _ASSERT_RE.search(t)
-        ]
-        added_asserts = sum(
-            1 for h in test_hunks for _, t in h.added if _ASSERT_RE.search(t)
-        )
-        for text in removed_asserts[added_asserts:]:
+        for text in _dropped_asserts(test_hunks):
             hits.append(_hit("assertion-removed", fd.path, None, text))
         if kind == "docs":
             continue
@@ -833,6 +882,29 @@ def integrity_hits(
                     hits.append(_hit("swallowed-exception", fd.path, line_no, text))
             hits.extend(_relaxations(fd.path, h))
     return hits
+
+
+def _dropped_asserts(hunks: list[Hunk]) -> list[str]:
+    """The removed assertions the added ones do not replace, in diff order.
+
+    A removed assertion pairs with an added one of the same literal skeleton
+    (an edited value, a moved line), so the quoted text is the one actually
+    lost rather than whichever came last. The count still nets removed
+    against added: an unpaired added assertion offsets one unpaired removed
+    assertion, and the earliest unpaired ones are taken as rewritten.
+    """
+    removed = [t for h in hunks for t in h.removed if _ASSERT_RE.search(t)]
+    added = Counter(
+        _skeleton(t) for h in hunks for _, t in h.added if _ASSERT_RE.search(t)
+    )
+    unpaired = []
+    for text in removed:
+        skeleton = _skeleton(text)
+        if added[skeleton]:
+            added[skeleton] -= 1
+        else:
+            unpaired.append(text)
+    return unpaired[sum(added.values()) :]
 
 
 def _relaxations(path: str, hunk: Hunk) -> list[dict]:
