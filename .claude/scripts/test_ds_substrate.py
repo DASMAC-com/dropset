@@ -1032,6 +1032,31 @@ class ExitEstimate(SubstrateHarness):
         self.assertIn("RC=3", out)
         self.assertEqual(result.stderr.count("no session estimate"), 1, result.stderr)
 
+    def test_a_removed_worktree_runs_the_estimate_from_the_base(self):
+        # The session closed its own worktree, so the shell sits in a deleted
+        # directory, where a real `python3` dies before doing any work.
+        gone = Path(self._tmp.name) / "gone"
+        result = self._zsh(
+            f'mkdir "{gone}"; cd "{gone}"; rmdir "{gone}"; '
+            'python3() { [[ -d $PWD ]] && print -r -- "RAN $PWD"; }; '
+            '_ds_exit_estimate sid-1; print -r -- "RC=$?"',
+        )
+        self.assertIn(f"RAN {self.repo}", result.stdout, result.stderr)
+        self.assertIn("RC=0", result.stdout)
+        self.assertNotIn("no session estimate", result.stderr)
+
+    def test_an_unreachable_base_warns_once_and_returns_zero(self):
+        gone = Path(self._tmp.name) / "gone"
+        result = self._zsh(
+            f'mkdir "{gone}"; cd "{gone}"; rmdir "{gone}"; '
+            f'_DS_REPO="{self._tmp.name}/no-such-base"; '
+            "python3() { print -r -- RAN; }; "
+            '_ds_exit_estimate sid-1; print -r -- "RC=$?"',
+        )
+        self.assertNotIn("RAN", result.stdout)
+        self.assertIn("RC=0", result.stdout)
+        self.assertEqual(result.stderr.count("no session estimate"), 1, result.stderr)
+
     def test_a_success_keeps_the_exit_status_too(self):
         result, out = self._launch(
             "claude() { return 4; }; " + self._PY + "plan", env=self._TOKEN

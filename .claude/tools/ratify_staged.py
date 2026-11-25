@@ -665,6 +665,35 @@ def _number(issue: dict) -> int:
     return _issue_id(issue["identifier"])[1]
 
 
+# Printable ASCII in the order `Intl.Collator('en').compare` puts it (ICU's
+# root collation, case folded): punctuation, then symbols, then digits, then
+# letters. It matches the list the operator reads in the Linear app: their
+# 2026-11-23 batch showed `indexer: two-sided …` before `indexer+frontend: …`,
+# the reverse of byte order, which puts `+` before `:`. Linear's GraphQL
+# `sort: title` is NOT this order: it behaves as if punctuation and spaces
+# were ignored (it put that `indexer+frontend` title first), so never
+# re-derive the key from an API read — the app's list is the one the dialog
+# sits beside.
+_COLLATION = " _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789abcdefghijklmnopqrstuvwxyz"
+_RANK = {c: i for i, c in enumerate(_COLLATION)}
+_DASHES = str.maketrans({"–": "-", "—": "-"})
+
+
+def _title_key(issue: dict) -> tuple:
+    """``issue``'s place in the app's title-ascending list: the whole title
+    compared case-blind first, lowercase winning a tie, then the number. The
+    title is taken raw, so a leading `[<Verb>/<Substrate>]` token sorts as
+    punctuation, ahead of every letter, and `Claude:` as the word it is."""
+    title = issue.get("title") or ""
+    # Lowered whole, not per character: one character's lowercase can be two
+    # (`İ`), and `ord` takes exactly one.
+    primary = tuple(
+        _RANK.get(c, len(_COLLATION) + ord(c)) for c in title.translate(_DASHES).lower()
+    )
+    case = tuple(ch.isupper() for ch in title)
+    return primary, case, _number(issue)
+
+
 def build_ask(
     issues: list[dict],
     notes: dict[str, str] | None = None,
@@ -673,16 +702,17 @@ def build_ask(
 ) -> dict:
     """The review ask as ``AskUserQuestion`` payloads, one per call: a checkbox
     per task (its priority, then its note or else its title, as the
-    description), in ascending issue number across the whole set, then the one
+    description), in ascending title order across the whole set, then the one
     ``operator`` option (the fifth box, already described) as its own
     question, then any proposals as further questions.
 
     The order is the operator's, never the caller's (operator direction,
-    2026-10-30): the batch's issues open as tabs left to right and the dialog
-    reads top to bottom, so both run by number. A ranking or a carried task
-    shows in its note, not its position."""
+    2026-11-23): the operator reviews the batch beside the dialog in a
+    Linear list ordered by title (the list cannot be ordered by issue
+    number), so both run by title. A ranking or a carried task shows in its
+    note, not its position."""
     notes = notes or {}
-    issues = sorted(issues, key=_number)
+    issues = sorted(issues, key=_title_key)
     options = [
         {
             "label": issue["identifier"],

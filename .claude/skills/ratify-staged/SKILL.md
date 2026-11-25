@@ -130,11 +130,11 @@ records nothing.
 Pass each `calls[]` entry's `questions` to `AskUserQuestion`
 unchanged: one checkbox per task, **never grouped**, up to sixteen
 per call, each leading with its filed priority. The checkboxes run
-in **ascending issue number** across the whole set, whatever order
-the ids were passed in — the tool sorts, for this pool and the
-curator's inbox alike — so the operator can open the set as tabs
-left to right and read the dialog top to bottom. The text is the
-operator's:
+in **ascending title order**, as Linear sorts a list, across the
+whole set, whatever order the ids were passed in — the tool sorts,
+for this pool and the curator's inbox alike — so the dialog reads
+top to bottom against the operator's Linear view of the set, which
+cannot sort by issue number. The text is the operator's:
 
 > Have you looked at these? Check each one once you have. Leave a
 > comment on it and I will revise it; leave nothing and I will take

@@ -1028,8 +1028,18 @@ _ds_session_exists() {
 # the debug log and is never shown, and its default budget is 1.5 seconds. The
 # one case this misses, the terminal closed outright, is left to the next
 # morning's digest.
+#
+# A session that closed its own worktree leaves this shell in a deleted
+# directory, where every Python call fails with "No such file or directory",
+# so the epilogue first moves the shell to the base checkout; a directory that
+# is gone holds nothing to return to.
 _ds_exit_estimate() {
   local sid="$1" mode run_from
+  if [[ ! -d "$PWD" ]] && ! cd "$_DS_REPO" 2>/dev/null; then
+    print -u2 'dropset: no session estimate — the working directory is gone' \
+      'and the base checkout is unreachable.'
+    return 0
+  fi
   if [[ -z "$sid" && -n "$2" ]]; then
     {
       read -r mode
