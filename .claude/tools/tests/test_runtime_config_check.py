@@ -166,6 +166,80 @@ class StaticTests(Fixture):
                 self.write_manifest(rows)
                 self.assertEqual(self.call("--static")[0], 2)
 
+    def test_a_maps_to_row_matching_shell_and_script_is_in_sync(self):
+        self.map_wait('  export ITERM_WAIT="${DS_WAIT:-120}"\n', "${ITERM_WAIT:-120}")
+        code, out = self.call("--static")
+        self.assertEqual(code, 0, out)
+
+    def test_a_maps_to_script_default_disagreeing_fails(self):
+        self.map_wait('  export ITERM_WAIT="${DS_WAIT:-120}"\n', "${ITERM_WAIT:-30}")
+        code, out = self.call("--static")
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "mapping drift: DS_WAIT manifest '120', "
+            ".claude/scripts/wait.sh ITERM_WAIT ['30']",
+            out,
+        )
+
+    def test_a_maps_to_the_shell_never_hands_over_fails(self):
+        # Named only in a comment, which hands nothing over.
+        self.map_wait("  # ITERM_WAIT=${DS_WAIT}\n", "${ITERM_WAIT:-120}")
+        out = self.call("--static")[1]
+        self.assertIn(
+            "mapping gap: no shell init line hands DS_WAIT to ITERM_WAIT", out
+        )
+
+    def test_a_line_naming_both_without_assigning_is_no_hand_over(self):
+        # Mentions both names, and a longer DS name, but assigns neither.
+        self.map_wait(
+            '  echo "$ITERM_WAIT ${DS_WAITER:-1} ${DS_WAIT}"\n', "${ITERM_WAIT:-120}"
+        )
+        out = self.call("--static")[1]
+        self.assertIn(
+            "mapping gap: no shell init line hands DS_WAIT to ITERM_WAIT", out
+        )
+
+    def test_a_maps_to_file_that_does_not_exist_fails(self):
+        self.map_wait('  export ITERM_WAIT="${DS_WAIT:-120}"\n', "${ITERM_WAIT:-120}")
+        (self.root / ".claude/scripts/wait.sh").unlink()
+        out = self.call("--static")[1]
+        self.assertIn(
+            "mapping gap: DS_WAIT maps to .claude/scripts/wait.sh, which does not exist",
+            out,
+        )
+
+    def test_a_maps_to_script_without_a_default_fails(self):
+        self.map_wait('  export ITERM_WAIT="${DS_WAIT:-120}"\n', "$ITERM_WAIT")
+        out = self.call("--static")[1]
+        self.assertIn("mapping gap: .claude/scripts/wait.sh applies no default", out)
+
+    def test_a_malformed_maps_to_exits_2(self):
+        for row in (
+            dict(ROWS[5], maps_to={"name": "ITERM_WAIT"}),  # no file
+            dict(ROWS[5], maps_to="ITERM_WAIT"),
+            dict(ROWS[2], maps_to={"file": "x.sh", "name": "Y"}),  # not a knob
+            dict(ROWS[5], maps_to={"file": "", "name": "ITERM_WAIT"}),  # empty
+            dict(ROWS[5], maps_to={"file": "x.sh", "name": "Y", "z": "1"}),  # extra key
+            # A toggle with no default could never pass the check.
+            dict(ROWS[4], default=None, maps_to={"file": "x.sh", "name": "Y"}),
+        ):
+            with self.subTest(row=row):
+                self.write_manifest(
+                    [row if r["name"] == row["name"] else r for r in ROWS]
+                )
+                self.assertEqual(self.call("--static")[0], 2)
+
+    def map_wait(self, shell_line: str, script_default: str) -> None:
+        """Map DS_WAIT onto a script's ITERM_WAIT, via one init.zsh line."""
+        self.put(
+            ".claude/shell/init.zsh", SHELL + "_ds_hand() {\n" + shell_line + "}\n"
+        )
+        self.put(".claude/scripts/wait.sh", f'WAIT="{script_default}"\n')
+        maps_to = {"file": ".claude/scripts/wait.sh", "name": "ITERM_WAIT"}
+        self.write_manifest(
+            [dict(r, maps_to=maps_to) if r["name"] == "DS_WAIT" else r for r in ROWS]
+        )
+
     def test_the_real_tree_is_in_sync(self):
         # The check CI makes, so a drifting edit fails here too.
         out = io.StringIO()

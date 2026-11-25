@@ -98,6 +98,18 @@ class HealsAStalePermission(HealHarness):
         )
         self.assertFalse(self._sentinel().exists(), "the sentinel must be cleared")
 
+    def test_a_heal_drops_the_notified_marker(self):
+        """Otherwise the next dialog, landing on the healed tab, would find the
+        old dialog's marker and never notify."""
+        notified = Path(f"{self.prefix}{self.tty}.permnotified")
+        self._state_file().write_text(STATE_PERMISSION, encoding="utf-8")
+        self._sentinel().write_text("", encoding="utf-8")
+        notified.write_text("", encoding="utf-8")
+        self._age_sentinel(300)
+        result = self._heal()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(notified.exists())
+
     def test_the_threshold_boundary_heals_at_exactly_the_limit(self):
         """`-ge`, not `-gt` — pinned because the boundary is the one value a
         future rewrite is most likely to move by one."""
@@ -137,8 +149,8 @@ class DoesNotHeal(HealHarness):
         )
         self.assertTrue(self._sentinel().exists())
 
-    def test_an_edit_tool_yellow_with_no_sentinel_is_left_alone(self):
-        """An edit tool's PreToolUse also paints yellow but carries no
+    def test_a_direct_yellow_with_no_sentinel_is_left_alone(self):
+        """A direct yellow (`iterm-paint.sh <hex>`, no hook event) carries no
         sentinel, and its lifetime is not governed by permission re-fires — so
         it must never be healed."""
         self._state_file().write_text(STATE_PERMISSION, encoding="utf-8")

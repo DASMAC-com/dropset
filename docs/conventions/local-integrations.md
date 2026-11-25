@@ -979,9 +979,10 @@ the tab color was non-deterministic. Collapsing every event to *one*
 hook that calls `iterm-paint.sh`, which then derives the color from the
 event on stdin, makes the color a deterministic function of the event:
 
-- `PreToolUse` with `tool_name` `AskUserQuestion` → green; with an edit
-  tool (`Edit` / `Write` / `MultiEdit` / `NotebookEdit`) → yellow;
-  anything else → neutral.
+- `PreToolUse` with `tool_name` `AskUserQuestion` → green; anything else
+  → neutral (edit tools included, see "The yellow trigger" below).
+- `PermissionRequest` → yellow, except for `AskUserQuestion`, which
+  leaves its green standing.
 - `Notification` with `notification_type` `permission_prompt` → yellow;
   any other notification leaves the tab unchanged.
 - `Stop` → green, **unless** the payload's `background_tasks` or
@@ -1014,11 +1015,10 @@ repaints.** The painter's only neutral-painting events are `PostToolUse`,
 `PreToolUse` guard blocks *after* the operator has already approved it
 runs none of them. The measured wedge is exactly that: approve, a guard
 denies, the tool errors red, and the tab stays yellow over a session that
-wants nothing. So every `permission_prompt` the painter receives (each
-one *arms* the debounce below, and the first arm is what the monitor later
-promotes to yellow) also refreshes a
-per-tty `.permwait` sentinel, and the monitor clears the tint once that
-sentinel goes stale.
+wants nothing; a dialog the operator denies is the same case. So the
+`PermissionRequest` that arms a yellow sets a per-tty `.permwait`
+sentinel, every `permission_prompt` refreshes it, and the monitor clears
+the tint once that sentinel goes stale.
 
 The heal keys on the same re-fire behavior the sticky-green guard relies
 on: the harness re-fires `permission_prompt` while a prompt waits, so a
@@ -1028,9 +1028,9 @@ re-fired and heals. The threshold
 (`ITERM_PERM_WAIT_STALE_SECONDS`, default 120s) is deliberately generous
 because the two errors are not symmetric: healing too eagerly drops the
 yellow on a prompt that really is waiting, and a missed prompt stalls the
-session, which is worse than the lingering tint being fixed. An
-edit-tool yellow carries no sentinel and is never healed — its lifetime
-is not governed by permission re-fires.
+session, which is worse than the lingering tint being fixed. A direct
+yellow (`iterm-paint.sh <hex>`, no hook event) carries no sentinel and is
+never healed — its lifetime is not governed by permission re-fires.
 
 **The heal is tested, and the threshold is pinned rather than
 justified.** `heal_stale_permission` lives in `iterm-colors.sh` rather
@@ -1054,20 +1054,60 @@ rather than asserting the value is right; the failure direction is the
 argument for it, and measuring the re-fire interval is the follow-up
 that would actually close it.
 
-**A yellow waits a few seconds before it shows.** The auto permission-mode
-classifier answers most prompts itself, but `permission_prompt` fires as
-soon as it starts deciding — so the tab flashed yellow, the reorderer
-jumped it to the front, and it cleared a moment later. The operator, aiming at
-the first green tab, kept landing on a yellow one that flickered away. So the
-painter only **arms** a yellow (a per-tty `.permpending` sentinel), and the
-monitor **promotes** it to the state file once it has outlived
-`ITERM_PERM_DEBOUNCE_SECONDS` (default 5s); any other paint cancels the arm.
-The reorderer reads the state file, which is untouched until promotion, so a
-prompt the classifier resolves never moves a tab at all. A re-fire neither
-restarts the timer nor re-arms a yellow already showing, and an edit tool's
-arm keeps its timestamp when the prompt that follows adds its message. The
-cost is a genuine prompt surfacing a few seconds late, which a prompt waiting
-for a human absorbs.
+**The yellow trigger is a dialog actually shown, never a guess.** The
+rule: the tab turns yellow only while a permission request is waiting on
+the operator, never for one the auto-mode classifier or an allow rule
+decides, however many arrive. A hook tap across the live fleet (2026-11)
+measured what the harness sends:
+
+- An auto-approved call fires **neither** `PermissionRequest` nor
+  `permission_prompt` — only its `PreToolUse` and `PostToolUse`, however
+  long it runs.
+- A dialog that reaches the operator fires `PermissionRequest` about
+  0.1s after `PreToolUse`, then `permission_prompt` **6.0s later**, every
+  time (tool prompts and `AskUserQuestion` selectors alike).
+
+So `PermissionRequest` is the trigger. The earlier design also armed a
+yellow on every edit tool's `PreToolUse`, on the guess that it might
+prompt; most edits are auto-approved, and many take 7–18s from
+`PreToolUse` to `PostToolUse`, so a session making edits back to back
+kept surfacing a yellow nobody was asked for. That was the residual
+flicker, and since it came from the trigger, no longer debounce window
+could have fixed it.
+
+**The painter must be wired to `PermissionRequest`** (see "Wiring the
+hooks" below, in the path form your settings file takes). Without it a
+dialog still turns yellow through its `permission_prompt`, six seconds
+later than intended.
+
+**A yellow waits a few seconds before it shows.** The painter only
+**arms** a yellow (a per-tty `.permpending` sentinel), and the monitor
+**promotes** it to the state file once it has outlived the debounce;
+any other paint cancels the arm. The reorderer reads the state file,
+which is untouched until promotion, so a dialog answered at once — the
+operator already in that tab — never moves it. A re-fire neither
+restarts the timer nor re-arms a yellow already showing. The arm keeps
+its timestamp when the `permission_prompt` adds its message; when that
+message lands on a yellow already promoted (the usual case, five seconds
+being shorter than six), it is delivered then, once, under a
+`.permnotified` marker any other paint clears.
+
+**Tuning the debounce.** Set `DS_ITERM_PERM_DEBOUNCE_SECONDS` in the
+runtime config (default 5; a manifest row like every other value). The
+session launcher (`_ds_claude`) hands it to the hooks as
+`ITERM_PERM_DEBOUNCE_SECONDS`, the name `iterm-colors.sh` reads, and
+`runtime_config_check.py --static` holds the script's own fallback to
+the row's default through the row's `maps_to`. The value travels in
+each session's environment, and the per-tty monitor reads it **once at
+start** from the hook that spawned it. So a change reaches only sessions
+launched after it, from a shell that has re-read the profile (a new
+tab), and only once their tab's monitor is replaced:
+`python3 .claude/tools/iterm_deploy.py --restart` stops every monitor,
+and each starts again on its session's next hook with that session's
+value.
+A session launched before the change keeps the old value until it is
+relaunched. Too short and a dialog answered at once flickers; too long
+and a waiting one surfaces late.
 
 ### Self-waiting is quiet
 
@@ -1185,6 +1225,9 @@ monitor:
       { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/.claude/scripts/iterm-paint.sh\"" } ] }
     ],
     "Notification": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/.claude/scripts/iterm-paint.sh\"" } ] }
+    ],
+    "PermissionRequest": [
       { "matcher": "*", "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/.claude/scripts/iterm-paint.sh\"" } ] }
     ],
     "Stop": [
@@ -3448,13 +3491,13 @@ links `iterm-reorder.py` into iTerm2's `AutoLaunch/` folder too, where
 that folder exists (the reorderer needs iTerm2's **Python Runtime** —
 Scripts → Manage → Install Python Runtime — and the API enabled; it
 finds the palette through the link, since it resolves its own path).
-Starting the reorderer from Scripts → AutoLaunch runs it **through the
-link** (verified 2026-10-14: the process runs the AutoLaunch path, which
-resolves into the checkout), so no launcher stub is needed. Whether iTerm2
-also follows the link when it auto-launches at startup is not yet
-observed; if the reorderer is not running after an iTerm restart, start it
-from the Scripts menu by hand. Never fall back to a copy — that is the
-drift `make hook-wiring` reports.
+The reorderer runs **through the link** whether started from Scripts →
+AutoLaunch (verified 2026-10-14) or auto-launched by iTerm2 at startup
+(verified 2026-11-24: after an iTerm restart the reorderer started one
+second after iTerm2 itself, from the AutoLaunch path, which resolves into
+the checkout). So no launcher stub is needed, and a restart brings it
+back unattended. Never fall back to a copy — that is the drift
+`make hook-wiring` reports.
 Where the deploy directory is itself a link into the checkout, every
 target reads `is-source` and is left untouched, since it already runs the
 committed code.

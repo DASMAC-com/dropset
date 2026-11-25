@@ -127,6 +127,7 @@ HOOK_EVENTS = (
     "PostToolUse",
     "UserPromptSubmit",
     "Notification",
+    "PermissionRequest",
     "Stop",
     "SubagentStop",
     "SessionStart",
