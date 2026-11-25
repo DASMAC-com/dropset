@@ -211,13 +211,16 @@ fi
 #     over.
 # The message usually arrives after the promotion, the debounce being shorter
 # than the harness's six seconds, so a yellow already on screen delivers it
-# then — once, marked so a re-fire does not notify again.
+# then — once, marked so a re-fire does not notify again. A PermissionRequest
+# is always a NEW dialog, so it drops the marker: two dialogs back to back with
+# no paint between them (a denial, then the next call's dialog) each notify.
 # Direct mode (`iterm-paint.sh <hex>`) goes through the same two branches, so a
 # direct yellow arms too, and any direct paint — the attend toggle's — cancels
 # an arm, which reads as the operator acknowledging it.
 if [ "$COLOR" = "$STATE_PERMISSION" ]; then
   if [ "$(cat "$(state_file_path "$TTY_BASE")" 2>/dev/null)" = "$STATE_PERMISSION" ]; then
     NOTIFIED="$(perm_notified_path "$TTY_BASE")"
+    [ "$EVENT" = "PermissionRequest" ] && rm -f "$NOTIFIED"
     if [ -n "$MESSAGE" ] && [ ! -f "$NOTIFIED" ]; then
       : >"$NOTIFIED"
       notify_operator "$MESSAGE" >"$TTY_PATH"

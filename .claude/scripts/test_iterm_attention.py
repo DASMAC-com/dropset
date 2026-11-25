@@ -196,6 +196,17 @@ class TheDebounceArms(Harness):
         self.assertEqual(self.tty_output(), f"{OSC9}go approve\a")
         self.assertEqual(self.read(self.state), STATE_PERMISSION)
 
+    def test_a_back_to_back_dialog_notifies_with_no_paint_between(self):
+        """A denial fires no PostToolUse, so the next call's dialog can land on
+        the first one's yellow; its PermissionRequest is still a new dialog."""
+        # Each write truncates the stand-in tty, so assert each as it lands.
+        self.state.write_text(STATE_PERMISSION, encoding="utf-8")
+        self.paint(_permission("first"), notify=True)
+        self.assertEqual(self.tty_output(), f"{OSC9}first\a")
+        self.paint(_request("Bash"), notify=True)
+        self.paint(_permission("second"), notify=True)
+        self.assertEqual(self.tty_output(), f"{OSC9}second\a")
+
     def test_the_next_dialog_notifies_again(self):
         self.state.write_text(STATE_PERMISSION, encoding="utf-8")
         self.paint(_permission("first"), notify=True)

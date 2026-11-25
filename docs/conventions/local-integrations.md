@@ -1097,11 +1097,17 @@ runtime config (default 5; a manifest row like every other value). The
 session launcher (`_ds_claude`) hands it to the hooks as
 `ITERM_PERM_DEBOUNCE_SECONDS`, the name `iterm-colors.sh` reads, and
 `runtime_config_check.py --static` holds the script's own fallback to
-the row's default through the row's `maps_to`. The per-tty monitor reads
-it **once at start**, so after a change launch a new session and run
-`python3 .claude/tools/iterm_deploy.py --restart` for the monitors
-already running. Too short and a dialog answered at once flickers; too
-long and a waiting one surfaces late.
+the row's default through the row's `maps_to`. The value travels in
+each session's environment, and the per-tty monitor reads it **once at
+start** from the hook that spawned it. So a change reaches only sessions
+launched after it, from a shell that has re-read the profile (a new
+tab), and only once their tab's monitor is replaced:
+`python3 .claude/tools/iterm_deploy.py --restart` stops every monitor,
+and each starts again on its session's next hook with that session's
+value.
+A session launched before the change keeps the old value until it is
+relaunched. Too short and a dialog answered at once flickers; too long
+and a waiting one surfaces late.
 
 ### Self-waiting is quiet
 

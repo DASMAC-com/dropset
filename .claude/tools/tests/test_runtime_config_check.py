@@ -189,6 +189,25 @@ class StaticTests(Fixture):
             "mapping gap: no shell init line hands DS_WAIT to ITERM_WAIT", out
         )
 
+    def test_a_line_naming_both_without_assigning_is_no_hand_over(self):
+        # Mentions both names, and a longer DS name, but assigns neither.
+        self.map_wait(
+            '  echo "$ITERM_WAIT ${DS_WAITER:-1} ${DS_WAIT}"\n', "${ITERM_WAIT:-120}"
+        )
+        out = self.call("--static")[1]
+        self.assertIn(
+            "mapping gap: no shell init line hands DS_WAIT to ITERM_WAIT", out
+        )
+
+    def test_a_maps_to_file_that_does_not_exist_fails(self):
+        self.map_wait('  export ITERM_WAIT="${DS_WAIT:-120}"\n', "${ITERM_WAIT:-120}")
+        (self.root / ".claude/scripts/wait.sh").unlink()
+        out = self.call("--static")[1]
+        self.assertIn(
+            "mapping gap: DS_WAIT maps to .claude/scripts/wait.sh, which does not exist",
+            out,
+        )
+
     def test_a_maps_to_script_without_a_default_fails(self):
         self.map_wait('  export ITERM_WAIT="${DS_WAIT:-120}"\n', "$ITERM_WAIT")
         out = self.call("--static")[1]
@@ -199,6 +218,10 @@ class StaticTests(Fixture):
             dict(ROWS[5], maps_to={"name": "ITERM_WAIT"}),  # no file
             dict(ROWS[5], maps_to="ITERM_WAIT"),
             dict(ROWS[2], maps_to={"file": "x.sh", "name": "Y"}),  # not a knob
+            dict(ROWS[5], maps_to={"file": "", "name": "ITERM_WAIT"}),  # empty
+            dict(ROWS[5], maps_to={"file": "x.sh", "name": "Y", "z": "1"}),  # extra key
+            # A toggle with no default could never pass the check.
+            dict(ROWS[4], default=None, maps_to={"file": "x.sh", "name": "Y"}),
         ):
             with self.subTest(row=row):
                 self.write_manifest(

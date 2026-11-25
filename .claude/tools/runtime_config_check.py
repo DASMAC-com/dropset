@@ -144,15 +144,18 @@ def load_manifest(path: Path) -> dict:
                 "required row"
             )
         maps_to = row.get("maps_to")
+        # A default is required: the check holds the script's own fallback to
+        # it, so a row without one could never pass.
         if maps_to is not None and (
             row.get("kind") not in DEFAULTED
+            or row.get("default") is None
             or not isinstance(maps_to, dict)
             or set(maps_to) != {"file", "name"}
             or not all(isinstance(v, str) and v for v in maps_to.values())
         ):
             raise ManifestError(
                 f'{name}: `maps_to` is a {{"file": ..., "name": ...}} map on a '
-                "knob or toggle row"
+                "knob or toggle row with a default"
             )
         if name in seen:
             raise ManifestError(f"{name}: listed twice")
@@ -253,8 +256,14 @@ def mapping_problems(manifest: dict, root: Path) -> list[str]:
         if not maps_to:
             continue
         name, target, rel = row["name"], maps_to["name"], maps_to["file"]
+        # An assignment of the target that expands the row's name, whole names
+        # on both sides, so `DS_WAIT` never matches `${DS_WAITER}`.
+        hand_over = re.compile(
+            rf"(?<![A-Za-z0-9_]){re.escape(target)}=.*"
+            rf"\$\{{{re.escape(name)}(?![A-Za-z0-9_])"
+        )
         handed = any(
-            target in line and f"${{{name}" in line
+            hand_over.search(line)
             for line in shell.splitlines()
             if not line.lstrip().startswith("#")
         )
@@ -268,7 +277,7 @@ def mapping_problems(manifest: dict, root: Path) -> list[str]:
         want = row.get("default")
         if not code:
             problems.append(f"mapping gap: {rel} applies no default to {target}")
-        elif want is None or code != {str(want)}:
+        elif code != {str(want)}:
             problems.append(
                 f"mapping drift: {name} manifest {want!r}, {rel} {target} {sorted(code)}"
             )

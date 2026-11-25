@@ -749,7 +749,8 @@ _ds_claude() {
   shift
   # The iTerm permission debounce, under the name the painter's hooks and the
   # per-tty monitor they start read (see iterm-colors.sh). The monitor reads it
-  # once at start, so a change needs `iterm_deploy.py --restart`.
+  # once at start, so a change needs a fresh launch, then
+  # `iterm_deploy.py --restart` to replace the monitor.
   local -x ITERM_PERM_DEBOUNCE_SECONDS="${DS_ITERM_PERM_DEBOUNCE_SECONDS:-5}"
   # The id this launch seeded or resumes, exported so the session's metrics
   # tail resolves it on its first path whatever the verb. `--resume <tag>` (a
