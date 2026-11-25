@@ -735,10 +735,13 @@ labour, cut for load (2026-10-30):
   `state of play written`. The curator's first ask shows those
   candidates as checkboxes beside the inbox's first batch; a ticked kill
   cancels the issue with its reason, a ticked merge runs `merge-tasks`.
-- **Every review ask runs in ascending issue number** — the ratify
-  tool sorts, for the curator's inbox and the advisor sessions' staged
-  sets alike — so the operator opens a batch as tabs left to right and
-  reads the dialog top to bottom.
+- **Every review ask runs in ascending title order**, as Linear sorts
+  a list — the ratify tool sorts, for the curator's inbox and the
+  advisor sessions' staged sets alike — so the dialog reads top to
+  bottom against the operator's Linear view of the batch, which cannot
+  sort by issue number. The title is taken raw, case-blind, in ICU
+  order: a leading `[<Verb>/<Substrate>]` token sorts as punctuation,
+  ahead of every letter, and `:` precedes `+`.
 
 **The pool is the un-parked Backlog**: state Backlog, no milestone,
 `[Operator]` items included. Todo means "should this be done", so an

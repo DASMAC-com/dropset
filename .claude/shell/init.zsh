@@ -1023,8 +1023,14 @@ _ds_session_exists() {
 # the debug log and is never shown, and its default budget is 1.5 seconds. The
 # one case this misses, the terminal closed outright, is left to the next
 # morning's digest.
+#
+# A session that closed its own worktree leaves this shell in a deleted
+# directory, where every Python call fails with "No such file or directory",
+# so the epilogue first moves the shell to the base checkout; a directory that
+# is gone holds nothing to return to.
 _ds_exit_estimate() {
   local sid="$1" mode run_from
+  [[ -d "$PWD" ]] || cd "$_DS_REPO" || return 0
   if [[ -z "$sid" && -n "$2" ]]; then
     {
       read -r mode

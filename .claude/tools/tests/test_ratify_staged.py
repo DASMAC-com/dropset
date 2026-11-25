@@ -70,23 +70,57 @@ class AskTests(unittest.TestCase):
             self.assertLessEqual(len(q["header"]), 12)
         self.assertTrue(call["questions"][1]["question"].endswith("(2 of 2)"))
 
-    def test_checkboxes_run_by_issue_number_whatever_the_caller_passed(self):
+    def test_checkboxes_run_by_title_whatever_the_caller_passed(self):
         # Across both questions, not within each: the operator reads the
-        # dialog top to bottom against the batch's tabs left to right.
-        issues = [_issue(n) for n in (40, 7, 112, 9, 31)]
-        issues[0]["title"] = "(carried) folded into Part 2"
+        # dialog top to bottom against a Linear list sorted by title.
+        titles = {
+            40: "Route the remaining connect-error renders through redaction",
+            7: "indexer: record skipped slots durably",
+            112: "[Chore/Anthropic] Claude: prune the stale worktrees",
+            9: "Indexer: two-sided level model",
+            31: "indexer+frontend: serve per-vault 24h volume",
+        }
+        issues = [_issue(n) for n in titles]
+        for issue in issues:
+            issue["title"] = titles[issue["number"]]
         (call,) = build_ask(issues)["calls"]
         options = [o for q in call["questions"] for o in q["options"]]
+        # The bracketed launch line sorts as punctuation, ahead of letters;
+        # case is blind; `:` precedes `+`, the reverse of byte order.
         self.assertEqual(
             [o["label"] for o in options],
-            ["ENG-7", "ENG-9", "ENG-31", "ENG-40", "ENG-112"],
+            ["ENG-112", "ENG-7", "ENG-9", "ENG-31", "ENG-40"],
         )
-        # The carried task's description (here its title) rides with it to
-        # its sorted place.
-        self.assertIn("(carried)", options[3]["description"])
+        self.assertIn("Route", options[4]["description"])
+
+    def test_the_operator_batch_of_2026_11_23_keeps_linear_order(self):
+        titles = {
+            1173: "indexer: record skipped slots durably when a transaction's "
+            "events are dropped fail-closed",
+            1176: "Route the five remaining raw database-URL connect-error "
+            "renders through redaction",
+            1884: "indexer: two-sided level model — both counters per level",
+            1920: "indexer+frontend: serve per-vault 24h volume, fees and APR",
+        }
+        issues = [_issue(n) for n in titles]
+        for issue in issues:
+            issue["title"] = titles[issue["number"]]
+        (call,) = build_ask(issues)["calls"]
+        labels = [o["label"] for q in call["questions"] for o in q["options"]]
+        self.assertEqual(labels, ["ENG-1173", "ENG-1884", "ENG-1920", "ENG-1176"])
+
+    def test_a_title_tie_breaks_lowercase_first_then_by_number(self):
+        issues = [_issue(n) for n in (5, 4, 3)]
+        issues[0]["title"] = issues[1]["title"] = "Same title"
+        issues[2]["title"] = "same title"
+        (call,) = build_ask(issues)["calls"]
+        labels = [o["label"] for o in call["questions"][0]["options"]]
+        self.assertEqual(labels, ["ENG-3", "ENG-4", "ENG-5"])
 
     def test_the_sort_reads_the_identifier_when_number_is_absent(self):
         issues = [_issue(n) for n in (20, 3)]
+        for issue in issues:
+            issue["title"] = "Same title"
         for issue in issues:
             del issue["number"]
         (call,) = build_ask(issues)["calls"]
@@ -118,7 +152,9 @@ class AskTests(unittest.TestCase):
                     self.assertLessEqual(len(q["header"]), 12)
                     labels += [o["label"] for o in q["options"]]
             tasks = [label for label in labels if label != "Not yet"]
-            self.assertEqual(tasks, [f"ENG-{k}" for k in range(1, n + 1)])
+            # Every task exactly once; the order is the title sort's, where
+            # `Task 10` precedes `Task 2`.
+            self.assertCountEqual(tasks, [f"ENG-{k}" for k in range(1, n + 1)])
 
 
 class ReviewTests(unittest.TestCase):
