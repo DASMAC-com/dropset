@@ -277,11 +277,10 @@ python3 .claude/tools/ratify_staged.py ask --pool inbox \
 `--ids` is the batch: the tool never ranks or chooses, so your
 ranking takes effect only through which four ids you pass —
 carried tasks first, then the top of the ranking. The checkboxes
-come out in **ascending title order**, as Linear sorts a list,
-whatever order you pass (the tool sorts, for this pool and the
-advisor sessions' staged sets alike), so the dialog reads top to
-bottom against the operator's Linear view of the batch, which
-cannot sort by issue number. `--notes` maps each of those ids
+come out in **ascending title order** whatever order you pass
+(the tool sorts, for this pool and the advisor sessions' staged sets
+alike), matching the operator's Linear view of the batch, which
+sorts by title, never by number. `--notes` maps each of those ids
 to its line of commentary (an id with no note falls back to its
 title; a note for an id not in `--ids` is refused). Pass each
 `calls[]` entry's `questions` to `AskUserQuestion` unchanged. The

@@ -1030,7 +1030,11 @@ _ds_session_exists() {
 # is gone holds nothing to return to.
 _ds_exit_estimate() {
   local sid="$1" mode run_from
-  [[ -d "$PWD" ]] || cd "$_DS_REPO" || return 0
+  if [[ ! -d "$PWD" ]] && ! cd "$_DS_REPO" 2>/dev/null; then
+    print -u2 'dropset: no session estimate — the working directory is gone' \
+      'and the base checkout is unreachable.'
+    return 0
+  fi
   if [[ -z "$sid" && -n "$2" ]]; then
     {
       read -r mode

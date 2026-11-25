@@ -667,23 +667,27 @@ def _number(issue: dict) -> int:
 
 # Printable ASCII in the order `Intl.Collator('en').compare` puts it (ICU's
 # root collation, case folded): punctuation, then symbols, then digits, then
-# letters. Linear's title sort agrees with it on the operator's 2026-11-23
-# batch, where `indexer: two-sided …` sorts before `indexer+frontend: …` —
-# the reverse of byte order, which puts `+` before `:`.
+# letters. It matches the list the operator reads in the Linear app: their
+# 2026-11-23 batch showed `indexer: two-sided …` before `indexer+frontend: …`,
+# the reverse of byte order, which puts `+` before `:`. Linear's GraphQL
+# `sort: title` is NOT this order: it ignores punctuation and spaces (it put
+# that `indexer+frontend` title first), so never re-derive the key from an
+# API read — the app's list is the one the dialog sits beside.
 _COLLATION = " _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789abcdefghijklmnopqrstuvwxyz"
 _RANK = {c: i for i, c in enumerate(_COLLATION)}
-_DASHES = {"–": "-", "—": "-"}
+_DASHES = str.maketrans({"–": "-", "—": "-"})
 
 
 def _title_key(issue: dict) -> tuple:
-    """``issue``'s place in Linear's title-ascending list: the whole title
+    """``issue``'s place in the app's title-ascending list: the whole title
     compared case-blind first, lowercase winning a tie, then the number. The
     title is taken raw, so a leading `[<Verb>/<Substrate>]` token sorts as
     punctuation, ahead of every letter, and `Claude:` as the word it is."""
     title = issue.get("title") or ""
+    # Lowered whole, not per character: one character's lowercase can be two
+    # (`İ`), and `ord` takes exactly one.
     primary = tuple(
-        _RANK.get(c, len(_COLLATION) + ord(c))
-        for c in (_DASHES.get(ch, ch).lower() for ch in title)
+        _RANK.get(c, len(_COLLATION) + ord(c)) for c in title.translate(_DASHES).lower()
     )
     case = tuple(ch.isupper() for ch in title)
     return primary, case, _number(issue)
@@ -703,9 +707,9 @@ def build_ask(
 
     The order is the operator's, never the caller's (operator direction,
     2026-11-23): the operator reviews the batch in a Linear list beside the
-    dialog, and Linear orders a list by title, never by number, so both run
-    by title. A ranking or a carried task shows in its note, not its
-    position."""
+    dialog, ordered by title, which cannot be ordered by issue number, so
+    both run by title. A ranking or a carried task shows in its note, not
+    its position."""
     notes = notes or {}
     issues = sorted(issues, key=_title_key)
     options = [

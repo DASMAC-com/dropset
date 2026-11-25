@@ -117,6 +117,16 @@ class AskTests(unittest.TestCase):
         labels = [o["label"] for o in call["questions"][0]["options"]]
         self.assertEqual(labels, ["ENG-3", "ENG-4", "ENG-5"])
 
+    def test_a_letter_whose_lowercase_is_two_characters_sorts(self):
+        # `"İ".lower()` is two characters; lowering per character fed both
+        # to `ord`, which raised and took the whole ask down.
+        issues = [_issue(n) for n in (2, 1)]
+        issues[0]["title"] = "İ — a non-ASCII title"
+        issues[1]["title"] = "ascii title"
+        (call,) = build_ask(issues)["calls"]
+        labels = [o["label"] for o in call["questions"][0]["options"]]
+        self.assertEqual(labels, ["ENG-1", "ENG-2"])
+
     def test_the_sort_reads_the_identifier_when_number_is_absent(self):
         issues = [_issue(n) for n in (20, 3)]
         for issue in issues:
