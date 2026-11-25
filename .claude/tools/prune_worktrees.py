@@ -155,9 +155,28 @@ def unsafe_reason(path: str, branch: str, git=_real_git) -> str | None:
     rc, out, _ = git(["-C", path, "status", "--porcelain"])
     if rc != 0:
         return "could not read the worktree's status, so safety is unprovable"
-    if out.strip():
-        return f"{len(out.strip().splitlines())} uncommitted change(s)"
+    changes = [line for line in out.splitlines() if line.strip()]
+    changes = [line for line in changes if not is_bytecode_cache(line)]
+    if changes:
+        return f"{len(changes)} uncommitted change(s)"
     return unpushed_reason(branch, git, ["-C", path])
+
+
+def is_bytecode_cache(status_line: str) -> bool:
+    """Whether a ``git status --porcelain`` line is an untracked Python bytecode
+    cache (``?? …/__pycache__/``, or a ``.pyc`` inside one).
+
+    The root ``.gitignore`` hides these already, but the gate must not depend
+    on it: the close tool's own imports write the tools directory's cache
+    before this check runs, so a checkout whose ignore rules miss it (an older
+    branch, a local override) would refuse its own close, and deleting the
+    cache is undone by the next run. Only an **untracked** entry qualifies, so
+    a committed ``.pyc`` that changed still counts as uncommitted work.
+    """
+    if not status_line.startswith("?? "):
+        return False
+    entry = status_line[3:].strip().strip('"')
+    return "__pycache__" in entry.rstrip("/").split("/")
 
 
 def unpushed_reason(branch: str, git=_real_git, prefix: list[str] = ()) -> str | None:

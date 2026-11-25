@@ -26,7 +26,8 @@ Plus the two predicates that say whether a gate can be skipped, delegated to
 
 * ``runs_artifact_gates`` — did the base delta touch a **generation input**
   (``programs/**``, ``sdk/idl/**``, ``sdk/codama/**``, ``sdk/math-core/**``,
-  ``sdk/interface/**``)? If not, no committed artifact can have gone stale.
+  ``sdk/interface/**``, less ``programs/*/tests/**``, which the IDL build
+  never reads)? If not, no committed artifact can have gone stale.
 * ``runs_rust_suites`` — did it touch anything outside CI's code filter?
 
 And a ``rerun`` block that turns those facts into the per-gate verdicts the

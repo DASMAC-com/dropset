@@ -519,6 +519,37 @@ def is_rewiring(diffs, kinds) -> bool:
     return seen and not changes_control_flow(diffs, kinds)
 
 
+def _literal_value(token: str) -> str:
+    """A literal with its quotes dropped, so ``"x"`` in Rust and ``'x'`` in TS
+    read as the same mirrored value."""
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+        return token[1:-1]
+    return token
+
+
+def mirrored_literal(diffs, kinds) -> bool:
+    """A rewiring that swaps ONE value everywhere: every changed literal, in
+    every hunk and file, goes from the same old value to the same new one.
+
+    The shape of a program-id or endpoint rewire mirrored across a pubkey
+    file, a ``declare_id!``, and the Rust and TS constants. It is a fact for
+    the tier's echo, not a lens change: the cross-check and any gate-added
+    lens still run (the every-tier rule). A value the literal pattern does
+    not recognize — a bare unquoted token — fails ``is_rewiring`` first, so
+    this stays false rather than guessing.
+    """
+    if not is_rewiring(diffs, kinds):
+        return False
+    swaps = set()
+    for fd in _code_lines(diffs, kinds):
+        for h in fd.hunks:
+            for (_, added), removed in zip(h.added, h.removed):
+                old = [_literal_value(t) for t in _LITERAL_RE.findall(removed)]
+                new = [_literal_value(t) for t in _LITERAL_RE.findall(added)]
+                swaps.update((o, n) for o, n in zip(old, new) if o != n)
+    return len(swaps) == 1
+
+
 # --------------------------------------------------------------------------
 # Gates.
 

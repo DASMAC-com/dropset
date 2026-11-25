@@ -77,6 +77,8 @@ import re
 import sys
 from pathlib import Path
 
+from scratch_path import shared_root_refusal
+
 # The convention doc that owns the canonical wording. Resolved relative to the
 # repo root so the tool works from a worktree or the base checkout alike.
 BRIEF_DOC = Path("docs/conventions/sub-agent-brief.md")
@@ -399,6 +401,9 @@ def run(argv: list[str]) -> int:
         cap=args.cap,
     )
 
+    refusal = shared_root_refusal(args.out)
+    if refusal is not None:
+        raise LensPreambleError(refusal)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
