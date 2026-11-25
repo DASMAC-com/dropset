@@ -112,8 +112,9 @@ fn snapshot_label(age: Option<Duration>, stale: bool) -> String {
     let Some(age) = age else {
         return String::new();
     };
+    // Short, so a narrow terminal's title cut does not drop it.
     let stale = if stale {
-        " — stale: the last scan found no markets, showing the last good list"
+        " · STALE markets (last scan empty)"
     } else {
         ""
     };
@@ -2732,7 +2733,10 @@ mod poll_gate_tests {
             snapshot_label(Some(Duration::from_millis(12_400)), false),
             " · snapshot 12s old "
         );
-        assert!(snapshot_label(Some(NOW), true).contains("stale"));
+        assert_eq!(
+            snapshot_label(Some(NOW), true),
+            " · snapshot 0s old · STALE markets (last scan empty) "
+        );
     }
 }
 

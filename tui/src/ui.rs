@@ -580,10 +580,17 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
     } else {
         ""
     };
+    // The snapshot note opens with its own separator space.
+    let snapshot = app.snapshot_status();
+    let job = if snapshot.is_empty() {
+        job
+    } else {
+        job.trim_end()
+    };
     f.render_widget(
         Paragraph::new(line).block(
             Block::default()
-                .title(format!(" control plane{job}{}", app.snapshot_status()))
+                .title(format!(" control plane{job}{snapshot}"))
                 .borders(Borders::ALL),
         ),
         area,

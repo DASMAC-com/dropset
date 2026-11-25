@@ -38,14 +38,16 @@ leader key loads only when close, drain or the open first needs it.
 
 On mainnet the panes poll the chain every 30 seconds, not every 700 ms as
 on localnet, because a poll freezes the keys while it runs. `r` polls at
-once. The control-plane title shows how old the snapshot is.
+once, except while a prompt is open or a job runs. The control-plane title
+shows how old the snapshot is.
 
-- An open prompt holds the poll. Anything that asked for one meanwhile
-  polls when the prompt closes, confirmed or canceled.
-- A running job holds the polls it asks for and costs one poll, run on the
-  tick after its result line is drawn.
+- An open prompt holds the poll. Anything that asked for one meanwhile,
+  `r` included, polls when the prompt closes, confirmed or canceled.
+- A running job holds every poll asked for while it runs, `r` included,
+  until its result line is drawn; the poll runs on the next tick. The
+  30-second poll still runs during a long job, so the panes never freeze.
 - A poll that finds no markets keeps the last list it had, and the title
-  says the snapshot is stale. Press `r` to try again.
+  reads `STALE markets`. Press `r` to try again.
 - A re-center's result line reads the new reference back once. "Not yet
   visible on this node" is node lag, not a failure: press `r` to check
   again later.
