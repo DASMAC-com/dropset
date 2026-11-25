@@ -499,10 +499,13 @@ class TestRealIgnoreFile(unittest.TestCase):
         # The existence assertion is what keeps this from going vacuous.
         # `is_ignored` is a pure string operation and returns False for a path
         # that is not there, so without it a member whose entry point moved
-        # (or a future binary-only crate with only src/main.rs) would assert
-        # "a nonexistent path is not ignored" and prove nothing.
+        # would assert "a nonexistent path is not ignored" and prove nothing.
+        # A binary-only crate (the node) has src/main.rs and no lib.rs, so the
+        # entry point is lib.rs where one exists, else main.rs.
         for member in self.members():
             source = f"{member}/src/lib.rs"
+            if not os.path.exists(os.path.join(self.root, source)):
+                source = f"{member}/src/main.rs"
             with self.subTest(path=source):
                 self.assertTrue(
                     os.path.exists(os.path.join(self.root, source)),

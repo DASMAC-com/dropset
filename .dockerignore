@@ -7,7 +7,7 @@
 # watched one collector build climb past 40 GB before killing it.
 #
 # The Rust builds need the workspace and nothing else: Cargo.toml, Cargo.lock,
-# rust-toolchain.toml, and the 13 workspace members. `cargo chef` reconstructs
+# rust-toolchain.toml, and the 14 workspace members. `cargo chef` reconstructs
 # the dependency cache inside the image, so the host's target/ is not just
 # unnecessary — shipping it is what makes the context enormous.
 #
@@ -132,7 +132,7 @@ brand-assets
 # Not a size argument: each of these is small. They are here because every
 # image's `COPY . .` layer is keyed on whatever survives this file, so an edit
 # to any of them otherwise invalidates that layer and re-runs the workspace
-# build in all four Rust images. Nothing below is a build input. The only
+# build in every Rust image. Nothing below is a build input. The only
 # `include_str!`s that reach outside a crate's own `src`, `queries` and
 # `migrations` (the compose file, the Makefile, the test fixtures) sit in
 # `tests/` trees or `#[cfg(test)]` modules, and no manifest declares an

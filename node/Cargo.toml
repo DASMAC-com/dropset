@@ -1,0 +1,23 @@
+# The Dropset node: an always-on process. Today it does nothing useful on
+# purpose. It prints a start line, a heartbeat once a minute and a shutdown
+# line, so the deploy path, the logs and the stop signal can be proven on a
+# program that cannot fail for its own reasons (docs/node.md).
+
+[[bin]]
+name = "dropset-node"
+path = "src/main.rs"
+
+[dependencies]
+# The standard library cannot catch a signal. This is the one dependency, and
+# no async runtime: that choice belongs to the node core, which may replace
+# the handler. Already in the lockfile through crossterm.
+signal-hook = "0.3"
+
+[package]
+description = "The Dropset node."
+name = "dropset-node"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true

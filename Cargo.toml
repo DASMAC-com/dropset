@@ -21,6 +21,7 @@ members = [
   "feeds",
   "indexer",
   "market-data",
+  "node",
   "programs/dropset",
   "sdk/math-core",
   "sdk/interface",
