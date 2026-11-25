@@ -1286,6 +1286,35 @@ class OperatorRunTests(unittest.TestCase):
                 + ["--reply-file", self._reply("why")],
             )
 
+    def test_a_dry_run_reply_file_cancel_posts_and_writes_nothing(self):
+        thread = {"id": "t1", "parentId": None, "resolvedAt": None, "body": "drop"}
+        fake = FakeLinearThreads([_operator(9)], comments={"ENG-9": [thread]})
+        code, out = self._run(
+            fake,
+            ["approve", "--pool", "operator", "--cancel", "ENG-9"]
+            + ["--reply-file", self._reply("why"), "--dry-run"],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual((fake.calls, fake.writes), ([], []))
+        self.assertIn("WOULD RESOLVE ENG-9 thread t1", out)
+
+    def test_two_spellings_and_a_shared_file_reply_once_per_thread(self):
+        def thread(tid):
+            return {"id": tid, "parentId": None, "resolvedAt": None, "body": "drop"}
+
+        fake = FakeLinearThreads(
+            [_inbox(1), _inbox(2)],
+            comments={"ENG-1": [thread("a")], "ENG-2": [thread("b")]},
+        )
+        code, _ = self._run(
+            fake,
+            ["approve", "--pool", "inbox", "--cancel", "1", "ENG-1", "ENG-2"]
+            + ["--reply-file", self._reply("shared")],
+        )
+        self.assertEqual(code, 0)
+        replies = [c for c in fake.calls if c[0] == "reply"]
+        self.assertEqual(replies, [("reply", "a", "shared"), ("reply", "b", "shared")])
+
     def _reply(self, text):
         path = self.records / f"reply-{len(list(self.records.iterdir()))}.md"
         path.write_text(text + "\n", encoding="utf-8")

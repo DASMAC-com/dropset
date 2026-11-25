@@ -827,7 +827,12 @@ def finished_sessions(names=None, api_key: str | None = None, post=None) -> list
         post = post or linear_issue._post
         variables = {f"i{n}": f"ENG-{tag}" for n, tag in enumerate(tags)}
         data = post(api_key, linear_issue._state_query(len(tags)), variables)
-    except (iterm_api.ItermUnavailable, linear_issue.LinearIssueError, OSError):
+    except (
+        iterm_api.ItermUnavailable,
+        linear_issue.LinearIssueError,
+        OSError,
+        ValueError,
+    ):
         return []
     out = []
     for n, tag in enumerate(tags):
@@ -906,8 +911,9 @@ def run(argv: list[str]) -> int:
         type=float,
         default=0,
         metavar="MINUTES",
-        help="block up to MINUTES until the held fit, re-reading the gate every "
-        f"{WAIT_POLL_S}s, then dispatch what it admits",
+        help="block up to MINUTES until the whole batch fits, re-reading the "
+        f"gate every {WAIT_POLL_S}s, then dispatch what it admits; verbs that "
+        "already fit wait with the rest, so pass only the held ones",
     )
     parser.add_argument("--state-dir", type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument(
@@ -939,7 +945,7 @@ def run(argv: list[str]) -> int:
         return 2
     if args.wait < 0:
         print(
-            "session-dispatch: --wait takes a positive number of minutes",
+            "session-dispatch: --wait takes a non-negative number of minutes",
             file=sys.stderr,
         )
         return 2

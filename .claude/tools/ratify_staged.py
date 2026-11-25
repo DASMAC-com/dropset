@@ -966,10 +966,13 @@ def cancel_threads(
     skipped, so a re-run after a partly failed write posts nothing twice."""
     pairs: list[tuple[str, str]] = []
     unanswered: list[str] = []
+    seen: set[str] = set()
     for issue in cancel:
-        if already_moved(issue, cancel=True):
-            continue
         ident = issue["identifier"]
+        # `9` and `ENG-9` resolve to one issue; its threads get one reply.
+        if ident in seen or already_moved(issue, cancel=True):
+            continue
+        seen.add(ident)
         threads = open_threads(fetch_comments(api_key, ident))
         if not threads:
             continue

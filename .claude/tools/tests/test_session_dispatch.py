@@ -1246,6 +1246,22 @@ class GatedRun(unittest.TestCase):
             _, _, out, _, _ = self._run("task", "1", readings=(refused,))
         self.assertIn("finished (idle tab, issue handed off): 914 (In Review)", out)
 
+    def test_the_wait_flag_routes_through_wait_for_room(self):
+        seen = {}
+
+        def fake_wait(slots, directory, *, minutes, over_budget=False):
+            seen.update(minutes=minutes, verbs=[s.command for s in slots])
+            return _gated(False)
+
+        with unittest.mock.patch.object(session_dispatch, "wait_for_room", fake_wait):
+            rc, opened, _, _, _ = self._run("--wait", "5", "task", "1")
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen, {"minutes": 5.0, "verbs": ["task 1"]})
+        self.assertEqual(opened, [["task 1"]])
+        rc, opened, _, err, _ = self._run("--wait", "-1", "task", "1")
+        self.assertEqual((rc, opened), (2, []))
+        self.assertIn("non-negative", err)
+
     def test_a_trailing_wait_flag_is_refused(self):
         rc, seen, _, err, _ = self._run("task", "1", "--wait", "5")
         self.assertEqual((rc, seen), (2, []))

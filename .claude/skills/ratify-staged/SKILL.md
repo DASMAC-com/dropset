@@ -218,7 +218,10 @@ canceled. The tool refuses the whole batch, writing nothing, while
 an approved task still holds an open thread or a reject holds one
 with no `--reply-file`. A write
 that fails partway is re-run with the same ids: tasks it already
-moved report `ALREADY` and are skipped.
+moved report `ALREADY` and are skipped. The one exception is a
+reply that landed and a resolve that failed: finish that thread
+with the `linear_gate.py resolve` line the error prints, then
+re-run, or the reply posts twice.
 
 ## 5. The close gate
 
