@@ -1,12 +1,12 @@
 # Fleet wind-down
 
-When the operator says the fleet is closing out, the scheduler winds it
-down: sessions In Review try to merge, everything else pauses, every
-session parks, and the next morning `fleet go` resumes the fleet from
-the closed tabs. No tab stays open overnight. Sessions already resume
-from their transcripts, so a closed tab costs nothing once each session
-has written its resume brief and pushed its checkpoint; this document
-is the protocol, and `fleet down` is the verb.
+When the operator says the fleet is closing out, the scheduler winds it down:
+sessions In Review try to merge, everything else pauses, every worktree session
+parks (a chore and the curator stand down in their own way, below), and the next
+morning `fleet go` resumes the fleet from the closed tabs. No client stays
+running overnight. Sessions already resume from their transcripts, so a closed
+tab costs nothing once each session has written its resume brief and pushed its
+checkpoint; this document is the protocol, and `fleet down` is the verb.
 
 ## The listing: `fleet down`
 
@@ -74,8 +74,8 @@ brief. It starts nothing new.
 Every worktree worker (`task`, `explore`, `architect`) stands down
 the same way:
 
-1. Append a **Resume brief** on the issue naming the next step, and
-   the PR when one is open (`linear_issue.py append`).
+1. Append a **Resume brief** on the issue, one paragraph, naming the next step,
+   and the PR when one is open (`linear_issue.py append`).
 1. Confirm the tree is clean and pushed.
 1. Print `Standing down; ready to resume tomorrow.` as the last line,
    and send the scheduler that same line.
@@ -92,8 +92,8 @@ its window (best-effort, silent on failure) and end the client, so the operator
 sees one green tab at the left edge per parked session and closes it. No tool
 closes a tab.
 
-The two base-checkout sessions cannot park (`close_session.py`
-refuses the base checkout):
+The base-checkout sessions the wind-down reaches cannot park
+(`close_session.py` refuses the base checkout):
 
 - **A chore** stands down with the resume brief, the printed line and
   its message to the scheduler, then

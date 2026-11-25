@@ -50,14 +50,17 @@ DOOMED_MERGEABLE = {"CONFLICTING"}
 DOOMED_MERGE_STATE = {"DIRTY"}
 
 STAND_DOWN = (
-    "Stand down: append a **Resume brief** on the issue naming your next step "
-    "(and the PR, when one is open) with linear_issue.py append; confirm the "
+    "Stand down: append a **Resume brief** on the issue, one paragraph, naming "
+    "your next step (and the PR, when one is open) with linear_issue.py "
+    "append; confirm the "
     "tree is clean and pushed (an unsigned checkpoint is fine); print "
     '"Standing down; ready to resume tomorrow." as your last line and send '
     "the scheduler that same line; then run "
     "`close_session.py --park --session-id <id>` as your last tool call. It "
     "keeps your state, worktree and branch, marks your tab green, moves it "
-    "leftmost and ends your client; `fleet go` resumes you tomorrow."
+    "leftmost and ends your client; `fleet go` resumes you tomorrow. A chore "
+    "runs in the base checkout, which park refuses: its last call is "
+    "`python3 .claude/tools/iterm_api.py --signal-parked` instead."
 )
 
 FINISH_MESSAGE = (

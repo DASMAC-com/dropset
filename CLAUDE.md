@@ -62,20 +62,18 @@ confusing the two forms gives a convincing false negative. Detail:
 
 ### Scheduler sessions
 
-Board work — staging issues, keeping the Queue honest, placing
-blocking edges, carrying direction across days — happens in a
-**scheduler session**, the complement to a worktree implementation
-session. It runs in the base repo (started and resumed with `plan`,
-never a worktree), warm-boots from the state of play the **curator's**
-start-of-day bootstrap writes to the "Planning" Linear document
-(`LINEAR_PLANNING_DOC_ID`), owns the live day, and writes every later
-decision back there. The `plan` skill is its method; the document is
-the state. Detail — the env var, and where blocking edges are
-placed: `docs/conventions/linear-automation.md`. At close-out it
-**winds the fleet down** (`fleet down`): In Review finishes only while
-its path to merge is linear, the rest pauses, every session parks,
-and `fleet go` reopens them tomorrow:
-`docs/conventions/fleet-winddown.md`.
+Board work — staging issues, keeping the Queue honest, placing blocking edges,
+carrying direction across days — happens in a **scheduler session**, the
+complement to a worktree implementation session. It runs in the base repo
+(started and resumed with `plan`, never a worktree), warm-boots from the state
+of play the **curator's** start-of-day bootstrap writes to the "Planning" Linear
+document (`LINEAR_PLANNING_DOC_ID`), owns the live day, and writes every later
+decision back there. The `plan` skill is its method; the document is the state.
+Detail — the env var, and where blocking edges are placed:
+`docs/conventions/linear-automation.md`. At close-out it **winds the fleet
+down** (`fleet down`): In Review finishes only while its path to merge is
+linear, the rest pauses, every session stands down, and `fleet go` reopens them
+tomorrow: `docs/conventions/fleet-winddown.md`.
 
 ### The architect session — the CEO hat
 
