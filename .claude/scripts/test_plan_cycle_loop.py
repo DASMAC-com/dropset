@@ -62,6 +62,8 @@ fi
 _ds_iterm_role() { print -r -- "role:$1" >> "$STATE/role-calls" }
 _ds_session() {
   print -r -- "$1|$2|$3|$DS_PLAN_DATE|$DS_DAILY_KIND" >> "$CALLS"
+  # What a child of the launch sees: exported values only.
+  zsh -fc 'print -r -- "${DS_FLEET_TOTAL-}|${CARGO_BUILD_JOBS-}"' >> "$STATE/knobs"
   local n=$(wc -l < "$CALLS")
   (( n <= CYCLES )) && print -r -- "$1" > "$STATE/$VERB-cycle-pending"
   [[ -n "$MIDNIGHT" ]] && : > "$STATE/rolled"
@@ -69,6 +71,15 @@ _ds_session() {
 }
 $VERB
 """
+
+
+#: The fleet and cargo knobs a launch requires (`_ds_fleet_knobs`).
+_KNOBS = {
+    "DS_FLEET_TOTAL": "16",
+    "DS_FLEET_CPU_LOAD_MAX": "16",
+    "DS_CARGO_LANES": "1",
+    "CARGO_BUILD_JOBS": "4",
+}
 
 
 @unittest.skipUnless(ZSH, _NEEDS_ZSH)
@@ -92,13 +103,21 @@ class CycleLoop(unittest.TestCase):
         client_rc: int = 0,
         midnight: bool = False,
         verb: str = "plan",
+        knobs: dict[str, str] | None = None,
+        profile: str | None = None,
     ) -> subprocess.CompletedProcess:
         # A suite run from inside a planning session inherits the launcher's
         # DS_PLAN_DATE, which would mask a launcher that stopped passing it;
         # `hermetic_env` drops it with every other `DS_*`.
-        env = hermetic_env(self.home, "MIDNIGHT")
+        env = hermetic_env(self.home, "MIDNIGHT", "CARGO_BUILD_JOBS")
         if midnight:
             env["MIDNIGHT"] = "1"
+        # The tab's shell: every knob the relaunch gate needs, unless the case
+        # says otherwise. `ZDOTDIR` is the claude home, so the profile the
+        # relaunch re-reads is `<home>/.zshrc`; absent unless the case writes one.
+        env |= _KNOBS if knobs is None else knobs
+        if profile is not None:
+            (self.home / ".zshrc").write_text(profile)
         env |= {
             "VERB": verb,
             "CLIENT_RC": str(client_rc),
@@ -179,6 +198,41 @@ class CycleLoop(unittest.TestCase):
     def test_a_plain_exit_returns_the_clients_status(self):
         self.assertEqual(self._plan(cycles=0, client_rc=3).returncode, 3)
         self.assertEqual(len(self._launches()), 1)
+
+    def test_a_knob_raised_since_the_shell_opened_reaches_the_relaunch(self):
+        # The operator raised the load limit after the tab opened: the first
+        # client ran on the shell's 16, the cycled one must read the 18.
+        result = self._plan(
+            cycles=1,
+            profile="export DS_FLEET_TOTAL=18\nCARGO_BUILD_JOBS=6\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self._launches()), 2)
+        seen = (self.state / "knobs").read_text().splitlines()
+        self.assertEqual(seen, ["16|4", "18|6"])
+        self.assertIn("DS_FLEET_TOTAL: this shell holds 16", result.stderr)
+
+    def test_a_knob_still_missing_refuses_the_relaunch_by_name(self):
+        # A shell older than the knob, and a profile that does not set it
+        # either: the relaunch is refused, never started unable to dispatch.
+        knobs = {k: v for k, v in _KNOBS.items() if k != "CARGO_BUILD_JOBS"}
+        result = self._plan(cycles=1, knobs=knobs, profile="DS_FLEET_TOTAL=16\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("CARGO_BUILD_JOBS is unset", result.stderr)
+        self.assertIn("not cycling", result.stderr)
+        self.assertEqual(len(self._launches()), 1)
+
+    def test_turning_the_pool_off_in_the_profile_lifts_the_cargo_pair(self):
+        knobs = {k: v for k, v in _KNOBS.items() if k != "CARGO_BUILD_JOBS"}
+        result = self._plan(cycles=1, knobs=knobs, profile="DS_CARGO_POOL=0\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self._launches()), 2)
+
+    def test_an_unreadable_profile_relaunches_on_the_shells_knobs(self):
+        result = self._plan(cycles=1)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("unreadable; relaunching on this shell's knobs", result.stderr)
+        self.assertEqual(len(self._launches()), 2)
 
     def test_a_live_same_name_session_blocks_the_relaunch(self):
         (self.home / "sessions" / "1.json").write_text(
@@ -463,20 +517,23 @@ class AnalyzeHelper(unittest.TestCase):
 
 #: The real `_ds_upkeep`, with `python3` and the secrets fetch stubbed: the
 #: helper must return 0 whatever the pass does, and skip it on the off switch.
-#: The manifest names one variable, which the profile assigns but never exports.
+#: The manifest names two variables: one the profile assigns but never exports,
+#: one it exports.
 _UPKEEP_SCRIPT = """
 source "$INIT" 2>/dev/null
 _DS_REPO="$REPO"
 _ds_secrets() { : }
 python3() {
   print -r -- "$*" >> "$CALLS"
-  [[ "$*" == *--names* ]] && { print -r -- DS_PROBE_KNOB; return 0 }
+  [[ "$*" == *--names* ]] && { print -l -- DS_PROBE_KNOB DS_PROBE_EXPORTED; return 0 }
   print -r -- "SEEN=$(printenv DS_PROBE_KNOB)" >> "$CALLS"
+  print -r -- "UNEXPORTED=$(printenv DS_CONFIG_UNEXPORTED)" >> "$CALLS"
   # A Ctrl-C reaches the whole foreground group; signal the shell as a tty would.
   [[ -n "$INTERRUPT" ]] && { kill -INT $$; return 130 }
   return ${PASS_RC:-0}
 }
 DS_PROBE_KNOB=plain
+export DS_PROBE_EXPORTED=1
 _ds_upkeep
 print -r -- "AFTER=$(printenv DS_PROBE_KNOB)" >> "$CALLS"
 """
@@ -511,6 +568,12 @@ class UpkeepHelper(unittest.TestCase):
         _, calls = self._upkeep()
         self.assertIn("SEEN=plain", calls.splitlines())
         self.assertIn("AFTER=", calls.splitlines())
+
+    def test_the_pass_is_told_which_variables_only_it_reaches(self):
+        # The plain assignment is named, so the check can flag a tool-read
+        # row; the exported one is not.
+        _, calls = self._upkeep()
+        self.assertIn("UNEXPORTED=DS_PROBE_KNOB", calls.splitlines())
 
     def test_a_failed_pass_warns_and_still_returns_zero(self):
         proc, _ = self._upkeep(PASS_RC="3")

@@ -14,6 +14,7 @@ Usage::
     python3 .claude/tools/plan_cycle.py snooze
     python3 .claude/tools/plan_cycle.py cycle
     python3 .claude/tools/plan_cycle.py live-name schedule-8
+    python3 .claude/tools/plan_cycle.py knobs
     python3 .claude/tools/plan_cycle.py --kind curate check
 
 The daily kind defaults to ``$DS_DAILY_KIND``, which each launcher sets, else
@@ -39,6 +40,11 @@ The daily kind defaults to ``$DS_DAILY_KIND``, which each launcher sets, else
 * ``live-name NAME`` is the launcher's guard: exit 0 when a live session already
   holds NAME, 1 when none does. A relaunch under a live session's name would
   give the fleet two sessions answering to it and break worker addressing.
+* ``knobs`` is the launcher's re-read before a relaunch: one ``NAME=value``
+  line per fleet or cargo knob (``RELAUNCH_KNOBS``) the runtime config sets
+  now, and a stderr note per knob that differs from this shell's, so a value
+  raised since the tab opened reaches the cycled session. The launcher
+  exports them, then runs the launch gate on the result.
 
 The session's own id is computed exactly as the launcher computes it
 (``resolve_session.daily_session_id`` plus the LAUNCH day's cycle counter, the
@@ -61,6 +67,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import resolve_session as rs  # noqa: E402
+import session_dispatch as sd  # noqa: E402
 import session_metrics as sm  # noqa: E402
 
 #: Ratified starting values (the cycle design, 2026-10-05). Now only the
@@ -324,6 +331,46 @@ def cycle(repo: Path, date: str, kind: str = "plan") -> str:
     )
 
 
+#: The knobs a cycle relaunch re-reads: the machine-load probe's four, the
+#: cargo pool's two and the pool's off switch, which decides whether the
+#: launch gate (`_ds_fleet_knobs`) requires the pair at all.
+RELAUNCH_KNOBS = (
+    *sd.FLEET_KNOBS,
+    "DS_CARGO_LANES",
+    "CARGO_BUILD_JOBS",
+    "DS_CARGO_POOL",
+)
+
+
+def relaunch_knobs(env, path: Path) -> tuple[dict[str, str], list[str]]:
+    """The relaunch knobs the runtime config sets now, and a note per change.
+
+    A daily-role tab's shell holds the knobs it was opened with, so a value the
+    operator raised since then would never reach a cycled session. The config
+    is read the way the dispatcher reads it (`session_dispatch.
+    read_runtime_config`: literal column-zero assignments only); a knob it does
+    not set, or an unreadable config, leaves the shell's value standing.
+    """
+    config = sd.read_runtime_config(path)
+    if config is None:
+        return {}, [
+            f"runtime config {path} unreadable; relaunching on this shell's knobs"
+        ]
+    values: dict[str, str] = {}
+    notes = []
+    for name in RELAUNCH_KNOBS:
+        if name not in config:
+            continue
+        held = env.get(name)
+        if held != config[name]:
+            notes.append(
+                f"{name}: this shell holds {held or 'nothing'}, the runtime "
+                f"config {config[name]}; relaunching on {config[name]}"
+            )
+        values[name] = config[name]
+    return values, notes
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="plan_cycle.py", description="The planning hub's cycle mechanics."
@@ -351,8 +398,16 @@ def run(argv: list[str]) -> int:
     sub.add_parser("cycle", help="write the marker and end this client")
     live = sub.add_parser("live-name", help="exit 0 iff a live session holds NAME")
     live.add_argument("name")
+    sub.add_parser("knobs", help="print the relaunch knobs the runtime config sets now")
     args = parser.parse_args(argv[1:])
 
+    if args.command == "knobs":
+        values, notes = relaunch_knobs(os.environ, sd.runtime_config_path())
+        for note in notes:
+            print(f"cycle: {note}", file=sys.stderr)
+        for name, value in values.items():
+            print(f"{name}={value}")
+        return 0
     repo = Path(os.path.abspath(args.repo)) if args.repo else default_repo()
     date = args.date or rs.launch_date()
     if args.command == "live-name":

@@ -10,6 +10,12 @@
 # `python3 .claude/tools/runtime_config_check.py --live` (it reads only
 # exported variables; the morning upkeep pass hands it the rest).
 # See docs/conventions/local-integrations.md → "Session helpers".
+#
+# EXPORT every variable a hook, the dispatcher, the machine-load probe or any
+# Python tool reads: a plain profile assignment satisfies the shell's own check
+# and reads as unset to every subprocess. A plain assignment here is read by
+# the shell helpers alone. `runtime_config_check.py --static` holds this file
+# to that rule.
 
 # --- Model tiers (required; no model id is committed) -----------------------
 DS_MODEL_ADVISOR='<model-id>'
@@ -39,23 +45,22 @@ export LINEAR_PLANNING_DOC_ID='<document-id>'
 
 # --- Fleet budget (required; the repo pins none) ----------------------------
 # Live top-level `claude` clients of every class at once.
-DS_FLEET_TOTAL=16
+export DS_FLEET_TOTAL=16
 # The one-minute load average (cores in use) past which nothing new starts.
-DS_FLEET_CPU_LOAD_MAX=16
+export DS_FLEET_CPU_LOAD_MAX=16
 # Builds running at once across the fleet: the cargo pool's lane count.
-# Exported, so the upkeep pass's lane report reads it even when run by hand.
 export DS_CARGO_LANES=2
-# Compiler processes one build may run. Exported, so cargo reads it everywhere.
+# Compiler processes one build may run; cargo reads it from its environment.
 # The fleet's compiler ceiling is lanes × jobs: 16 here.
 export CARGO_BUILD_JOBS=8
 
 # --- Optional knobs and toggles (each at its repo default when unset) -------
-# DS_AWS_PROFILE='<sso-profile>'   # `plan`'s AWS gate; unset = the CLI default
-# DS_FLEET_BUILD_WAIT_S=120        # a pool-lock wait refusing another builder
-# DS_FLEET_RESERVE_GB=6            # memory headroom; default physical ÷ 8
+# export DS_AWS_PROFILE='<sso-profile>' # `plan`'s AWS gate; unset: the default
+# export DS_FLEET_BUILD_WAIT_S=120 # a pool-lock wait refusing another builder
+# export DS_FLEET_RESERVE_GB=6     # memory headroom; default physical ÷ 8
 # DS_BEDROCK_REGION='us-west-2'
-# DS_PR_POLL_S=20                  # seconds between every PR / queue poll
-# DS_CARGO_POOL=0                  # turn the cargo pool off
+# export DS_PR_POLL_S=20           # seconds between every PR / queue poll
+# export DS_CARGO_POOL=0           # turn the cargo pool off
 # DS_PLAN_TAB_RIGHTMOST=0          # leave the scheduler tab where it opens
 # DS_ITERM_PERM_DEBOUNCE_SECONDS=5 # seconds a permission dialog waits before yellow
 # export DS_UPKEEP_ARMED=1         # let the upkeep pass prune worktrees
@@ -63,4 +68,4 @@ export CARGO_BUILD_JOBS=8
 # DS_SKIP_UPKEEP=1 plan            # skip the morning upkeep pass
 # DS_BEDROCK_PROBE=1 task <n>      # pay for the Bedrock pre-flight
 # DS_PULL_DEBUG=1 cdds             # say why a fast-forward did not run
-# DS_ITERM_DISABLED=1              # no iTerm tab driving (tests, headless)
+# export DS_ITERM_DISABLED=1       # no iTerm tab driving (tests, headless)

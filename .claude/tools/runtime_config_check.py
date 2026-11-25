@@ -22,7 +22,8 @@ files, so CI enforces it (a lint hook beside ``skill-size``):
   applies to it (``${NAME:-d}`` in the shell, ``("NAME", d)`` in a tool), and
   a row with no default has none in the code;
 * every row the config sets is named in the example, so it cannot drift
-  either;
+  either, and every row a Python tool or hook reads is assigned there with an
+  explicit ``export`` (an ``export gap`` otherwise);
 * a row's optional ``maps_to`` (``{"file": ..., "name": ...}``, knob or toggle
   only) names the script variable the shell init hands it to: some shell init
   line must hand it over, and the script's own ``${name:-d}`` fallback must
@@ -40,10 +41,14 @@ optional while another variable holds that value. The value of a model id, a
 secret reference or a Linear id is never printed, only ``set`` — and such a
 row may carry no default, so no ``pinned:`` line can print one either. A Python process sees only EXPORTED variables, so a profile's plain
 assignments reach it only through a caller that hands them over — the
-``_ds_upkeep`` shell helper does, for the upkeep pass's ``config`` step.
-``--names`` prints the row names that helper passes, one per line.
+``_ds_upkeep`` shell helper does, for the upkeep pass's ``config`` step. It
+also names, in ``DS_CONFIG_UNEXPORTED``, each variable it had to export
+itself; a row a tool or hook reads that it names is reported ``UNEXPORTED``
+and counted missing, required or not, since every other Python child reads it
+unset. ``--names`` prints the row names that helper passes, one per line.
 
-Exit 0 clean, 1 drift (static) or a missing required row (live), 2 on an
+Exit 0 clean, 1 drift (static) or a missing required or unexported tool-read
+row (live), 2 on an
 unreadable or malformed manifest. Standard library only; a skill-tool, not a
 Cargo workspace member. Tests live in ``tests/test_runtime_config_check.py``.
 """
@@ -87,6 +92,16 @@ PREFIX = r"(?:DS|LINEAR|CARGO)_[A-Z0-9_]*[A-Z0-9]"
 NAME_RE = re.compile(rf"(?<![A-Za-z0-9_])({PREFIX})(?![A-Za-z0-9_])")
 QUOTED_RE = re.compile(rf"""["']({PREFIX})["']""")
 SHELL_DEFAULT_RE = re.compile(rf"\$\{{({PREFIX}):-([^}}]*)\}}")
+#: An example line assigning a name, commented out or not, and whether it says
+#: `export`; a `NAME=v cmd` per-command prefix is matched apart, as no profile
+#: line.
+ASSIGN_RE = re.compile(rf"^#?\s*(export\s+)?({PREFIX})=")
+PREFIX_LINE_RE = re.compile(
+    rf"""^#?\s*{PREFIX}=(?:'[^']*'|"[^"]*"|[^\s'"]\S*|)\s+[^#\s]"""
+)
+#: The names `_ds_upkeep` had to export itself, space separated: assigned in
+#: the profile but not exported, so every other Python child reads them unset.
+UNEXPORTED_ENV = "DS_CONFIG_UNEXPORTED"
 TOOL_DEFAULT_RE = re.compile(
     rf"""\(\s*["']({PREFIX})["']\s*,\s*(\d+(?:\.\d+)?|"[^"]*"|'[^']*')\s*[,)]"""
 )
@@ -193,6 +208,20 @@ def scan(root: Path) -> Reads:
     return reads
 
 
+def tool_reads(reads: Reads) -> set[str]:
+    """The names a Python tool or hook reads, which only an EXPORTED variable
+    reaches: a plain profile assignment satisfies the shell's own checks and
+    reads as unset to every subprocess. This check's own mentions are not
+    reads — it names every row."""
+    own = Path(__file__).name
+    return {
+        name
+        for name, sites in reads.sites.items()
+        for site in sites
+        if (path := site.rsplit(":", 1)[0]).endswith(".py") and Path(path).name != own
+    }
+
+
 def static_problems(manifest: dict, reads: Reads, example: str = "") -> list[str]:
     rows = {r["name"]: r for r in manifest["variables"]}
     external = manifest["external"]
@@ -201,6 +230,17 @@ def static_problems(manifest: dict, reads: Reads, example: str = "") -> list[str
     for name, row in sorted(rows.items()):
         if row["kind"] not in NOT_CONFIG and name not in named:
             problems.append(f"example gap: {name} is not in {EXAMPLE}")
+    exported = tool_reads(reads)
+    for line in example.splitlines():
+        match = ASSIGN_RE.match(line)
+        if not match or match[1] or PREFIX_LINE_RE.match(line):
+            continue
+        name = match[2]
+        if name in exported and rows.get(name, {}).get("kind") not in NOT_CONFIG:
+            problems.append(
+                f"export gap: {name} is read by a tool or hook, so {EXAMPLE} "
+                "must show it exported"
+            )
     for name in sorted(reads.sites):
         if name not in rows and name not in external:
             problems.append(f"undocumented read: {name} ({reads.sites[name][0]})")
@@ -284,11 +324,19 @@ def mapping_problems(manifest: dict, root: Path) -> list[str]:
     return problems
 
 
-def live_rows(manifest: dict, env) -> tuple[list[str], list[str], list[str]]:
+def live_rows(
+    manifest: dict, env, tool_read: set[str] | frozenset[str] = frozenset()
+) -> tuple[list[str], list[str], list[str]]:
     """``(missing, lines, unknown)``: the required rows unset, one line per
-    config row, and the prefixed names in `env` the manifest does not know."""
+    config row, and the prefixed names in `env` the manifest does not know.
+
+    A row a tool reads (`tool_read`) that `UNEXPORTED_ENV` names is counted
+    missing too, required or not: every Python child but this one reads it
+    unset, which is how the private-key hook's vault check went silently off.
+    """
     missing: list[str] = []
     lines: list[str] = []
+    unexported = set(env.get(UNEXPORTED_ENV, "").split()) & set(tool_read)
     known = {r["name"] for r in manifest["variables"]} | set(manifest["external"])
     for row in manifest["variables"]:
         name, kind = row["name"], row["kind"]
@@ -310,6 +358,9 @@ def live_rows(manifest: dict, env) -> tuple[list[str], list[str], list[str]]:
                 lines.append(f"{name} at default ({default})")
             else:
                 lines.append(f"{name} unset")
+        elif name in unexported:
+            missing.append(name)
+            lines.append(f"UNEXPORTED {name}")
         elif kind in OPAQUE:
             # Checked first: an opaque value is never printed, pinned or not.
             lines.append(f"{name} set")
@@ -331,12 +382,18 @@ def live_rows(manifest: dict, env) -> tuple[list[str], list[str], list[str]]:
 
 
 def live_summary(missing: list[str], lines: list[str], unknown: list[str]) -> str:
-    """One report line, leading with any missing required row."""
+    """One report line, leading with any missing required or unexported row."""
     pinned = sum(1 for line in lines if line.startswith("pinned:"))
     unset = sum(1 for line in lines if line.endswith(" unset"))
+    unexported = [n for n in missing if f"UNEXPORTED {n}" in lines]
+    absent = [n for n in missing if n not in unexported]
     parts = []
-    if missing:
-        parts.append(f"{len(missing)} required missing ({', '.join(missing)})")
+    if absent:
+        parts.append(f"{len(absent)} required missing ({', '.join(absent)})")
+    if unexported:
+        parts.append(
+            f"{len(unexported)} assigned but not exported ({', '.join(unexported)})"
+        )
     settled = len(lines) - len(missing) - unset
     parts.append(f"{settled} of {len(lines)} rows set or defaulted")
     if pinned:
@@ -376,7 +433,9 @@ def main(argv: list[str] | None = None, env=None, root: Path = REPO) -> int:
                 f"runtime config manifest: {len(manifest['variables'])} rows, in sync"
             )
         return 1 if problems else 0
-    missing, lines, unknown = live_rows(manifest, os.environ if env is None else env)
+    missing, lines, unknown = live_rows(
+        manifest, os.environ if env is None else env, tool_reads(scan(root))
+    )
     line = live_summary(missing, lines, unknown)
     if args.json:
         out = {"line": line, "missing": missing, "rows": lines, "unknown": unknown}

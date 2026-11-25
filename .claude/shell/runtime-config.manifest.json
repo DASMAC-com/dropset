@@ -100,6 +100,16 @@
       ]
     },
     {
+      "anchor": "docs/conventions/local-integrations.md \u2192 Session secrets",
+      "default": null,
+      "kind": "launcher-set",
+      "name": "DS_CONFIG_UNEXPORTED",
+      "required": false,
+      "verbs": [
+        "plan"
+      ]
+    },
+    {
       "anchor": "docs/conventions/local-integrations.md \u2192 The family, one line each",
       "default": null,
       "kind": "launcher-set",
