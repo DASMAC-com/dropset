@@ -583,7 +583,7 @@ fn draw_status(f: &mut Frame<'_>, app: &App, area: Rect) {
     f.render_widget(
         Paragraph::new(line).block(
             Block::default()
-                .title(format!(" control plane{job}"))
+                .title(format!(" control plane{job}{}", app.snapshot_status()))
                 .borders(Borders::ALL),
         ),
         area,

@@ -1170,13 +1170,34 @@ pub fn execute(
             ticket.levels.len(),
             book::fmt_price(ticket.center)
         ),
-        PassiveOp::Recenter => format!(
-            "Re-centered {} vault #{} on {}",
-            ticket.base_symbol,
-            ticket.seat.seq,
-            book::fmt_price(ticket.center)
-        ),
+        PassiveOp::Recenter => {
+            // One read of the reference just written, so the result line says
+            // what the chain holds without waiting on the cockpit's next poll.
+            let read = accounts::read_reference_price(client, &ticket.market, ticket.seat.idx);
+            format!(
+                "Re-centered {} vault #{} on {} — {}",
+                ticket.base_symbol,
+                ticket.seat.seq,
+                book::fmt_price(ticket.center),
+                readback_note(read, ticket.price, ticket.center)
+            )
+        }
     })
+}
+
+/// The re-center's read-back of the reference it just sent (`sent`, centered
+/// on `center`). A read that does not yet show `sent` is the load-balancer lag
+/// [`chain::fetch_fresh`] documents — the confirmed write has not reached the
+/// node that answered — so it is never worded as a failure. An unreadable
+/// vault carries no RPC error text, which can hold the keyed endpoint URL.
+fn readback_note(read: Option<Price>, sent: Price, center: f64) -> String {
+    match read {
+        Some(price) if price == sent => {
+            format!("the reference reads back {}", book::fmt_price(center))
+        }
+        Some(_) => "the new reference is not yet visible on this node".to_string(),
+        None => "the reference could not be read back — press r to re-check".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -1855,5 +1876,21 @@ mod tests {
             ..ticket
         };
         assert!(!recenter.summary().iter().any(|l| l.starts_with("expiry")));
+    }
+
+    #[test]
+    fn the_readback_names_a_lagging_node_rather_than_a_failure() {
+        let sent = Price::from_value(1.27).unwrap();
+        let old = Price::from_value(1.25).unwrap();
+        assert_eq!(
+            readback_note(Some(sent), sent, 1.27),
+            format!("the reference reads back {}", book::fmt_price(1.27))
+        );
+        let lagging = readback_note(Some(old), sent, 1.27);
+        assert_eq!(lagging, "the new reference is not yet visible on this node");
+        assert!(!lagging.contains("fail"));
+        let unread = readback_note(None, sent, 1.27);
+        assert!(unread.contains("press r"), "{unread}");
+        assert!(!unread.contains("http"), "{unread}");
     }
 }
