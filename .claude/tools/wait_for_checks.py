@@ -1466,7 +1466,7 @@ def dismiss_pr_notifications(pr: int, repo: str, merged: bool = True) -> dict:
     Called on every queue exit but ``probe_failed``. ``failed`` counts failed
     calls (a thread whose ignore and mark-done both fail counts twice).
     ``held`` lists the threads that want a reply — a mention, a review
-    request, a reply in a joined conversation — left undismissed for the
+    request, a reply in a joined conversation — left in the inbox for the
     ``post-merge`` skill to answer; its close dismisses them. Never raises:
     the outcome already happened, so a failure is reported, and the upkeep
     pass's settled-PR sweep is the fallback.

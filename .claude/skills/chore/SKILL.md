@@ -101,6 +101,6 @@ sessions: temporary worktree, no PR".
       ```
 
    Done stays the operator's word — the ask is the mechanism, never a
-   self-marked Done. A no leaves In Review, for `wrap`'s chore branch
-   later. There is no worktree to keep or remove, so `close_session.py`
+   self-marked Done. A no leaves In Review, for `post-merge`'s chore
+   branch later. There is no worktree to keep or remove, so `close_session.py`
    (which refuses the base checkout) is not the close.

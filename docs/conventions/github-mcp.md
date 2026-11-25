@@ -151,6 +151,11 @@ which drifted behind it twice:
   repository object (every `*_url` template) once per notification.
   The dismissal is best-effort — a failure is reported in the verdict's
   `notifications` field, and the settled sweep below is the fallback.
+  **A thread that wants a reply is held, not dismissed**
+  (`--hold-attention`: a mention, a review request, an assignment, a
+  reply in a joined conversation), listed in `notifications.held` and
+  counted on the merged line; `post-merge` answers each, and its
+  `close_session.py` run dismisses every remaining thread.
 
 - **The settled-PR notification sweep** (`pr_notifications.py`) — the
   one rule every other caller applies: `dismiss --settled` dismisses

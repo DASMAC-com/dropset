@@ -13,7 +13,7 @@ Usage:
 
 ``--pr`` selects every thread on the named PRs, whatever their state — the
 close path's form, which has already refused an open PR. **``--hold-attention``**
-(``--pr`` only) then leaves undismissed every selected thread whose GitHub
+(``--pr`` only) then leaves in the inbox every selected thread whose GitHub
 ``reason`` is in ``ATTENTION_REASONS`` — a mention, a review request, a reply
 in a joined conversation — and lists each in ``held`` as ``{id, pr, state,
 reason, title}``: the queue watcher holds them at the merge so the
@@ -90,7 +90,7 @@ SETTLED_STATES = ("MERGED", "CLOSED")
 # a mention (direct or of a team), a review request or assignment, and
 # `comment` — a reply in a conversation this account already joined, which is
 # how a review comment's follow-up arrives. Every other reason (`author`,
-# `ci_activity`, `state_change`, `subscribed`, ...) is the dismissable bulk.
+# `ci_activity`, `state_change`, `subscribed`, ...) is the bulk, safe to dismiss.
 ATTENTION_REASONS = (
     "assign",
     "comment",
@@ -230,9 +230,7 @@ def unsubscribes(thread: dict, keep_subscription: set[int], settled: bool) -> bo
     return not settled and thread["pr"] not in keep_subscription
 
 
-def hold(
-    selected: list[dict], meta: dict[str, dict]
-) -> tuple[list[dict], list[dict]]:
+def hold(selected: list[dict], meta: dict[str, dict]) -> tuple[list[dict], list[dict]]:
     """``(to dismiss, held)``: a thread whose reason is in
     ``ATTENTION_REASONS`` is held, carrying its reason and title, so the
     post-merge tail can answer it before anything marks it done."""
@@ -258,7 +256,7 @@ def dismiss(
     """The whole act; ``prs`` None is settled mode. Threads on PRs in
     ``keep_subscription``, and every settled-mode thread, are marked done
     without being ignored (:func:`unsubscribes`). ``hold_attention`` (``--pr``
-    mode only) leaves a thread that wants a reply undismissed and lists it in
+    mode only) leaves a thread that wants a reply in the inbox and lists it in
     ``held`` (:func:`hold`)."""
     if hold_attention and prs is None:
         raise ValueError("hold_attention applies only to named PRs")

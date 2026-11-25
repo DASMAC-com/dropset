@@ -1,6 +1,6 @@
 ---
 name: session-metrics
-description: The shared closing tail every session runs immediately before its close question or final state write — review-pr's post-merge tail, plan's close-out, wrap, and the architect, explore (audit-scope) and chore handoffs. Derives the session id, prints the `session_metrics.py --brief` cost estimate verbatim, and writes the session's own `Session account` block (three to six lines on what was waste and what it kept having to do). Judges no lever, files nothing, asks nothing; the daily digest lifts the block and `trim-context`, the fold analyst, files across every session.
+description: The shared closing tail every session runs immediately before its close question or final state write — post-merge, plan's close-out, and the architect, explore (audit-scope) and chore handoffs. Derives the session id, prints the `session_metrics.py --brief` cost estimate verbatim, and writes the session's own `Session account` block (three to six lines on what was waste and what it kept having to do). Judges no lever, files nothing, asks nothing; the daily digest lifts the block and `trim-context`, the fold analyst, files across every session.
 disable-model-invocation: false
 user-invocable: true
 ---
