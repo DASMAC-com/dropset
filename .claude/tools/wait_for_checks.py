@@ -1472,7 +1472,7 @@ def dismiss_pr_notifications(pr: int, repo: str, merged: bool = True) -> dict:
     skill to answer; its close dismisses them. Any other exit holds nothing:
     review-pr goes on with the PR there, and only the merged line names a
     held count. Never raises: the outcome already happened, so a failure is
-    reported, and the upkeep pass's settled-PR sweep is the fallback.
+    reported, and the scheduler's repo-wide sweep is the fallback.
     """
     try:
         rc, result = pr_notifications.dismiss(
