@@ -4,12 +4,7 @@ import { useWalletConnection } from "@solana/react-hooks";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { SearchBox } from "@/components/ui/SearchBox";
-import {
-  compareSortValues,
-  SortableHeader,
-  type SortDir,
-  type SortState,
-} from "@/components/ui/SortableHeader";
+import { SortableHeader, type SortState } from "@/components/ui/SortableHeader";
 import { VaultActionDialog } from "@/components/vaults/dialog/VaultActionDialog";
 import { FilterChip } from "@/components/vaults/FilterChip";
 import { VaultRow } from "@/components/vaults/VaultRow";
@@ -21,21 +16,13 @@ import { shortenMint } from "@/lib/data/currencies";
 import { positionPnl } from "@/lib/data/pnl";
 import type { VaultPosition } from "@/lib/data/positions";
 import {
-  cmpPairCode,
-  type FxPairGroup,
   findVaultBySeq,
   type GroupedVault,
-  groupMetric,
   groupVaultMarkets,
   isVaultPinned,
   type MetricKey,
   type Vault,
   type VaultMarket,
-  type VaultPin,
-  vaultLabel,
-  vaultMetric,
-  vaultNumberLabel,
-  vaultPinMatches,
   vaultRefPrice,
 } from "@/lib/data/vaults";
 import { realizedVault } from "@/lib/eclob/vaultTx";
@@ -43,10 +30,10 @@ import { useAppEvent } from "@/lib/events";
 import { useChainVaults } from "@/lib/hooks/useChainVaults";
 import {
   replaceUrlParams,
+  useVaultPin,
   VAULT_SEQ_PARAM,
-  vaultPinFromParams,
-  vaultPinParams,
 } from "@/lib/ui/swapUrl";
+import { type ArrangedSection, arrangeVaultsTable } from "@/lib/vaults/table";
 
 // The table shows only what the chain gives. APR, 24h volume and the pair's
 // 24h figures need trade history, so they return with the indexer rather than
@@ -57,63 +44,9 @@ import {
 // `sortKey` props type-check against `sort` / `onToggle`.
 const VaultSortHeader = SortableHeader<MetricKey>;
 
-// Shared null-sinking, case-insensitive comparator (see SortableHeader).
-const cmpMetric = compareSortValues;
-
 // A `leader` pin longer than this is treated as a full pubkey and shortened in
 // its chip; a shorter value is a hand-typed prefix and shown verbatim.
 const LEADER_SLUG_MAX = 12;
-
-// Substring match across the pair's FX label / currency names and
-// the vault's tokens, name, vault number and leader address.
-const matchesQuery = (
-  q: string,
-  group: FxPairGroup,
-  entry: GroupedVault,
-): boolean => {
-  if (!q) return true;
-  return [
-    group.label,
-    group.baseName,
-    group.quoteName,
-    group.baseCurrency,
-    group.quoteCurrency,
-    entry.market.base,
-    entry.market.quote,
-    entry.market.label,
-    entry.vault.name ?? "",
-    vaultNumberLabel(entry.vault),
-    entry.vault.leader,
-  ].some((s) => s.toLowerCase().includes(q));
-};
-
-// The table's rows, filtered and sorted both ways.
-type ArrangedSection = {
-  groups: { group: FxPairGroup; vaults: GroupedVault[] }[];
-  flat: GroupedVault[];
-};
-
-// Filter + sort the groups: grouped (each group's vaults filtered and sorted,
-// then the groups sorted, dropping any left empty) and flat (every vault,
-// filtered and sorted as one list).
-function arrangeSection(
-  sectionGroups: FxPairGroup[],
-  keep: (group: FxPairGroup, entry: GroupedVault) => boolean,
-  cmpGroup: (a: FxPairGroup, b: FxPairGroup) => number,
-  cmpVault: (a: GroupedVault, b: GroupedVault) => number,
-): ArrangedSection {
-  const groups = [...sectionGroups]
-    .sort(cmpGroup)
-    .map((group) => ({
-      group,
-      vaults: group.vaults.filter((entry) => keep(group, entry)).sort(cmpVault),
-    }))
-    .filter((g) => g.vaults.length > 0);
-  const flat = sectionGroups
-    .flatMap((group) => group.vaults.filter((entry) => keep(group, entry)))
-    .sort(cmpVault);
-  return { groups, flat };
-}
 
 function VaultsInner() {
   const { connected } = useWalletConnection();
@@ -135,25 +68,8 @@ function VaultsInner() {
     market: VaultMarket;
     vault: Vault;
   } | null>(null);
-
-  // Seed the pin from the URL once, then own it in state. Updates write back to
-  // the URL via replaceState (no router transition) so the address bar always
-  // reflects — and can reproduce — the current filter, mirroring /currencies.
-  // The pin (VaultPin) is driven by the `?base=&quote=&leader=` URL params
-  // (`vault=` for a number-keyed link), so a filtered view is a shareable
-  // deep link to a vault.
-  const [pin, setPin] = useState<VaultPin>(() =>
-    vaultPinFromParams(searchParams),
-  );
-  // Merge against the current pin and apply the URL write as a plain side
-  // effect — NOT inside the setPin updater, which React may re-run during
-  // render (replaceState there pokes the Router mid-render). updatePin runs
-  // from event handlers, so the `pin` closure is current.
-  const updatePin = (next: Partial<VaultPin>) => {
-    const merged = { ...pin, ...next };
-    setPin(merged);
-    replaceUrlParams(vaultPinParams(merged));
-  };
+  // The URL pin filter (`?base=&quote=&leader=`, or `&vault=`); see useVaultPin.
+  const [pin, updatePin] = useVaultPin();
 
   // A public vault link (vaultLinkHref) names one live vault by its pair and
   // `seq`. Captured once from the URL; when the first live read lands, that
@@ -180,22 +96,6 @@ function VaultsInner() {
     setLink(null);
   }, [link, chain.status, chain.markets]);
 
-  // Re-sync the pin from the URL on browser Back/Forward. Our own writes use
-  // replaceState (no navigation), so only popstate can move the URL out from
-  // under the state — without this the table/chips would keep a stale pin.
-  useEffect(() => {
-    const onPop = () =>
-      setPin(vaultPinFromParams(new URLSearchParams(window.location.search)));
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-
-  const matchesPin = useCallback(
-    (entry: GroupedVault): boolean =>
-      vaultPinMatches(pin, entry.market, entry.vault),
-    [pin],
-  );
-
   // A vault's position is the connected wallet's VaultDepositor account.
   const positionFor = useCallback(
     (vault: Vault): VaultPosition | null =>
@@ -215,7 +115,7 @@ function VaultsInner() {
 
   // The connected user's position value in a vault (0 if none) — the sort key
   // "position" can't live in vaultMetric since it depends on wallet state.
-  // Memoized so the sort useMemos below have a stable dependency.
+  // Memoized so the table's useMemo below has a stable dependency.
   const positionValue = useCallback(
     (vault: Vault): number => {
       const p = positionFor(vault);
@@ -229,32 +129,6 @@ function VaultsInner() {
     },
     [positionFor],
   );
-  const vaultSortValue = useCallback(
-    (gv: GroupedVault, key: MetricKey): number | string | null => {
-      if (key === "position") return positionValue(gv.vault);
-      if (key === "name") return vaultLabel(gv.vault);
-      if (key === "pair") return gv.market.label;
-      return vaultMetric(gv, key);
-    },
-    [positionValue],
-  );
-  const groupSortValue = useCallback(
-    (g: FxPairGroup, key: MetricKey): number | string | null => {
-      if (key === "position")
-        return g.vaults.reduce((sum, gv) => sum + positionValue(gv.vault), 0);
-      // A pair groups many vaults, so rank it by its first label in the
-      // row-level name order (cmpMetric ascending).
-      if (key === "name")
-        return (
-          g.vaults
-            .map((gv) => vaultLabel(gv.vault))
-            .sort((a, b) => cmpMetric(a, b, "asc"))[0] ?? null
-        );
-      if (key === "pair") return g.label;
-      return groupMetric(g, key);
-    },
-    [positionValue],
-  );
 
   const toggleSort = (key: MetricKey) =>
     setSort((prev) => {
@@ -267,31 +141,10 @@ function VaultsInner() {
   useAppEvent("toggleGroupByPair", () => setGroupByPair((g) => !g));
   useAppEvent("vaultsSort", (key) => toggleSort(key));
 
-  const q = query.trim().toLowerCase();
-
-  // With no column sort chosen, the pairs read alphabetically by base
-  // currency code (cmpPairCode) and each pair's vaults by TVL, largest first.
-  const live = useMemo(() => {
-    const keep = (group: FxPairGroup, entry: GroupedVault) =>
-      matchesQuery(q, group, entry) && matchesPin(entry);
-    const byVault =
-      (key: MetricKey, direction: SortDir) =>
-      (a: GroupedVault, b: GroupedVault) =>
-        cmpMetric(vaultSortValue(a, key), vaultSortValue(b, key), direction);
-    if (sort === null) {
-      const byTvl = byVault("tvl", "desc");
-      return arrangeSection(
-        liveGroups,
-        keep,
-        cmpPairCode,
-        (a, b) => cmpPairCode(a.market, b.market) || byTvl(a, b),
-      );
-    }
-    const { key, direction } = sort;
-    const cmpGroup = (a: FxPairGroup, b: FxPairGroup) =>
-      cmpMetric(groupSortValue(a, key), groupSortValue(b, key), direction);
-    return arrangeSection(liveGroups, keep, cmpGroup, byVault(key, direction));
-  }, [liveGroups, sort, q, matchesPin, groupSortValue, vaultSortValue]);
+  const live = useMemo(
+    () => arrangeVaultsTable(liveGroups, { query, pin, sort, positionValue }),
+    [liveGroups, query, pin, sort, positionValue],
+  );
 
   const onManage = (market: VaultMarket, vault: Vault) =>
     setDialog({ market, vault });

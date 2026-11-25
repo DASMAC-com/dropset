@@ -1,7 +1,8 @@
 "use client";
 
 import type { Route } from "next";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import type { IsoCurrencyCode } from "@/lib/data/currencies";
 import type { VaultPin } from "@/lib/data/vaults";
 import { useSwapStoreApi } from "@/lib/store";
@@ -95,6 +96,44 @@ export const replaceUrlParams = (
     `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`,
   );
 };
+
+// The pin a raw query string (`location.search`, its `?` optional) carries.
+export const readVaultPin = (search: string): VaultPin =>
+  vaultPinFromParams(new URLSearchParams(search));
+
+// The Vaults tab's pin, seeded from the URL once and then owned in state.
+// Updates write back to the URL via replaceState (no router transition) so the
+// address bar always reflects — and can reproduce — the current filter,
+// mirroring /currencies. The pin is driven by the `?base=&quote=&leader=` URL
+// params (`vault=` for a number-keyed link), so a filtered view is a shareable
+// deep link to a vault. The caller sits under a Suspense boundary
+// (useSearchParams).
+export function useVaultPin(): [VaultPin, (next: Partial<VaultPin>) => void] {
+  const searchParams = useSearchParams();
+  const [pin, setPin] = useState<VaultPin>(() =>
+    vaultPinFromParams(searchParams),
+  );
+  // Merge against the current pin and apply the URL write as a plain side
+  // effect — NOT inside the setPin updater, which React may re-run during
+  // render (replaceState there pokes the Router mid-render). updatePin runs
+  // from event handlers, so the `pin` closure is current.
+  const updatePin = (next: Partial<VaultPin>) => {
+    const merged = { ...pin, ...next };
+    setPin(merged);
+    replaceUrlParams(vaultPinParams(merged));
+  };
+
+  // Re-sync the pin from the URL on browser Back/Forward. Our own writes use
+  // replaceState (no navigation), so only popstate can move the URL out from
+  // under the state — without this the table/chips would keep a stale pin.
+  useEffect(() => {
+    const onPop = () => setPin(readVaultPin(window.location.search));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  return [pin, updatePin];
+}
 
 // Navigate to the Vaults tab filtered to a pair. Vaults state lives entirely in
 // the URL (there's no persisted store like swap's), so a plain push is the

@@ -182,18 +182,26 @@ export function VaultRow({
               ahead of the leader-set name, which can't then pass for another
               vault's number (the pin keys on the leader). The hover
               keeps the full address; its copy and explorer links live in
-              the dialog. */}
-          <span
-            className="shrink-0 font-mono text-foreground text-xs"
-            title={`${vaultLabel(vault)} — Leader ${vault.leader}`}
+              the dialog. Clicking the number or name toggles the pin like
+              the crosshair; the crosshair stays the one keyboard stop. */}
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => onPin(entry)}
+            className="flex min-w-0 cursor-pointer items-center gap-1"
           >
-            {vaultNumberLabel(vault)}
-          </span>
-          {vault.name && (
-            <span className="max-w-48 truncate font-medium text-foreground text-sm">
-              {vault.name}
+            <span
+              className="shrink-0 font-mono text-foreground text-xs"
+              title={`${vaultLabel(vault)} — Leader ${vault.leader}`}
+            >
+              {vaultNumberLabel(vault)}
             </span>
-          )}
+            {vault.name && (
+              <span className="max-w-48 truncate font-medium text-foreground text-sm">
+                {vault.name}
+              </span>
+            )}
+          </button>
           {/* Pin the view to this exact vault — writes base/quote and the
               leader's address into the URL (a shareable deep link); click
               again to clear. */}
