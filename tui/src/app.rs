@@ -59,6 +59,67 @@ use std::time::{Duration, Instant};
 
 /// Re-poll on-chain state at least this often, even with no job activity.
 const REFRESH_INTERVAL: Duration = Duration::from_millis(700);
+/// The interval poll on mainnet, where one poll (a program scan among it)
+/// outlasts [`REFRESH_INTERVAL`] and freezes the keys while it runs.
+const MAINNET_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Whether this tick runs the chain poll — see [`App::maybe_refresh`].
+///
+/// Off mainnet a forced poll runs at once and the interval is
+/// [`REFRESH_INTERVAL`], whatever else is going on. On mainnet the poll runs
+/// on the UI thread and is slow, so it waits out an open prompt and the tick a
+/// job's `Done` was drained on (the result line is drawn first), holds a
+/// forced poll while a job runs (its `Done` forces the one poll it costs), and
+/// otherwise runs every [`MAINNET_REFRESH_INTERVAL`]. A held poll is never
+/// dropped: `forced` stays set until a poll runs.
+fn poll_due(
+    cluster: Cluster,
+    forced: bool,
+    elapsed: Duration,
+    prompt_open: bool,
+    job_running: bool,
+    job_just_finished: bool,
+) -> bool {
+    if !cluster.is_mainnet() {
+        return forced || elapsed >= REFRESH_INTERVAL;
+    }
+    if prompt_open || job_just_finished {
+        return false;
+    }
+    (forced && !job_running) || elapsed >= MAINNET_REFRESH_INTERVAL
+}
+
+/// Keep the last good market list when a mainnet poll comes back with none —
+/// a failed program scan reads as an empty list, which would blank the panes
+/// and make `c` refuse with no market selected. Only when `previous` had
+/// markets: with no good list yet there is nothing to keep. Returns whether
+/// `next` now carries a stale list.
+fn carry_markets(
+    cluster: Cluster,
+    previous: Vec<accounts::MarketView>,
+    next: &mut ChainState,
+) -> bool {
+    if !cluster.is_mainnet() || !next.markets.is_empty() || previous.is_empty() {
+        return false;
+    }
+    next.markets = previous;
+    true
+}
+
+/// The status-line note on the snapshot's age, and whether its market list
+/// is a stale carry (see [`carry_markets`]). Empty before the first poll.
+fn snapshot_label(age: Option<Duration>, stale: bool) -> String {
+    let Some(age) = age else {
+        return String::new();
+    };
+    // Short, so a narrow terminal's title cut does not drop it.
+    let stale = if stale {
+        " · STALE markets (last scan empty)"
+    } else {
+        ""
+    };
+    format!(" · snapshot {}s old{stale} ", age.as_secs())
+}
 /// How many log lines to retain.
 const LOG_CAPACITY: usize = 1_000;
 /// How many recent fills to retain across all markets — the fills pane shows a
@@ -442,6 +503,11 @@ pub struct App {
     /// Append handle for the on-disk log mirror, if it opened.
     log_file: Option<File>,
     last_refresh: Instant,
+    /// When the shown snapshot was polled; `None` before the first poll.
+    snapshot_at: Option<Instant>,
+    /// The shown market list is a carry from an earlier poll, the latest scan
+    /// having found none (see [`carry_markets`]).
+    snapshot_stale: bool,
     dirty: bool,
     /// Markets the maker reported as quoting on a **pinned** basis — no
     /// independent source prices the token, so the mid rests on the FX anchor
@@ -546,6 +612,8 @@ impl App {
             log_file,
             // Force an immediate first poll.
             last_refresh: Instant::now() - REFRESH_INTERVAL,
+            snapshot_at: None,
+            snapshot_stale: false,
             dirty: true,
             unverified_markets: BTreeSet::new(),
             basis_config_suspects: BTreeSet::new(),
@@ -627,8 +695,8 @@ impl App {
             }
 
             busy_since = Instant::now();
-            self.drain_jobs();
-            self.maybe_refresh();
+            let job_finished = self.drain_jobs();
+            self.maybe_refresh(job_finished);
             self.maybe_auto_bootstrap();
         }
         Ok(())
@@ -812,6 +880,16 @@ impl App {
         if let Err(e) = open::that(&url) {
             self.log(LogKind::Err, format!("open explorer: {e:#}"));
         }
+    }
+
+    /// The control plane's note on the snapshot's age (see
+    /// [`snapshot_label`]) — mainnet only, where the interval poll is
+    /// [`MAINNET_REFRESH_INTERVAL`] and a prompt or a job holds it.
+    pub(crate) fn snapshot_status(&self) -> String {
+        if !self.ctx.cluster.is_mainnet() {
+            return String::new();
+        }
+        snapshot_label(self.snapshot_at.map(|t| t.elapsed()), self.snapshot_stale)
     }
 
     /// Whether a prompt owns the keys, so `q` and Esc edit or cancel it
@@ -2202,7 +2280,9 @@ impl App {
     }
 
     /// Drain everything the running jobs have queued since the last tick.
-    fn drain_jobs(&mut self) {
+    /// Returns whether a job's `Done` was among it.
+    fn drain_jobs(&mut self) -> bool {
+        let mut finished = false;
         while let Ok(ev) = self.rx.try_recv() {
             match ev {
                 JobEvent::Log(s) => {
@@ -2219,10 +2299,12 @@ impl App {
                 JobEvent::Done { ok, summary } => {
                     self.job_running = false;
                     self.dirty = true;
+                    finished = true;
                     self.log(if ok { LogKind::Ok } else { LogKind::Err }, summary);
                 }
             }
         }
+        finished
     }
 
     /// Classify the chain behind a localnet session's endpoint, once, on the
@@ -2254,12 +2336,22 @@ impl App {
         }
     }
 
-    /// Re-poll on-chain state if forced (`dirty`) or the interval elapsed.
-    /// Also reaps any maker bot that exited on its own, so the per-market
-    /// status reflects a crashed or orphaned bot, and clamps the selection to
-    /// the current market count (a wipe can drop the markets out from under it).
-    fn maybe_refresh(&mut self) {
-        if self.dirty || self.last_refresh.elapsed() >= REFRESH_INTERVAL {
+    /// Re-poll on-chain state if forced (`dirty`) or the interval elapsed, as
+    /// [`poll_due`] gates it — `job_finished` is whether this tick drained a
+    /// job's `Done`. Also reaps any maker bot that exited on its own, so the
+    /// per-market status reflects a crashed or orphaned bot, and clamps the
+    /// selection to the current market count (a wipe can drop the markets out
+    /// from under it).
+    fn maybe_refresh(&mut self, job_finished: bool) {
+        if poll_due(
+            self.ctx.cluster,
+            self.dirty,
+            self.last_refresh.elapsed(),
+            self.in_prompt(),
+            self.job_running,
+            job_finished,
+        ) {
+            let previous = std::mem::take(&mut self.chain.markets);
             self.chain = accounts::poll(
                 &self.client,
                 self.ctx.cluster,
@@ -2268,6 +2360,8 @@ impl App {
                 self.selected_market,
                 &self.mint_symbols,
             );
+            self.snapshot_stale = carry_markets(self.ctx.cluster, previous, &mut self.chain);
+            self.snapshot_at = Some(Instant::now());
             self.chain.roster_markets = self.roster_markets.clone();
             self.chain.roster_leader = self.roster_leader;
             self.check_identity();
@@ -2526,6 +2620,124 @@ fn classify_basis_line(line: &str) -> Option<(String, BasisNote)> {
         return None;
     };
     Some((symbol.trim().to_string(), note))
+}
+
+#[cfg(test)]
+mod poll_gate_tests {
+    use super::{
+        carry_markets, poll_due, snapshot_label, ChainState, Cluster, MAINNET_REFRESH_INTERVAL,
+        REFRESH_INTERVAL,
+    };
+    use crate::accounts::tests::market;
+    use std::time::Duration;
+
+    const NOW: Duration = Duration::ZERO;
+
+    /// `poll_due` with nothing but `forced` and `elapsed` set.
+    fn idle(cluster: Cluster, forced: bool, elapsed: Duration) -> bool {
+        poll_due(cluster, forced, elapsed, false, false, false)
+    }
+
+    #[test]
+    fn localnet_keeps_its_700_ms_poll_and_immediate_forced_polls() {
+        let l = Cluster::Localnet;
+        assert!(!idle(l, false, REFRESH_INTERVAL - Duration::from_millis(1)));
+        assert!(idle(l, false, REFRESH_INTERVAL));
+        assert!(idle(l, true, NOW));
+        // Nothing mainnet holds on holds here.
+        assert!(poll_due(l, true, NOW, true, true, true));
+    }
+
+    #[test]
+    fn mainnet_polls_on_a_30_s_interval_and_r_forces_one_at_once() {
+        let m = Cluster::Mainnet;
+        assert!(!idle(m, false, REFRESH_INTERVAL));
+        assert!(!idle(
+            m,
+            false,
+            MAINNET_REFRESH_INTERVAL - Duration::from_secs(1)
+        ));
+        assert!(idle(m, false, MAINNET_REFRESH_INTERVAL));
+        assert!(idle(m, true, NOW));
+    }
+
+    #[test]
+    fn an_open_prompt_holds_every_mainnet_poll_until_it_closes() {
+        let m = Cluster::Mainnet;
+        let long = MAINNET_REFRESH_INTERVAL * 2;
+        assert!(!poll_due(m, true, NOW, true, false, false));
+        assert!(!poll_due(m, false, long, true, false, false));
+        // Closed, by confirm or by cancel alike, the held forced poll runs:
+        // the gate reads only whether a prompt is open, and `forced` was kept.
+        assert!(poll_due(m, true, NOW, false, false, false));
+    }
+
+    #[test]
+    fn a_running_job_holds_a_forced_poll_until_its_done_is_drawn() {
+        let m = Cluster::Mainnet;
+        // `AccountsChanged` mid-job: held.
+        assert!(!poll_due(m, true, NOW, false, true, false));
+        // The tick its `Done` is drained: skipped, so the result line draws.
+        assert!(!poll_due(m, true, NOW, false, false, true));
+        // The next tick: the one poll the job costs.
+        assert!(poll_due(m, true, NOW, false, false, false));
+        // A job never pins the panes: the interval still runs beside it.
+        assert!(poll_due(
+            m,
+            false,
+            MAINNET_REFRESH_INTERVAL,
+            false,
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn an_empty_mainnet_scan_keeps_the_last_good_markets_and_reads_stale() {
+        let mut next = ChainState::default();
+        assert!(carry_markets(
+            Cluster::Mainnet,
+            vec![market(1, 7)],
+            &mut next
+        ));
+        assert_eq!(next.markets.len(), 1);
+        // No good list yet: nothing to keep, and `c` still refuses.
+        let mut next = ChainState::default();
+        assert!(!carry_markets(Cluster::Mainnet, Vec::new(), &mut next));
+        assert!(next.markets.is_empty());
+        // A scan that found markets replaces the old list.
+        let mut next = ChainState {
+            markets: vec![market(1, 8)],
+            ..ChainState::default()
+        };
+        assert!(!carry_markets(
+            Cluster::Mainnet,
+            vec![market(1, 7), market(1, 9)],
+            &mut next
+        ));
+        assert_eq!(next.markets.len(), 1);
+        // Localnet shows what the scan found, as before.
+        let mut next = ChainState::default();
+        assert!(!carry_markets(
+            Cluster::Localnet,
+            vec![market(1, 7)],
+            &mut next
+        ));
+        assert!(next.markets.is_empty());
+    }
+
+    #[test]
+    fn the_status_line_shows_the_snapshot_age_and_a_stale_list() {
+        assert_eq!(snapshot_label(None, false), "");
+        assert_eq!(
+            snapshot_label(Some(Duration::from_millis(12_400)), false),
+            " · snapshot 12s old "
+        );
+        assert_eq!(
+            snapshot_label(Some(NOW), true),
+            " · snapshot 0s old · STALE markets (last scan empty) "
+        );
+    }
 }
 
 #[cfg(test)]

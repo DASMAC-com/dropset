@@ -34,6 +34,24 @@ The TUI checks the endpoint's genesis hash, then asks for a typed
 confirmation before it draws the panel. The quote key loads at launch; the
 leader key loads only when close, drain or the open first needs it.
 
+### How the panes refresh
+
+On mainnet the panes poll the chain every 30 seconds, not every 700 ms as
+on localnet, because a poll freezes the keys while it runs. `r` polls at
+once, except while a prompt is open or a job runs. The control-plane title
+shows how old the snapshot is.
+
+- An open prompt holds the poll. Anything that asked for one meanwhile,
+  `r` included, polls when the prompt closes, confirmed or canceled.
+- A running job holds every poll asked for while it runs, `r` included,
+  until its result line is drawn; the poll runs on the next tick. The
+  30-second poll still runs during a long job, so the panes never freeze.
+- A poll that finds no markets keeps the last list it had, and the title
+  reads `STALE markets`. Press `r` to try again.
+- A re-center's result line reads the new reference back once. "Not yet
+  visible on this node" is node lag, not a failure: press `r` to check
+  again later.
+
 ## The stop, in order
 
 Every step opens a red **REAL FUNDS** prompt over a plan read fresh from
