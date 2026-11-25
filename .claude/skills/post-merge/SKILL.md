@@ -140,9 +140,10 @@ same command without `--dry-run`, plus `--keep-worktree` for the
 second option and `--issue ENG-###` on a branch that is not
 `eng-###`. **The state write lands before any removal, never the
 reverse**: a worktree removed while its issue reads In Review strands
-the session. On the removal path the tool runs `make clean` first, so
-the build trees free their disk now, then dismisses the PR's
-notification threads (held ones included) and removes the tree. Never
+the session. On either yes the tool then dismisses the PR's
+notification threads (held ones included); on the removal path it runs
+`make clean`, so the build trees free their disk now, and removes the
+tree. Never
 remove a worktree any other way. Exit 2 means Done landed and the
 removal did not; relay its note.
 

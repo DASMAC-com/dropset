@@ -380,7 +380,6 @@ class CloseTests(unittest.TestCase):
         self.assertFalse(any(c[3:5] == ["worktree", "unlock"] for c in runner.calls))
 
 
-@unittest.skipUnless(shutil.which("git"), "git not installed")
 class ReclaimTests(unittest.TestCase):
     """``make clean`` runs in the closing tree after the state write and
     before the removal, on the removal path only."""
@@ -425,6 +424,7 @@ class ReclaimTests(unittest.TestCase):
             self.assertFalse(result["reclaimed"])
 
 
+@unittest.skipUnless(shutil.which("git"), "git not installed")
 class LeftoverTests(unittest.TestCase):
     """The ledger gate: every leftover filed, handed or dropped before a
     Done close, refused before any write otherwise."""
