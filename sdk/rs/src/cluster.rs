@@ -17,7 +17,11 @@
 //! `#[event_cpi]` instruction's program and event-authority accounts follow
 //! the same deployment: the generated `<Name>Builder` defaults both from it,
 //! and every such generated builder panics on an explicit account for
-//! another cluster before any instruction is built.
+//! another cluster before any instruction is built. Each also has a
+//! `try_instruction` form (and, on the accounts struct,
+//! `try_instruction_with_remaining_accounts`) that returns that refusal as a
+//! [`SelfCpiAccountMismatch`] instead, for a caller whose accounts come from
+//! configuration or received data.
 //!
 //! The localnet id's secret is committed, so anyone can deploy a program at
 //! that address on a public cluster. A [`Deployment`] can never resolve to
@@ -135,6 +139,83 @@ pub fn vault_depositor_pda(
 /// Address only: no instruction takes its bump.
 pub fn event_authority(program_id: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[b"__event_authority"], program_id).0
+}
+
+/// Which `#[event_cpi]` self-CPI account a [`SelfCpiAccountMismatch`] names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelfCpiAccount {
+    /// The program account, which must be the deployment's program id.
+    Program,
+    /// The event-authority account, which must be the deployment program's
+    /// [`event_authority`].
+    EventAuthority,
+}
+
+/// A generated `try_instruction` builder's refusal: an explicit self-CPI
+/// account that does not match the [`Deployment`] the builder aims at. The
+/// panicking `instruction` forms refuse the same accounts with a panic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SelfCpiAccountMismatch {
+    /// The cluster the builder was handed.
+    pub deployment: Deployment,
+    /// The mismatched account.
+    pub account: SelfCpiAccount,
+    /// The address the deployment requires.
+    pub expected: Pubkey,
+    /// The address the caller supplied.
+    pub found: Pubkey,
+}
+
+/// Each message opens with the panicking builders' `assert_eq!` message for
+/// the same account (emitted by `sdk/codama/generate.mjs`), so the two
+/// refusals read alike; edit them together.
+impl fmt::Display for SelfCpiAccountMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (deployment, expected, found) = (self.deployment, self.expected, self.found);
+        match self.account {
+            SelfCpiAccount::Program => write!(
+                f,
+                "program account is not the {deployment:?} program id: expected \
+                 {expected}, found {found}"
+            ),
+            SelfCpiAccount::EventAuthority => write!(
+                f,
+                "event_authority is not the {deployment:?} program's event authority: \
+                 expected {expected}, found {found}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SelfCpiAccountMismatch {}
+
+/// Check an `#[event_cpi]` instruction's `program` and `event_authority`
+/// accounts against `deployment`, program first. The generated
+/// `try_instruction` builders call this before building.
+pub fn check_self_cpi_accounts(
+    deployment: Deployment,
+    program: Pubkey,
+    event_authority_account: Pubkey,
+) -> Result<(), SelfCpiAccountMismatch> {
+    let mismatch = |account, expected, found| SelfCpiAccountMismatch {
+        deployment,
+        account,
+        expected,
+        found,
+    };
+    let program_id = deployment.program_id();
+    if program != program_id {
+        return Err(mismatch(SelfCpiAccount::Program, program_id, program));
+    }
+    let authority = event_authority(&program_id);
+    if event_authority_account != authority {
+        return Err(mismatch(
+            SelfCpiAccount::EventAuthority,
+            authority,
+            event_authority_account,
+        ));
+    }
+    Ok(())
 }
 
 /// Whether a program binary embeds `program_id` and not [`DROPSET_ID`].
@@ -313,6 +394,87 @@ mod tests {
         withdraw_leader_builder()
             .event_authority(event_authority(&DROPSET_ID))
             .instruction(Deployment::Mainnet);
+    }
+
+    /// `try_instruction` returns the same refusals as a typed error naming
+    /// the expected and found account, for a caller whose accounts come
+    /// from configuration rather than a literal.
+    #[test]
+    fn try_instruction_returns_a_mismatched_explicit_program_account() {
+        let err = withdraw_leader_builder()
+            .program(DROPSET_ID)
+            .try_instruction(Deployment::Mainnet)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            SelfCpiAccountMismatch {
+                deployment: Deployment::Mainnet,
+                account: SelfCpiAccount::Program,
+                expected: DROPSET_MAINNET_ID,
+                found: DROPSET_ID,
+            }
+        );
+        assert!(err
+            .to_string()
+            .starts_with("program account is not the Mainnet program id"));
+    }
+
+    #[test]
+    fn try_instruction_returns_a_mismatched_explicit_event_authority() {
+        let found = event_authority(&DROPSET_ID);
+        let err = withdraw_leader_builder()
+            .event_authority(found)
+            .try_instruction(Deployment::Mainnet)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            SelfCpiAccountMismatch {
+                deployment: Deployment::Mainnet,
+                account: SelfCpiAccount::EventAuthority,
+                expected: event_authority(&DROPSET_MAINNET_ID),
+                found,
+            }
+        );
+    }
+
+    /// A matching set builds exactly what the panicking form builds, on the
+    /// builder and on the accounts struct, with and without remaining
+    /// accounts.
+    #[test]
+    fn try_instruction_matches_instruction_on_a_matching_set() {
+        for deployment in [Deployment::Localnet, Deployment::Mainnet] {
+            let program = deployment.program_id();
+            let mut builder = withdraw_leader_builder();
+            builder
+                .program(program)
+                .event_authority(event_authority(&program));
+            assert_eq!(
+                builder.try_instruction(deployment),
+                Ok(builder.instruction(deployment))
+            );
+
+            let key = Pubkey::new_unique();
+            let accounts = crate::instructions::CloseRegistryFeeVault {
+                admin: key,
+                registry: key,
+                fee_mint: key,
+                token_program: key,
+                fee_vault: key,
+                token_recipient: key,
+                rent_recipient: key,
+                event_authority: event_authority(&program),
+                program,
+            };
+            assert_eq!(
+                accounts.try_instruction(deployment),
+                Ok(accounts.instruction(deployment))
+            );
+            let extra = [solana_instruction::AccountMeta::new(key, false)];
+            assert_eq!(
+                accounts.try_instruction_with_remaining_accounts(deployment, &extra),
+                Ok(accounts.instruction_with_remaining_accounts(deployment, &extra))
+            );
+        }
     }
 
     #[test]

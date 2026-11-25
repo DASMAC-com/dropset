@@ -70,6 +70,14 @@ impl CloseMarketTreasury {
     pub fn instruction(&self, deployment: crate::Deployment) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(deployment, &[])
     }
+    /// [`Self::instruction`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    pub fn try_instruction(
+        &self,
+        deployment: crate::Deployment,
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        self.try_instruction_with_remaining_accounts(deployment, &[])
+    }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
@@ -130,6 +138,16 @@ impl CloseMarketTreasury {
             accounts,
             data,
         }
+    }
+    /// [`Self::instruction_with_remaining_accounts`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    pub fn try_instruction_with_remaining_accounts(
+        &self,
+        deployment: crate::Deployment,
+        remaining_accounts: &[solana_instruction::AccountMeta],
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        crate::cluster::check_self_cpi_accounts(deployment, self.program, self.event_authority)?;
+        Ok(self.instruction_with_remaining_accounts(deployment, remaining_accounts))
     }
 }
 
@@ -317,6 +335,32 @@ impl CloseMarketTreasuryBuilder {
         };
 
         accounts.instruction_with_remaining_accounts(deployment, &self.__remaining_accounts)
+    }
+    /// [`Self::instruction`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    #[allow(clippy::clone_on_copy)]
+    pub fn try_instruction(
+        &self,
+        deployment: crate::Deployment,
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        let accounts = CloseMarketTreasury {
+            admin: self.admin.expect("admin is not set"),
+            registry: self.registry.expect("registry is not set"),
+            market: self.market.expect("market is not set"),
+            mint: self.mint.expect("mint is not set"),
+            token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!(
+                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            )),
+            treasury: self.treasury.expect("treasury is not set"),
+            token_recipient: self.token_recipient.expect("token_recipient is not set"),
+            rent_recipient: self.rent_recipient.expect("rent_recipient is not set"),
+            event_authority: self
+                .event_authority
+                .unwrap_or_else(|| crate::cluster::event_authority(&deployment.program_id())),
+            program: self.program.unwrap_or(deployment.program_id()),
+        };
+
+        accounts.try_instruction_with_remaining_accounts(deployment, &self.__remaining_accounts)
     }
 }
 

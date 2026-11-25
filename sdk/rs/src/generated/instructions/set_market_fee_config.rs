@@ -62,6 +62,15 @@ impl SetMarketFeeConfig {
     ) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(deployment, args, &[])
     }
+    /// [`Self::instruction`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    pub fn try_instruction(
+        &self,
+        deployment: crate::Deployment,
+        args: SetMarketFeeConfigInstructionArgs,
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        self.try_instruction_with_remaining_accounts(deployment, args, &[])
+    }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
@@ -127,6 +136,17 @@ impl SetMarketFeeConfig {
             accounts,
             data,
         }
+    }
+    /// [`Self::instruction_with_remaining_accounts`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    pub fn try_instruction_with_remaining_accounts(
+        &self,
+        deployment: crate::Deployment,
+        args: SetMarketFeeConfigInstructionArgs,
+        remaining_accounts: &[solana_instruction::AccountMeta],
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        crate::cluster::check_self_cpi_accounts(deployment, self.program, self.event_authority)?;
+        Ok(self.instruction_with_remaining_accounts(deployment, args, remaining_accounts))
     }
 }
 
@@ -334,6 +354,45 @@ impl SetMarketFeeConfigBuilder {
         };
 
         accounts.instruction_with_remaining_accounts(deployment, args, &self.__remaining_accounts)
+    }
+    /// [`Self::instruction`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    #[allow(clippy::clone_on_copy)]
+    pub fn try_instruction(
+        &self,
+        deployment: crate::Deployment,
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        let accounts = SetMarketFeeConfig {
+            admin: self.admin.expect("admin is not set"),
+            registry: self.registry.expect("registry is not set"),
+            market: self.market.expect("market is not set"),
+            fee_mint: self.fee_mint.expect("fee_mint is not set"),
+            fee_token_program: self
+                .fee_token_program
+                .expect("fee_token_program is not set"),
+            registry_fee_treasury: self
+                .registry_fee_treasury
+                .expect("registry_fee_treasury is not set"),
+            associated_token_program: self.associated_token_program.unwrap_or(
+                solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+            ),
+            system_program: self
+                .system_program
+                .unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
+            event_authority: self
+                .event_authority
+                .unwrap_or_else(|| crate::cluster::event_authority(&deployment.program_id())),
+            program: self.program.unwrap_or(deployment.program_id()),
+        };
+        let args = SetMarketFeeConfigInstructionArgs {
+            atoms: self.atoms.clone().expect("atoms is not set"),
+        };
+
+        accounts.try_instruction_with_remaining_accounts(
+            deployment,
+            args,
+            &self.__remaining_accounts,
+        )
     }
 }
 

@@ -51,6 +51,15 @@ impl WithdrawLeader {
     ) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(deployment, args, &[])
     }
+    /// [`Self::instruction`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    pub fn try_instruction(
+        &self,
+        deployment: crate::Deployment,
+        args: WithdrawLeaderInstructionArgs,
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        self.try_instruction_with_remaining_accounts(deployment, args, &[])
+    }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
@@ -130,6 +139,17 @@ impl WithdrawLeader {
             accounts,
             data,
         }
+    }
+    /// [`Self::instruction_with_remaining_accounts`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    pub fn try_instruction_with_remaining_accounts(
+        &self,
+        deployment: crate::Deployment,
+        args: WithdrawLeaderInstructionArgs,
+        remaining_accounts: &[solana_instruction::AccountMeta],
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        crate::cluster::check_self_cpi_accounts(deployment, self.program, self.event_authority)?;
+        Ok(self.instruction_with_remaining_accounts(deployment, args, remaining_accounts))
     }
 }
 
@@ -380,6 +400,59 @@ impl WithdrawLeaderBuilder {
         };
 
         accounts.instruction_with_remaining_accounts(deployment, args, &self.__remaining_accounts)
+    }
+    /// [`Self::instruction`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    #[allow(clippy::clone_on_copy)]
+    pub fn try_instruction(
+        &self,
+        deployment: crate::Deployment,
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        let accounts = WithdrawLeader {
+            signer: self.signer.expect("signer is not set"),
+            market: self.market.expect("market is not set"),
+            base_mint: self.base_mint.expect("base_mint is not set"),
+            quote_mint: self.quote_mint.expect("quote_mint is not set"),
+            base_token_program: self
+                .base_token_program
+                .expect("base_token_program is not set"),
+            quote_token_program: self
+                .quote_token_program
+                .expect("quote_token_program is not set"),
+            signer_base_ata: self.signer_base_ata.expect("signer_base_ata is not set"),
+            signer_quote_ata: self.signer_quote_ata.expect("signer_quote_ata is not set"),
+            market_base_treasury: self
+                .market_base_treasury
+                .expect("market_base_treasury is not set"),
+            market_quote_treasury: self
+                .market_quote_treasury
+                .expect("market_quote_treasury is not set"),
+            associated_token_program: self.associated_token_program.unwrap_or(
+                solana_pubkey::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+            ),
+            system_program: self
+                .system_program
+                .unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
+            event_authority: self
+                .event_authority
+                .unwrap_or_else(|| crate::cluster::event_authority(&deployment.program_id())),
+            program: self.program.unwrap_or(deployment.program_id()),
+        };
+        let args = WithdrawLeaderInstructionArgs {
+            vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
+            shares_in: self.shares_in.clone().expect("shares_in is not set"),
+            min_base_out: self.min_base_out.clone().expect("min_base_out is not set"),
+            min_quote_out: self
+                .min_quote_out
+                .clone()
+                .expect("min_quote_out is not set"),
+        };
+
+        accounts.try_instruction_with_remaining_accounts(
+            deployment,
+            args,
+            &self.__remaining_accounts,
+        )
     }
 }
 

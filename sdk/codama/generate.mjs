@@ -340,7 +340,8 @@ if (!localnetId) throw new Error('programs.rs: no DROPSET_ID declaration');
 // for tests), and the accounts struct's `instruction_with_remaining_accounts`,
 // which every path ends in, panics on a mismatch before an instruction
 // exists — the same local refusal as the remaining setters' `is not set`
-// panics.
+// panics. Each also gains a `try_` twin returning the mismatch as an error
+// (`withTryBuilders` below).
 const eventAuthority = 'crate::cluster::event_authority(&deployment.program_id())';
 function selfCpiAccountsFromDeployment(file, client) {
   const hasEventAuthority = /pub event_authority: solana_pubkey::Pubkey,/.test(client);
@@ -354,6 +355,8 @@ function selfCpiAccountsFromDeployment(file, client) {
   const defaulted = client
     .replace('self.event_authority.expect("event_authority is not set")', eventAuthorityDefault)
     .replace('self.program.expect("program is not set")', programDefault);
+  // These messages open `SelfCpiAccountMismatch`'s Display in
+  // sdk/rs/src/cluster.rs; edit them together.
   const checked = defaulted.replace(
     /(pub fn instruction_with_remaining_accounts\(&self, deployment: crate::Deployment,[^{]*\{)/,
     `$1
@@ -366,7 +369,118 @@ function selfCpiAccountsFromDeployment(file, client) {
   if (checked === defaulted) {
     throw new Error(`${file}: no accounts-struct builder to cross-check in`);
   }
-  return checked;
+  return withTryBuilders(file, checked);
+}
+
+// The span `[start, end)` of the first `pub fn <name>(` at or after `from`
+// whose signature matches `signature`, through its body's closing brace.
+// Braces inside string literals are skipped.
+function fnSpan(source, signature, from = 0) {
+  signature.lastIndex = from;
+  const match = signature.exec(source);
+  if (!match) return null;
+  const open = source.indexOf('{', match.index + match[0].length - 1);
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '"') {
+      for (i++; source[i] !== '"'; i++) if (source[i] === '\\') i++;
+    } else if (ch === '{') {
+      depth++;
+    } else if (ch === '}' && --depth === 0) {
+      return [match.index, i + 1];
+    }
+  }
+  throw new Error(`unbalanced braces after ${match[0]}`);
+}
+
+// A panic is the wrong refusal for a caller whose self-CPI accounts arrive
+// from configuration or received data, so each panicking builder gains a
+// `try_` twin returning `crate::cluster::SelfCpiAccountMismatch`. The
+// accounts struct's pair checks through `check_self_cpi_accounts` and then
+// calls the panicking form, which is left byte-for-byte as rendered (its
+// asserts then cannot fire); the `<Name>Builder` twin is its `instruction`
+// with the last call swapped for the accounts struct's `try_` form. Only the
+// mismatch is returned: an unset account still panics, as in `instruction`.
+const instructionType = 'solana_instruction::Instruction';
+const tryReturn = `Result<${instructionType}, crate::cluster::SelfCpiAccountMismatch>`;
+const tryDoc = (form) =>
+  `/// [\`Self::${form}\`], returning a self-CPI account that does not match
+    /// \`deployment\` as an error instead of panicking.
+    `;
+function tryTwin(fnText, name) {
+  const renamed = fnText.replace(`pub fn ${name}(`, `pub fn try_${name}(`);
+  const retyped = renamed.replace(`-> ${instructionType}`, `-> ${tryReturn}`);
+  if (retyped === renamed || renamed === fnText) {
+    throw new Error(`${name}: no signature to make a try_ twin of`);
+  }
+  return `${tryDoc(name)}${retyped}`;
+}
+function insertAfter(source, [, end], text) {
+  return `${source.slice(0, end)}\n    ${text}${source.slice(end)}`;
+}
+function withTryBuilders(file, client) {
+  const accountsIx = /pub fn instruction\(&self, deployment: crate::Deployment\b/g;
+  const withRemaining = /pub fn instruction_with_remaining_accounts\(&self, deployment: crate::Deployment\b/g;
+  let out = client;
+
+  // The accounts struct's `instruction` forwards to its remaining-accounts
+  // form; its twin forwards to that form's twin.
+  const ixSpan = fnSpan(out, accountsIx);
+  if (!ixSpan) throw new Error(`${file}: no accounts-struct instruction`);
+  const ixTwin = tryTwin(out.slice(...ixSpan), 'instruction').replace(
+    'self.instruction_with_remaining_accounts(',
+    'self.try_instruction_with_remaining_accounts(',
+  );
+  if (!ixTwin.includes('self.try_instruction_with_remaining_accounts(')) {
+    throw new Error(`${file}: the accounts-struct instruction does not forward`);
+  }
+  out = insertAfter(out, ixSpan, ixTwin);
+
+  const wraSpan = fnSpan(out, withRemaining);
+  if (!wraSpan) throw new Error(`${file}: no accounts-struct remaining-accounts builder`);
+  const wra = out.slice(...wraSpan);
+  const params = wra.slice(wra.indexOf('(') + 1, wra.indexOf(')'));
+  const names = params
+    .split(',')
+    .map((param) => param.trim())
+    .filter((param) => param && param !== '&self')
+    .map((param) => param.split(':')[0].trim());
+  const signature = tryTwin(wra.slice(0, wra.indexOf('{') + 1), 'instruction_with_remaining_accounts');
+  const wraTwin = `${signature}
+        crate::cluster::check_self_cpi_accounts(deployment, self.program, self.event_authority)?;
+        Ok(self.instruction_with_remaining_accounts(${names.join(', ')}))
+    }`;
+  out = insertAfter(out, wraSpan, wraTwin);
+
+  // `<Name>Builder::instruction`, searched for past the accounts struct's
+  // impl: an instruction with no args gives the accounts struct's
+  // `instruction` this same signature.
+  const builderIx = /pub fn instruction\(&self, deployment: crate::Deployment\s*\)/g;
+  const builderSpan = fnSpan(out, builderIx, out.indexOf(wraTwin) + wraTwin.length);
+  if (!builderSpan) throw new Error(`${file}: no <Name>Builder instruction`);
+  const builder = out.slice(...builderSpan);
+  // Its body is copied, so it keeps the `#[allow(..)]` lints the
+  // renderer put on the original (`clone_on_copy` on the args).
+  // Only that one is expected: a broader allow from a later renderer must
+  // fail here, loudly, rather than be inherited silently.
+  const attrs = out.slice(0, builderSpan[0]).match(/(?:#\[allow\([^)]*\)\]\s*)*$/)[0].trim();
+  const copied = attrs.match(/#\[allow\([^)]*\)\]/g) ?? [];
+  const unexpected = copied.filter((attr) => attr !== '#[allow(clippy::clone_on_copy)]');
+  if (unexpected.length) {
+    throw new Error(`${file}: unexpected lint allow to copy onto try_instruction: ${unexpected.join(' ')}`);
+  }
+  const builderTwin = tryTwin(builder, 'instruction').replace(
+    'pub fn try_instruction(',
+    `${attrs ? `${attrs}\n    ` : ''}pub fn try_instruction(`,
+  ).replace(
+    '.instruction_with_remaining_accounts(',
+    '.try_instruction_with_remaining_accounts(',
+  );
+  if (!builderTwin.includes('.try_instruction_with_remaining_accounts(')) {
+    throw new Error(`${file}: the <Name>Builder instruction does not end in the accounts struct`);
+  }
+  return insertAfter(out, builderSpan, builderTwin);
 }
 
 const instructionsOut = join(rustOut, 'instructions');
@@ -399,7 +513,8 @@ for (const file of readdirSync(instructionsOut)) {
     .replaceAll('crate::DROPSET_ID', '*self.__program.key');
   // An accounts struct's two builders plus the `<Name>Builder` one: fewer
   // means the renderer's output moved and the rewrite missed a path.
-  const rewritten = client.split(deploymentParam).length - 1;
+  // Counted before the self-CPI `try_` twins, which add their own.
+  const rewritten = rewrittenClient.split(deploymentParam).length - 1;
   if (rewritten !== 3) {
     throw new Error(`${file}: rewrote ${rewritten} builders, expected 3`);
   }

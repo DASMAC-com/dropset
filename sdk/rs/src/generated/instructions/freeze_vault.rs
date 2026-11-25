@@ -33,6 +33,15 @@ impl FreezeVault {
     ) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(deployment, args, &[])
     }
+    /// [`Self::instruction`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    pub fn try_instruction(
+        &self,
+        deployment: crate::Deployment,
+        args: FreezeVaultInstructionArgs,
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        self.try_instruction_with_remaining_accounts(deployment, args, &[])
+    }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
@@ -78,6 +87,17 @@ impl FreezeVault {
             accounts,
             data,
         }
+    }
+    /// [`Self::instruction_with_remaining_accounts`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    pub fn try_instruction_with_remaining_accounts(
+        &self,
+        deployment: crate::Deployment,
+        args: FreezeVaultInstructionArgs,
+        remaining_accounts: &[solana_instruction::AccountMeta],
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        crate::cluster::check_self_cpi_accounts(deployment, self.program, self.event_authority)?;
+        Ok(self.instruction_with_remaining_accounts(deployment, args, remaining_accounts))
     }
 }
 
@@ -215,6 +235,33 @@ impl FreezeVaultBuilder {
         };
 
         accounts.instruction_with_remaining_accounts(deployment, args, &self.__remaining_accounts)
+    }
+    /// [`Self::instruction`], returning a self-CPI account that does not match
+    /// `deployment` as an error instead of panicking.
+    #[allow(clippy::clone_on_copy)]
+    pub fn try_instruction(
+        &self,
+        deployment: crate::Deployment,
+    ) -> Result<solana_instruction::Instruction, crate::cluster::SelfCpiAccountMismatch> {
+        let accounts = FreezeVault {
+            admin: self.admin.expect("admin is not set"),
+            registry: self.registry.expect("registry is not set"),
+            market: self.market.expect("market is not set"),
+            event_authority: self
+                .event_authority
+                .unwrap_or_else(|| crate::cluster::event_authority(&deployment.program_id())),
+            program: self.program.unwrap_or(deployment.program_id()),
+        };
+        let args = FreezeVaultInstructionArgs {
+            vault_idx: self.vault_idx.clone().expect("vault_idx is not set"),
+            expected_seq: self.expected_seq.clone().expect("expected_seq is not set"),
+        };
+
+        accounts.try_instruction_with_remaining_accounts(
+            deployment,
+            args,
+            &self.__remaining_accounts,
+        )
     }
 }
 
