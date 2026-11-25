@@ -177,22 +177,23 @@ which drifted behind it twice:
   is selected; the list is paged to 500 threads, a larger backlog draining over
   successive runs; an unreadable list is a note, never a failed gate.
 
-  **The callers.** The two repo-wide sweeps are the scheduler's: the
-  upkeep pass's `notifications` step runs `--all` armed at startup,
-  and the planning close-out runs it at shutdown, so a missed shutdown
-  is cleared by the next startup. A session clears its own PR's
-  threads three ways, each `--pr` in-process: the queue watch's exit
-  (above), `close_session.py` before removing the worktree (having
-  already refused an open PR), and a park's stand-down
-  (`close_session.py --park`), which keeps the open PR's
-  subscription. A thread that arrives mid-day on an open PR therefore
-  shows until its session stands down, its PR leaves the queue, or the
-  shutdown sweep — accepted. `--settled` (merged or closed PRs only,
-  one mark-done per thread) remains for a by-hand run; no caller uses
-  it. **Rejected**: an `--all` from every session at every tool touch
-  (twenty sessions racing on one inbox for what the shutdown sweep
-  gives), a call per commit or a push hook, and ignoring an open PR's
-  threads — the next step only if threads still show.
+  **The callers.** The two repo-wide sweeps are the scheduler's: the upkeep
+  pass's `notifications` step runs `--all` armed at startup, and the planning
+  close-out runs it at shutdown, so a missed shutdown is cleared by the next
+  startup. A session clears its own PR's threads three ways, each `--pr`
+  in-process: the queue watch's exit (above), `close_session.py` before removing
+  the worktree (having already refused an open PR), and a park's stand-down
+  (`close_session.py --park`), which keeps the open PR's subscription. A thread
+  that arrives mid-day on an open PR therefore shows until its session stands
+  down, its PR leaves the queue, or the shutdown sweep — accepted. `--settled`
+  (merged or closed PRs only, one mark-done per thread) remains for a by-hand
+  run; no caller uses it. The per-thread cost is sequential (a 128-thread
+  backlog at two calls each once ran 220 seconds), so `--all`'s ignore-then-done
+  on a merged thread is bounded by the sweeps running daily: the merge tail has
+  already ignored most merged threads. **Rejected**: an `--all` from every
+  session at every tool touch (twenty sessions racing on one inbox for what the
+  shutdown sweep gives), a call per commit or a push hook, and ignoring an open
+  PR's threads — the next step only if threads still show.
 
 - **Unsubscribing from a new PR's notifications** (`init-pr`) — right
   after the draft PR is created, so its lifecycle (CI, assignment,
