@@ -73,11 +73,14 @@ class FakeRun:
         self.unlock_rc = 0
         self.lock_rc = 0
         self.branch_rc = 0
+        self.make_rc = 0
         self.__dict__.update(overrides)
         self.calls: list[list[str]] = []
 
     def __call__(self, cmd, cwd=None):
         self.calls.append(cmd)
+        if cmd[0] == "make":
+            return self.make_rc, "", "make: *** [clean] Error 1"
         if cmd[:3] == ["ps", "-o", "comm="]:
             name = self.comms.get(int(cmd[-1]))
             return (0, f"{name}\n", "") if name else (1, "", "")
@@ -378,6 +381,42 @@ class CloseTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("git"), "git not installed")
+class ReclaimTests(unittest.TestCase):
+    """``make clean`` runs in the closing tree after the state write and
+    before the removal, on the removal path only."""
+
+    def _cleans(self, runner):
+        return [i for i, c in enumerate(runner.calls) if c[0] == "make"]
+
+    def test_clean_runs_in_the_tree_between_the_write_and_the_removal(self):
+        rc, result, runner, _ = run_close()
+        self.assertEqual(rc, 0, result)
+        self.assertTrue(result["reclaimed"])
+        (at,) = self._cleans(runner)
+        self.assertEqual(runner.calls[at], ["make", "-C", TREE, "clean"])
+        remove_at = next(
+            i for i, c in enumerate(runner.calls) if c[3:5] == ["worktree", "remove"]
+        )
+        self.assertLess(at, remove_at)
+
+    def test_a_failed_clean_is_a_note_and_the_removal_still_happens(self):
+        rc, result, _, _ = run_close(make_rc=2)
+        self.assertEqual(rc, 0, result)
+        self.assertTrue(result["removed"])
+        self.assertFalse(result["reclaimed"])
+        self.assertIn("make clean failed: make: *** [clean] Error 1", result["notes"])
+
+    def test_no_clean_when_the_tree_stays_or_nothing_is_written(self):
+        for args, fake in (
+            (ns(keep_worktree=True), {}),
+            (ns(dry_run=True), {}),
+            (ns(), {"status": " M x\n"}),
+        ):
+            _, result, runner, _ = run_close(args, **fake)
+            self.assertEqual(self._cleans(runner), [], args)
+            self.assertFalse(result["reclaimed"])
+
+
 class LeftoverTests(unittest.TestCase):
     """The ledger gate: every leftover filed, handed or dropped before a
     Done close, refused before any write otherwise."""

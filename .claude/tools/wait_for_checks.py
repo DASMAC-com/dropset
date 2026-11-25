@@ -196,6 +196,8 @@ or, under ``--queue``::
       "failing_runs": [],
       "requests": {"sent": 140, "not_modified": 131, "rate_remaining": 4710},
       "notifications": {"dismissed": 1, "unsubscribed": 1, "failed": 0,
+                        "held": [{"id": "…", "reason": "mention",
+                                  "title": "…"}],
                         "error": null},
       "todays_merge_count": 4,
       "since": "2026-10-22T23:40:20Z",
@@ -225,9 +227,12 @@ marks the PR's GitHub notification threads done itself through
 ``pr_notifications.dismiss``, so no session turn sits between the outcome and
 the dismissal. **It unsubscribes only on** ``merged``: a PR still open (or
 closed, which can be reopened) keeps its subscription, which is what re-creates
-its thread on new activity. That includes ``stopped`` — a SIGTERM or SIGINT
-(the session stopping the watch early, having learned the outcome another way)
-raises into the same ``finally`` that dismisses, then the verdict prints.
+its thread on new activity. Every exit includes ``stopped`` — a SIGTERM or
+SIGINT (the session stopping the watch early, having learned the outcome
+another way) raises into the same ``finally`` that dismisses, then the verdict
+prints. **A thread that wants a reply is held, not dismissed** (``held``;
+``pr_notifications`` → ``--hold-attention``), and the merged line names the
+count, so the ``post-merge`` skill answers it before its close dismisses it.
 ``todays_merge_count`` is filled on ``merged`` only: the PRs merged since local
 midnight, this one included. Both are best-effort — a failure is reported there
 (``todays_merge_count: null``), never changes the conclusion. See
@@ -1459,9 +1464,12 @@ def dismiss_pr_notifications(pr: int, repo: str, merged: bool = True) -> dict:
     ``pr_notifications.dismiss`` (the one rule every caller applies).
 
     Called on every queue exit but ``probe_failed``. ``failed`` counts failed
-    calls (a thread whose ignore and mark-done both fail counts twice). Never
-    raises: the outcome already happened, so a failure is reported, and the
-    upkeep pass's settled-PR sweep is the fallback.
+    calls (a thread whose ignore and mark-done both fail counts twice).
+    ``held`` lists the threads that want a reply — a mention, a review
+    request, a reply in a joined conversation — left undismissed for the
+    ``post-merge`` skill to answer; its close dismisses them. Never raises:
+    the outcome already happened, so a failure is reported, and the upkeep
+    pass's settled-PR sweep is the fallback.
     """
     try:
         rc, result = pr_notifications.dismiss(
@@ -1470,12 +1478,14 @@ def dismiss_pr_notifications(pr: int, repo: str, merged: bool = True) -> dict:
             apply=True,
             repo=repo,
             keep_subscription=set() if merged else {pr},
+            hold_attention=True,
         )
     except Exception as exc:  # noqa: BLE001 — best-effort by contract
         return {
             "dismissed": 0,
             "unsubscribed": 0,
             "failed": 0,
+            "held": [],
             "error": f"{type(exc).__name__}: {exc}",
         }
     failed = len(result["failed"]) + len(result["unsubscribe_failed"])
@@ -1484,6 +1494,10 @@ def dismiss_pr_notifications(pr: int, repo: str, merged: bool = True) -> dict:
         "dismissed": result["dismissed"],
         "unsubscribed": result["unsubscribed"],
         "failed": failed,
+        "held": [
+            {"id": t["id"], "reason": t["reason"], "title": t["title"]}
+            for t in result["held"]
+        ],
         "error": error,
     }
 
@@ -2693,6 +2707,10 @@ def merged_line(verdict: dict) -> str:
         if not error
         else f"notification dismissal failed: {error}"
     )
+    held = notes.get("held") or []
+    if held:
+        reasons = ", ".join(sorted({t.get("reason") or "?" for t in held}))
+        dismissed += f", {len(held)} held for a reply ({reasons})"
     return f"merged: PR #{verdict.get('pr')} | {said} | {dismissed}"
 
 

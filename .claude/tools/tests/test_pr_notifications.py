@@ -173,6 +173,51 @@ class PrModeTests(unittest.TestCase):
         self.assertEqual((out["dismissed"], out["unsubscribed"]), (3, 2))
 
 
+class HoldTests(unittest.TestCase):
+    """A thread that wants a reply is held for the post-merge tail, never
+    dismissed under it; the rest of the PR's threads go as usual."""
+
+    PAGE = [
+        {**THREADS[0], "reason": "mention"},
+        {**THREADS[1], "reason": "ci_activity"},
+        {
+            "id": "m3",
+            "reason": "comment",
+            "subject": {"url": URL.format("pulls", 663), "title": "Fix it"},
+        },
+        {**THREADS[3], "reason": "review_requested"},
+    ]
+
+    def test_attention_threads_are_held_and_the_rest_dismissed(self):
+        gh = FakeGh(pages=[self.PAGE])
+        _, out = dismiss(gh, {663}, apply=True, hold_attention=True)
+        self.assertEqual(gh.deletes(), ["m2"])
+        self.assertEqual(
+            [(t["id"], t["reason"], t["title"]) for t in out["held"]],
+            [("m1", "mention", None), ("m3", "comment", "Fix it")],
+        )
+        self.assertEqual(
+            summary(out),
+            "dismissed 1 notification(s), unsubscribed 1; 2 held for a reply",
+        )
+
+    def test_without_the_hold_every_thread_goes(self):
+        gh = FakeGh(pages=[self.PAGE])
+        _, out = dismiss(gh, {663}, apply=True)
+        self.assertEqual(sorted(gh.deletes()), ["m1", "m2", "m3"])
+        self.assertEqual(out["held"], [])
+
+    def test_settled_mode_refuses_the_hold(self):
+        with self.assertRaises(ValueError):
+            dismiss(FakeGh(), None, apply=False, hold_attention=True)
+
+    def test_the_cli_passes_the_hold(self):
+        args = pr_notifications.parse_args(
+            ["prog", "dismiss", "--pr", "663", "--hold-attention"]
+        )
+        self.assertTrue(args.hold_attention)
+
+
 class ApplyTests(unittest.TestCase):
     def test_a_dry_run_deletes_nothing(self):
         gh = FakeGh()
@@ -313,11 +358,13 @@ class CliTests(unittest.TestCase):
     def test_main_passes_mode_and_apply_through_and_prints_compact(self):
         seen = []
 
-        def fake_dismiss(gh, prs, apply, keep_subscription=frozenset()):
+        def fake_dismiss(
+            gh, prs, apply, keep_subscription=frozenset(), hold_attention=False
+        ):
             seen.append((prs, apply, set(keep_subscription)))
             return 0, {
                 "mode": "settled" if prs is None else "pr",
-                "dry_run": not apply, "threads": 0,
+                "dry_run": not apply, "threads": 0, "held": [],
                 "selected": [], "dismissed": 0, "unsubscribed": 0,
                 "failed": [], "unsubscribe_failed": [], "error": None,
                 "unresolved": [], "notice": None,

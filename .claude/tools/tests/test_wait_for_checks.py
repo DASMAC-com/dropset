@@ -2372,8 +2372,37 @@ class DismissNotificationsTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            result, {"dismissed": 2, "unsubscribed": 2, "failed": 0, "error": None}
+            result,
+            {
+                "dismissed": 2,
+                "unsubscribed": 2,
+                "failed": 0,
+                "held": [],
+                "error": None,
+            },
         )
+
+    def test_a_thread_that_wants_a_reply_is_held_not_dismissed(self):
+        threads = [dict(t) for t in self.THREADS]
+        threads[0] = {**threads[0], "reason": "mention"}
+        threads[0]["subject"] = {**threads[0]["subject"], "title": "Ask"}
+        threads[-2] = {**threads[-2], "reason": "ci_activity"}
+        result, calls = self._run((0, json.dumps(threads), ""))
+        writes = [c[2:4] for c in calls if c[:2] == ["api", "-X"]]
+        self.assertEqual(
+            writes,
+            [
+                ["PUT", "/notifications/threads/14/subscription"],
+                ["DELETE", "/notifications/threads/14"],
+            ],
+        )
+        self.assertEqual(
+            result["held"], [{"id": "11", "reason": "mention", "title": "Ask"}]
+        )
+        line = wfc.merged_line(
+            {"pr": 285, "todays_merge_count": 3, "notifications": result}
+        )
+        self.assertIn("notifications dismissed: 1, 1 held for a reply (mention)", line)
 
     def test_a_failed_list_is_reported_not_raised(self):
         result, calls = self._run((1, "", "HTTP 401"))
@@ -2385,7 +2414,13 @@ class DismissNotificationsTests(unittest.TestCase):
         result, _ = self._run((0, json.dumps(self.THREADS), ""), delete_code=1)
         self.assertEqual(
             result,
-            {"dismissed": 0, "unsubscribed": 0, "failed": 4, "error": "HTTP 404"},
+            {
+                "dismissed": 0,
+                "unsubscribed": 0,
+                "failed": 4,
+                "held": [],
+                "error": "HTTP 404",
+            },
         )
 
     def test_an_exit_that_is_not_a_merge_keeps_the_subscription(self):
@@ -2401,7 +2436,14 @@ class DismissNotificationsTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            result, {"dismissed": 2, "unsubscribed": 0, "failed": 0, "error": None}
+            result,
+            {
+                "dismissed": 2,
+                "unsubscribed": 0,
+                "failed": 0,
+                "held": [],
+                "error": None,
+            },
         )
 
     def test_a_raising_tool_is_reported_not_raised(self):
