@@ -79,6 +79,10 @@ holds no judgment — the one-run `init-pr` bootstrap and the queue watch
 that dismisses a merged PR's notifications itself are the worked
 instances. The fold analyst asks the question of every digested
 session: **which of its turns could have been eliminated entirely?**
+The digest's `## Flows` section answers it by measurement
+(`.claude/tools/flow_shapes.py`): repeated runs of judgment-free turns
+across the day's sessions, ranked by the prefix replay one tool run in
+their place would save.
 
 **The line band: target 300–800 changed lines per PR.** Measured across
 the fleet on 2026-09-11 — per-session cost at verified Bedrock rates,
@@ -413,6 +417,11 @@ dollars, flagged lines, and the path.
   causes for the analyst, each with a `wait:<dimension>:<cause>`
   fingerprint. Wall clock is the same currency as tokens once
   translated: time per PR is session length.
+- **A `## Flows` section follows the wait section.** It ranks the
+  day's sessions together for repeated runs of judgment-free turns, by
+  the prefix replay one tool run in their place would save — the top
+  five (`--flows-full` lists every one), each with a
+  `flow:<first>-to-<last>-<n>-<hash>` fingerprint (`flow_shapes.py`).
 - **One block per session.** Each block gives the session's per-UTC-day
   slices and its cumulative cost, the exit-time estimate when the session
   left one, its sinks and hardening candidates, and its own

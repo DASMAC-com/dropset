@@ -8,10 +8,12 @@ the ``<task-notification>`` that names its id. One line per dimension,
 ranked largest first, so the next bottleneck is always the top line:
 
 =================  ==========================================================
-pool lock          a Bash call whose result carries cargo's ``Blocking
-                   waiting for file lock`` or ``run_quiet.py``'s ``waited on
-                   a cargo file lock``, by step (the ``make`` target,
-                   ``lint_paths.py``'s changed-set lint, or the cargo verb)
+pool lock          a build-shaped Bash call (``make``, ``cargo``, a
+                   ``run_quiet.py``-wrapped runner, ``lint_paths.py``) whose
+                   result carries cargo's ``Blocking waiting for file lock``
+                   or ``run_quiet.py``'s ``waited on a cargo file lock``, by
+                   step (the ``make`` target, ``lint_paths.py``'s changed-set
+                   lint, or the cargo verb)
 CI: checks         ``wait_for_checks.py`` without ``--queue``, and a bare
                    ``gh pr checks --watch`` / ``gh run watch``
 CI: merge queue    ``wait_for_checks.py --queue``
@@ -181,6 +183,51 @@ def bash_wait(command: str) -> tuple[str, str] | None:
     if tokens[:3] == ["gh", "run", "watch"]:
         return CHECKS, ""
     return None
+
+
+def is_build_shaped(command: str) -> bool:
+    """Whether a command can queue on the cargo pool lock: ``make``,
+    ``cargo``, anything ``run_quiet.py`` wraps, or ``lint_paths.py``.
+
+    Only these count a lock marker in their result as a wait — a search over
+    the ledger's own source prints the marker too, and waited on nothing.
+    Leading env assignments and an ``env`` / ``time`` / ``nice`` /
+    ``timeout N`` wrapper are looked through, and a script is the
+    interpreter's first non-flag word, so ``python3 -I`` does not hide it
+    while ``grep … lint_paths.py`` is still a search."""
+    try:
+        tokens = shlex.split(command, comments=True)
+    except ValueError:
+        tokens = command.split()
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        tokens.pop(0)
+    if tokens and Path(tokens[0]).name in _PREFIXES:
+        # A wrapper's own flags and values (`nice -n 10`, `timeout -s KILL
+        # 900`, `env -u X Y=1`) end where the command it runs begins.
+        start = next(
+            (i for i, t in enumerate(tokens) if _is_runner(Path(t).name)), None
+        )
+        tokens = tokens[start:] if start is not None else []
+    if not tokens:
+        return False
+    program = Path(tokens[0]).name
+    if program in ("make", "cargo"):
+        return True
+    if not program.startswith("python"):
+        return False
+    # The interpreter's script: its first word that is not a flag.
+    script = next((t for t in tokens[1:] if not t.startswith("-")), "")
+    return Path(script).name in _BUILD_SCRIPTS
+
+
+# Words that run the command after them, looked through by `is_build_shaped`.
+_PREFIXES = ("env", "time", "nice", "timeout")
+_BUILD_SCRIPTS = ("run_quiet.py", "lint_paths.py")
+
+
+def _is_runner(word: str) -> bool:
+    """A program a build-shaped command can start with."""
+    return word in ("make", "cargo") or word.startswith("python")
 
 
 def lock_step(command: str) -> str:
@@ -380,6 +427,7 @@ class WaitLedger:
         if (
             opened.dimension is None
             and opened.command
+            and is_build_shaped(opened.command)
             and any(m in text for m in LOCK_MARKERS)
         ):
             opened.dimension, opened.cause = LOCK, lock_step(opened.command)

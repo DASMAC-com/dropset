@@ -59,6 +59,12 @@ through ``run_quiet.py`` costs wall-clock rather than tokens — which three
 sessions had to disclaim by hand so the candidate wasn't mis-filed as a context
 sink. See :class:`HardeningCandidate`.
 
+Its complement is the **flow-shape** table (``flow_shapes.py``): repeated runs
+of judgment-free turns, ranked by the prefix replay one tool run in their place
+would save. The top few print by default and ``--flows-all`` lists them all;
+``--flows-across ID …`` ranks this session together with others on disk, and
+the digest ranks the day's sessions together under ``## Flows``.
+
 Nothing about the host is hard-coded. The Claude home is read from
 ``CLAUDE_CONFIG_DIR`` (falling back to ``~/.claude``), and the per-project
 transcript directory is derived from the working directory the same way Claude
@@ -82,6 +88,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import flow_shapes
 import wait_ledger
 
 # Rough bytes-per-token divisor for approximating a result's token cost from its
@@ -1037,6 +1044,8 @@ class SessionAggregator:
         self.friction = Friction()
         # The wall clock spent waiting, windowed like the day slices.
         self.wait = wait_ledger.WaitLedger(since, until)
+        # Runs of judgment-free turns, windowed like the wait ledger.
+        self.flows = flow_shapes.FlowTracker(bash_signature, since, until)
         self.cold = ColdReloads()
         self._resident: list[ResidentLine] = []
         # Calibration state for the bytes-per-token proxy. Each new request's
@@ -1156,6 +1165,7 @@ class SessionAggregator:
                 self.cwd = cwd.strip()
         self.friction.observe(rec)
         self.wait.observe(rec, utc_stamp(rec.get("timestamp")))
+        self.flows.observe(rec, utc_stamp(rec.get("timestamp")))
         attachment = rec.get("attachment")
         if isinstance(attachment, dict):
             self._ingest_attachment(rec, attachment)
@@ -1433,6 +1443,7 @@ class SessionAggregator:
         resident = self._resident_prose(total_input, unpriced_models)
         rebases, day_span = self.friction.finish()
         self.cold.cost = price_or_none(self.cold.by_model)
+        flow_runs = self.flows.finish()
 
         return {
             "totals": self.totals,
@@ -1450,6 +1461,13 @@ class SessionAggregator:
             "top_sinks": sinks,
             "subagents": subagents,
             "hardening_candidates": candidates,
+            # The raw runs ride along so the digest can rank the day's
+            # sessions together; `flow_shapes` is this session's own ranking,
+            # whole — the renderers truncate it to `flow_top_n`.
+            "flow_runs": flow_runs,
+            "flow_shapes": flow_shapes.rank([flow_runs]),
+            "flow_top_n": flow_shapes.TOP_N,
+            "flow_sessions": 1,
             "resident_prose": resident,
             "rebases": rebases,
             "day_span": day_span,
@@ -1713,7 +1731,9 @@ def bash_signature(command: str) -> str:
     tokens = _unwrap_run_quiet(tokens)
     if not tokens:
         return ""
-    if _INTERPRETER_RE.match(tokens[0]):
+    # By basename, so an absolute interpreter (`/opt/homebrew/bin/python3`)
+    # names its script too rather than standing as one opaque shape.
+    if _INTERPRETER_RE.match(Path(tokens[0]).name):
         module_mode = False
         for i, tok in enumerate(tokens[1:], start=1):
             if tok in ("-m", "--module"):
@@ -2068,6 +2088,22 @@ def to_markdown(report: dict, session_label: str) -> str:
             "friction to remove._\n"
         )
 
+    flows: list[flow_shapes.FlowShape] = report.get("flow_shapes") or []
+    if flows:
+        across = report.get("flow_sessions", 1)
+        scope = f", across {across} sessions" if across > 1 else ""
+        out.append(
+            "\n### Flow shapes (repeated judgment-free turn runs, by the prefix "
+            f"replay one tool run would save{scope})\n\n"
+        )
+        out.append("\n".join(flow_shapes.table(flows, report.get("flow_top_n"))))
+        out.append(
+            "\n\n_A tool run leaves one turn per run; **turns saved** are the "
+            "rest, and **≈replay saved** is the prefix those turns re-paid. "
+            "`(loop)` folds consecutive identical turns, and an MCP write "
+            "repeated over new arguments._\n"
+        )
+
     return "".join(out)
 
 
@@ -2180,6 +2216,8 @@ def to_json(report: dict) -> str:
             }
         if isinstance(obj, wait_ledger.DimensionLine):
             return wait_ledger.to_dict(obj)
+        if isinstance(obj, flow_shapes.FlowShape):
+            return obj.to_dict()
         if isinstance(obj, ColdReloads):
             return {
                 "count": obj.count,
@@ -2195,7 +2233,14 @@ def to_json(report: dict) -> str:
             }
         raise TypeError(f"not serializable: {type(obj)!r}")
 
-    return json.dumps(report, default=encode, indent=2, ensure_ascii=False)
+    # The raw runs are the digest's input, not output; the ranking is cut to
+    # its top N like the Markdown, the whole series behind `--flows-all`.
+    view = {k: v for k, v in report.items() if k != "flow_runs"}
+    flows = report.get("flow_shapes") or []
+    top_n = report.get("flow_top_n")
+    view["flow_shapes"] = flows if top_n is None else flows[:top_n]
+    view["flows_omitted"] = len(flows) - len(view["flow_shapes"])
+    return json.dumps(view, default=encode, indent=2, ensure_ascii=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -2663,6 +2708,25 @@ def main(argv: list[str] | None = None) -> int:
             "cost_usd, turns, written_at) to PATH; parent directories are created"
         ),
     )
+    parser.add_argument(
+        "--flows-all",
+        action="store_true",
+        help=(
+            "list every flow shape, not the top "
+            f"{flow_shapes.TOP_N} (Markdown and JSON alike)"
+        ),
+    )
+    parser.add_argument(
+        "--flows-across",
+        nargs="+",
+        default=None,
+        metavar="SESSION_ID",
+        help=(
+            "rank flow shapes across this session and these others whose "
+            "transcripts are on disk; an id that resolves to none is skipped "
+            "with a note on stderr"
+        ),
+    )
     args = parser.parse_args(argv)
     if args.brief and args.cost_line:
         parser.error("--brief and --cost-line each print one form; pass one")
@@ -2681,6 +2745,27 @@ def main(argv: list[str] | None = None) -> int:
         print(f"session-metrics: no estimate, {e}", file=sys.stderr)
         return 1
     report = aggregate(transcript, session_id, args.substrate)
+    if args.flows_all:
+        report["flow_top_n"] = None
+    if args.flows_across:
+        sessions = [report["flow_runs"]]
+        for other in args.flows_across:
+            if not other or "/" in other or "\\" in other or ".." in other:
+                parser.error("--flows-across takes bare session ids, not paths")
+            if other == session_id:
+                continue
+            try:
+                path = resolve_transcript(other)
+            except FileNotFoundError as e:
+                print(f"session-metrics: flows skip {other}, {e}", file=sys.stderr)
+                continue
+            sessions.append(
+                flow_shapes.runs_from_lines(
+                    _read_lines(path), bash_signature, utc_stamp
+                )
+            )
+        report["flow_shapes"] = flow_shapes.rank(sessions)
+        report["flow_sessions"] = len(sessions)
 
     if args.brief:
         sys.stdout.write(to_brief(report, short_id(session_id)))

@@ -115,6 +115,60 @@ class Ledger(unittest.TestCase):
         )
         self.assertEqual(lines[wl.LOCK].causes, {"make-test": 360})
 
+    def test_a_search_that_prints_the_marker_waits_on_nothing(self):
+        # The 2259 session grepped the ledger's own source: the marker in the
+        # result is the search hit, not cargo queuing.
+        hit = f'wait_ledger.py:91:LOCK_MARKER = "{wl.LOCK_MARKER}"'
+        lines = ledger(
+            [
+                assistant(
+                    stamp(0), use("a", "Bash", command="grep -n lock wait_ledger.py")
+                ),
+                result(stamp(1), "a", hit),
+                assistant(
+                    stamp(2),
+                    use(
+                        "b",
+                        "Bash",
+                        command="python3 .claude/tools/search_source.py lock",
+                    ),
+                ),
+                result(stamp(3), "b", hit),
+            ]
+        )
+        self.assertEqual((lines[wl.LOCK].seconds, lines[wl.LOCK].calls), (0, 0))
+        self.assertEqual(lines[wl.LOCK].causes, {})
+
+    def test_build_shaped_commands(self):
+        for command in (
+            "make lint",
+            "cargo test -p dropset",
+            "CARGO_TARGET_DIR=/t cargo build",
+            "python3 .claude/tools/run_quiet.py -- pnpm --dir frontend install",
+            "python3 .claude/tools/lint_paths.py --changed",
+            "python3 -I .claude/tools/lint_paths.py --changed",
+            "env X=1 cargo build",
+            "timeout 900 make test",
+            "time cargo build",
+            "nice -n 10 cargo build",
+            "timeout -s KILL 900 make test",
+            "env -u X Y=1 make lint",
+            "X=1 python3 .claude/tools/run_quiet.py -- pnpm install",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(wl.is_build_shaped(command))
+        for command in (
+            "grep -n lock wait_ledger.py",
+            "python3 .claude/tools/search_source.py lock",
+            "grep -n LOCK .claude/tools/lint_paths.py",
+            "timeout 60 grep -rn lock .claude/tools",
+            "python3 .claude/tools/search_source.py run_quiet.py",
+            "git push",
+            "",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(wl.is_build_shaped(command))
+
     def test_the_quiet_runner_marker_is_run_quiets_own_text(self):
         source = (pathlib.Path(wl.__file__).parent / "run_quiet.py").read_text("utf-8")
         self.assertIn(wl.LOCK_MARKERS[1], source)
