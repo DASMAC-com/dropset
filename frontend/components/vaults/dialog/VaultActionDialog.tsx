@@ -30,8 +30,8 @@ import { WithdrawSection } from "./WithdrawSection";
 // position they see its PnL detail and can top off or withdraw any fraction of
 // the basket (take-profit). The buttons build, sign and send the Deposit /
 // Withdraw instruction (lib/eclob/vaultTx.ts) and report the share balance
-// read back from chain. The deposit form's sizing and validation live in
-// useVaultDepositForm (lib/hooks/useVaultDepositForm.ts).
+// read back from chain. The deposit form's sizing and validation rules live in
+// lib/vaults/depositForm.ts, its input state in useVaultDepositForm.
 export function VaultActionDialog({
   market,
   vault,

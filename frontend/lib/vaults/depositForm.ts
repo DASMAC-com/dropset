@@ -25,8 +25,9 @@ import { formatBaseAmount, parseAmountToBase } from "@/lib/format/balance";
 
 type Symbols = Pick<VaultMarket, "base" | "quote">;
 
-// One leg's amount in the token's atoms, or the reason the program would
-// reject it; null for an empty or zero amount (nothing to size).
+// The deposit the driven leg sizes to (the basket pulled and the shares
+// minted), or the reason the program would reject it; null for an empty or
+// zero amount (nothing to size).
 export type LegSizing = { sizing: DepositSizing } | { error: string } | null;
 
 const legSymbol = (market: Symbols, leg: DepositLeg): string =>
@@ -93,7 +94,7 @@ export type DepositFormInput = {
   activeLeg: DepositLeg | null;
   // The wallet's atoms per leg once its balances are known; null while they
   // load or with no wallet, so a not-yet-read 0 never reads as a shortfall.
-  wallet: { base: bigint; quote: bigint } | null;
+  knownAtoms: { base: bigint; quote: bigint } | null;
 };
 
 export type DepositForm = {
@@ -129,7 +130,7 @@ export const depositForm = ({
   baseAmount,
   quoteAmount,
   activeLeg,
-  wallet,
+  knownAtoms,
 }: DepositFormInput): DepositForm => {
   const base = legNumber(baseAmount);
   const quote = legNumber(quoteAmount);
@@ -152,12 +153,12 @@ export const depositForm = ({
   // A basket is checked against the wallet only once its balances are known:
   // while they load, or with no wallet, there is no shortfall to report, just
   // nothing to submit yet.
-  const balancesKnown = owner !== null && wallet !== null;
+  const balancesKnown = owner !== null && knownAtoms !== null;
   const shortOf =
-    sizing && wallet && balancesKnown
-      ? sizing.baseIn > wallet.base
+    sizing && knownAtoms && balancesKnown
+      ? sizing.baseIn > knownAtoms.base
         ? market.base
-        : sizing.quoteIn > wallet.quote
+        : sizing.quoteIn > knownAtoms.quote
           ? market.quote
           : null
       : null;
@@ -186,8 +187,9 @@ export const depositForm = ({
   const quoteUsd = quote * vault.quoteUsd;
   // The largest deposit the vault can take before the new shares would dilute
   // the leader below their min_leader_share floor; null when the floor can't
-  // bind. A basket past the cap would be rejected onchain, so it is blocked
-  // and warned rather than let the user submit a doomed deposit.
+  // bind. A basket past the cap would be rejected onchain, so floorBreached
+  // withholds the request and drives the dialog's warning, rather than let
+  // the user submit a doomed deposit.
   const depositCap = maxOutsideDepositValue(vault);
   const floorBreached =
     depositCap !== null && validBasket && depositValue > depositCap;

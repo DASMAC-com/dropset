@@ -57,7 +57,7 @@ export function useVaultDepositForm(
       : null;
 
   // Per-leg wallet balance: the connected wallet's token accounts (read as 0
-  // until they load or with no wallet; the model's `wallet` is null until then,
+  // until they load or with no wallet; the model's `knownAtoms` is null until then,
   // so that 0 never reads as a shortfall).
   const baseMint = stablecoinMint(market.base);
   const quoteMint = stablecoinMint(market.quote);
@@ -74,7 +74,7 @@ export function useVaultDepositForm(
     baseAmount,
     quoteAmount,
     activeLeg,
-    wallet: owner !== null && balances.isReady ? walletAtoms : null,
+    knownAtoms: owner !== null && balances.isReady ? walletAtoms : null,
   });
 
   // The other leg follows the driven one: the exact final the program will
