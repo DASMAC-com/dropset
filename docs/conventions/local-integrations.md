@@ -2775,6 +2775,26 @@ a terminal closed outright, is covered by the next morning's digest.
   the picker, which is the one form that still reaches a session whose
   worktree has already been pruned.
 
+  **A live worktree is where a session resumes, whatever slug its
+  transcript is filed under.** Some `-w` sessions still file under the
+  base checkout's slug (why is unexplained: the 11-23 tasks did, the
+  11-24 ones did not, on one client version). Reopened in the base,
+  such a session has every relative path in its history, and the
+  worktree edit-path guard, pointed at the wrong tree. So both resume
+  paths (`task resume` through `resolve_session.py --adopt`, and the
+  `architect` / `explore` reopen through `--adopt-session`) first
+  **hard-link** the transcript under the worktree's slug (its `<id>/`
+  sub-agent sidecar symlinked beside it, so cost readers see every
+  sub-agent), then resume it by id from inside the worktree. The daily
+  digest counts one file per inode. Every later resume takes the
+  worktree-slug fast path, so even a client that rewrote the file rather
+  than appending to it (unverified either way) would leave the copy that
+  is read live. A link that fails **refuses** and prints the instruction
+  that works: resume from the base checkout, then ask the session to
+  call `EnterWorktree` with the worktree's path. Only a **pruned**
+  worktree (with its warning on the `architect` / `explore` path) or a
+  tag nothing resolves (the picker) still opens in the base.
+
 - **`explore <n>`** — start **or resume** an explore session:
   research, audits, and anything else whose output is Linear tasks and
   findings rather than a code change. **It runs in its own temporary

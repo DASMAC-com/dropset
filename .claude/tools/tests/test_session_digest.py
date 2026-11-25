@@ -116,6 +116,17 @@ class DiscoveryTests(DigestFixture):
         self.assertEqual(sorted(found), sorted([mine, tree]))
         self.assertNotIn(old, found)
 
+    def test_an_adopted_transcript_is_digested_once_under_its_worktree(self):
+        # `resolve_session.adopt_session` hard-links a base-filed transcript
+        # under the worktree's slug; both names must not each become a row.
+        recent = 1_761_300_000
+        base_copy = self.write(str(self.base), "s", [], mtime=recent)
+        linked = self.projects / sm.slugify(Path(self.worktree)) / "s.jsonl"
+        linked.parent.mkdir(parents=True, exist_ok=True)
+        os.link(base_copy, linked)
+        found = sd.discover(self.projects, self.base, recent - 1)
+        self.assertEqual(found, [linked])
+
 
 class LastCloseTests(unittest.TestCase):
     def test_the_newest_parseable_until_is_the_close(self):

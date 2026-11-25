@@ -726,10 +726,10 @@ _ds_daily_sid() {
 # prompt on top of the existing history. The id is a UUID we computed, so a
 # glob over every project directory answers "does this session exist" without
 # knowing the filing rule — older sessions filed under the base slug included.
-# A worktree-slug hit resumes from inside the worktree, the directory Claude
-# Code addresses it by; anything else resumes from the base checkout as before
-# (whether `--resume <id>` from there reaches a copy under some THIRD slug is
-# unverified, but the create branch on an existing id was no better).
+# A live worktree is where any hit resumes: a copy under another slug is first
+# hard-linked under the worktree's (`resolve_session.py --adopt-session`), or
+# the resume refuses with the instruction that works. Only a pruned worktree
+# resumes from the base checkout, with its warning.
 # Internal: THE shared launcher — every managed `claude` start or resume goes
 # through here. $1 the session's model, the rest `claude`'s own arguments.
 #
@@ -956,8 +956,18 @@ _ds_session() {
     # JOINED array as one string and miss whenever the base copy sorts last.
     [[ -n "$worktree" ]] && wt_dir="$PWD/.claude/worktrees/$worktree"
     wt_slug="${wt_dir//[\/.]/-}"
-    if [[ -n "$wt_dir" && -d "$wt_dir" \
-      && ${found[(I)*/$wt_slug/$sid.jsonl]} -gt 0 ]]; then
+    # A LIVE WORKTREE IS WHERE THE SESSION RESUMES, whatever slug its
+    # transcript is filed under. A copy filed only under the base slug (some
+    # `-w` sessions still land there, unexplained — ENG-2468) is first
+    # hard-linked under the worktree's slug, so the client finds it from
+    # inside; a link that fails refuses, printing the instruction that works,
+    # rather than reopening in base, where every relative path in the history
+    # and the worktree edit-path guard point at the wrong tree.
+    if [[ -n "$wt_dir" && -d "$wt_dir" ]]; then
+      if (( ! ${found[(I)*/$wt_slug/$sid.jsonl]} )); then
+        python3 "$_DS_REPO/.claude/tools/resolve_session.py" \
+          --adopt-session "$sid" --worktree "$wt_dir" >/dev/null || return 1
+      fi
       cd "$wt_dir" || return 1
     fi
     # A resume passes no `-w`, so a worktree that has since been pruned is NOT
@@ -975,8 +985,8 @@ _ds_session() {
     # The caller's class (`_ds_class_key` / `_ds_class`, in scope here), the
     # same one its class record stamps.
     _ds_load_record "$sid" "$(_ds_class_resolve "$_ds_class_key" "$_ds_class")"
-    # Keyed even without the `cd`: a transcript filed under the base slug
-    # resumes from here, and its session still builds in the worktree.
+    # Keyed for the worktree even without the `cd` (a pruned worktree resumes
+    # from base), so the session still builds in the worktree's pool slot.
     _ds_claude_pooled "$worktree" "$model" --resume "$sid" \
       --permission-mode auto
   else
@@ -1905,7 +1915,8 @@ _ds_task_start() {
 # into the worktree, so a bare `claude --continue` inside the worktree found
 # nothing. Current Claude Code files it under the worktree's own slug instead
 # (measured 2026-10-13), which the resolver's `continue` mode reaches; both
-# layouts are still on disk, so the resolver handles both.
+# layouts are still on disk, and base filing recurred for some 11-23 sessions,
+# so the resolver handles both — and resumes either inside a live worktree.
 #
 # `resolve_session.py` decides which of the three addressing forms reaches the
 # session; this verb only launches. `fleet` types `task resume`, so fleet
@@ -1972,7 +1983,18 @@ _ds_task_resume() {
     read -r sid
     read -r run_from
   } <<< "$(python3 "$_DS_REPO/.claude/tools/resolve_session.py" \
-    --tag "$tag" --repo "$_DS_REPO" --format lines 2>/dev/null)"
+    --tag "$tag" --repo "$_DS_REPO" --format lines --adopt)"
+
+  # `--adopt` linked a base-filed transcript under the live worktree's slug,
+  # so `resume` runs from the worktree. A link that failed is `refuse`, its
+  # instruction already on stderr: launch nothing rather than reopen in base.
+  [[ "$mode" == refuse ]] && return 1
+  # A worktree pruned between the resolve and here must not fall through to
+  # the base-checkout `cd` below with a resume-by-id.
+  if [[ "$mode" == resume ]] && ! cd "$run_from"; then
+    print -u2 "dropset: $run_from is gone — not resuming $sid in the base."
+    return 1
+  fi
 
   # Fall back to the base repo rather than returning: `${...:-}` guards an EMPTY
   # run_from, not a STALE one. A transcript's cwd stamps outlive the worktree
@@ -1988,8 +2010,8 @@ _ds_task_resume() {
   # The tag picker resolves no id, so it leaves no record.
   _ds_load_record "$sid" "$(_ds_class_resolve "$_ds_class_key" "$_ds_class")"
 
-  # Keyed for the worktree whichever form runs: the `resume` form launches
-  # from the base repo, where the `cd` above keyed the base's slots.
+  # Keyed for the worktree whichever form runs: the picker form launches from
+  # the base repo, where the `cd` above keyed the base's slots.
   local wt
   wt="$(_ds_worktree_of "$tag")"
   case "$mode" in
@@ -1999,8 +2021,8 @@ _ds_task_resume() {
       _ds_claude_pooled "$wt" "$model" --continue --permission-mode auto
       ;;
     resume)
-      # The `-w` case: resume by id from the base repo. This is the form that
-      # was missing, and the only one that reaches such a session.
+      # A transcript filed under another slug, now linked under the
+      # worktree's: resume it by id from inside the worktree.
       _ds_claude_pooled "$wt" "$model" --resume "$sid" --permission-mode auto
       ;;
     *)
