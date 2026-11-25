@@ -265,6 +265,34 @@ class FakeLinear:
         return {"issues": {"pageInfo": {"hasNextPage": False}, "nodes": nodes}}
 
 
+class FakeLinearThreads(FakeLinear):
+    """``FakeLinear`` that also answers the thread reads, replies and resolves
+    a ``--reply-file`` cancel makes, recording them in ``calls``."""
+
+    def __init__(self, issues, comments=None):
+        super().__init__(issues, comments=comments)
+        self.calls = []
+
+    def __call__(self, api_key, query, variables):
+        if query == rs._THREAD_QUERY:
+            for ident, nodes in self.comments.items():
+                for node in nodes:
+                    if node["id"] == variables["id"]:
+                        issue = {"id": f"uuid-{ident}", "identifier": ident}
+                        return {"comment": {**node, "issue": issue}}
+            return {"comment": None}
+        if query == rs._REPLY_MUTATION:
+            self.calls.append(("reply", variables["parentId"], variables["body"]))
+            reply = f"r-{variables['parentId']}"
+            return {"commentCreate": {"success": True, "comment": {"id": reply}}}
+        if query == rs._RESOLVE_MUTATION:
+            self.calls.append(
+                ("resolve", variables["id"], variables["resolvingCommentId"])
+            )
+            return {"commentResolve": {"success": True}}
+        return super().__call__(api_key, query, variables)
+
+
 class _RunBase(unittest.TestCase):
     def setUp(self):
         env = {"LINEAR_API_KEY": "key", "LINEAR_PROJECT_ID": "proj"}
@@ -1196,14 +1224,72 @@ class OperatorRunTests(unittest.TestCase):
         _, out = self._run(fake, ["review", "--pool", "operator", "--ids", "ENG-9"])
         self.assertIn("HELD ENG-9", out)
 
-    def test_a_drop_cancels_the_operator_item_even_while_held(self):
+    def test_a_drop_without_a_reply_file_is_refused_while_held(self):
         thread = {"id": "t1", "parentId": None, "resolvedAt": None, "body": "drop"}
-        fake = FakeLinear([_operator(9)], comments={"ENG-9": [thread]})
-        code, _ = self._run(
-            fake, ["approve", "--pool", "operator", "--cancel", "ENG-9"]
+        fake = FakeLinearThreads([_operator(9)], comments={"ENG-9": [thread]})
+        with self.assertRaisesRegex(RatifyError, "no --reply-file to answer it: ENG-9"):
+            self._run(fake, ["approve", "--pool", "operator", "--cancel", "ENG-9"])
+        self.assertEqual(fake.writes, [])
+        self.assertEqual(fake.calls, [])
+
+    def test_a_drop_with_a_reply_file_answers_resolves_then_cancels(self):
+        thread = {"id": "t1", "parentId": None, "resolvedAt": None, "body": "drop"}
+        fake = FakeLinearThreads([_operator(9)], comments={"ENG-9": [thread]})
+        reply = self._reply("Dropped under the necessity gate.")
+        code, out = self._run(
+            fake,
+            ["approve", "--pool", "operator", "--cancel", "ENG-9"]
+            + ["--reply-file", reply],
         )
         self.assertEqual(code, 0)
+        self.assertEqual(
+            fake.calls,
+            [
+                ("reply", "t1", "Dropped under the necessity gate."),
+                ("resolve", "t1", "r-t1"),
+            ],
+        )
         self.assertEqual(fake.writes, [("uuid-9", {"stateId": "s-Canceled"})])
+        self.assertIn("RESOLVED ENG-9 thread t1", out)
+        self.assertNotIn("necessity", out)
+
+    def test_one_reply_file_per_cancel_id_in_order(self):
+        def thread(tid):
+            return {"id": tid, "parentId": None, "resolvedAt": None, "body": "drop"}
+
+        fake = FakeLinearThreads(
+            [_inbox(1), _inbox(2), _inbox(3)],
+            comments={"ENG-1": [thread("a")], "ENG-2": [thread("b")]},
+        )
+        files = [self._reply("one"), self._reply("two"), self._reply("three")]
+        code, _ = self._run(
+            fake,
+            ["approve", "--pool", "inbox", "--cancel", "ENG-1", "ENG-2", "ENG-3"]
+            + ["--reply-file", *files],
+        )
+        self.assertEqual(code, 0)
+        replies = [c for c in fake.calls if c[0] == "reply"]
+        self.assertEqual(replies, [("reply", "a", "one"), ("reply", "b", "two")])
+        self.assertEqual(len(fake.writes), 3)
+        with self.assertRaisesRegex(RatifyError, "got 2 file"):
+            self._run(
+                fake,
+                ["approve", "--pool", "inbox", "--cancel", "ENG-1", "ENG-2", "ENG-3"]
+                + ["--reply-file", *files[:2]],
+            )
+
+    def test_a_reply_file_needs_a_cancel(self):
+        with self.assertRaisesRegex(RatifyError, "answers a --cancel"):
+            self._run(
+                FakeLinearThreads([_inbox(1)]),
+                ["approve", "--pool", "inbox", "--ids", "ENG-1"]
+                + ["--reply-file", self._reply("why")],
+            )
+
+    def _reply(self, text):
+        path = self.records / f"reply-{len(list(self.records.iterdir()))}.md"
+        path.write_text(text + "\n", encoding="utf-8")
+        return str(path)
 
     def test_review_names_an_item_outside_the_operator_pool(self):
         fake = FakeLinear([_inbox(2)])

@@ -26,13 +26,17 @@ sub-issues of its governing issue (``--parent``, see "The parent switch"):
   ``APPROVED`` (no open comment thread — the tick is the approval) or
   ``HELD`` (an open thread, printed with its id and body so the session can
   fold it by the fold protocol).
-* ``approve --ids … [--cancel …] [--dry-run]`` — the one batch write at the
-  end: every approved task loses the milestone and moves to Todo, every
-  rejected one is canceled. Refuses the whole batch, writing nothing, while
-  any approved task still holds an open thread or is not staged. Priority is
-  never written here; it stands as already set on the issue. A task an
-  earlier, partly failed run already moved reports ``ALREADY`` and is
-  skipped, so the same command re-runs cleanly.
+* ``approve --ids … [--cancel … [--reply-file …]] [--dry-run]`` — the one
+  batch write at the end: every approved task loses the milestone and moves
+  to Todo, every rejected one is canceled. Refuses the whole batch, writing
+  nothing, while any approved task still holds an open thread or is not
+  staged, or a canceled one holds an open thread with no ``--reply-file``.
+  With one (a shared reason, or one file per ``--cancel`` id in order), each
+  open thread on a canceled task gets the reply and is resolved by it before
+  the cancel — a curator ``drop`` in one call. Priority is never written
+  here; it stands as already set on the issue. A task an earlier, partly
+  failed run already moved reports ``ALREADY`` and is skipped, so the same
+  command re-runs cleanly.
 * ``gate --ids …`` — the close gate: exits 1, naming them, while any of the
   ids is still open under ``Session pending``.
 * ``resolve --pairs FILE [--dry-run]`` — the fold's thread write: ``FILE`` is a
@@ -928,8 +932,60 @@ def already_moved(issue: dict, cancel: bool, target: str = "Todo") -> bool:
     return not milestone and str(state.get("name", "")).lower() == target.lower()
 
 
+def reply_texts(paths: list[str], cancel: list[dict]) -> dict[str, str]:
+    """``--reply-file``: id -> reply text. One file is a shared reason for
+    every canceled id; otherwise one file per ``--cancel`` id, in order."""
+    if not paths:
+        return {}
+    if not cancel:
+        raise RatifyError("--reply-file answers a --cancel — name the ids it cancels")
+    if len(paths) not in (1, len(cancel)):
+        raise RatifyError(
+            f"--reply-file takes one shared file or one per --cancel id: got "
+            f"{len(paths)} file(s) for {len(cancel)} id(s)"
+        )
+    texts = []
+    for path in paths:
+        try:
+            text = Path(path).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RatifyError(f"--reply-file {path}: {exc.strerror}") from exc
+        if not text:
+            raise RatifyError(f"--reply-file {path} is empty")
+        texts.append(text)
+    texts = texts * len(cancel) if len(texts) == 1 else texts
+    return {i["identifier"]: t for i, t in zip(cancel, texts)}
+
+
+def cancel_threads(
+    api_key: str, cancel: list[dict], replies: dict[str, str]
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """``(pairs, unanswered)`` for the canceled tasks' open threads: a
+    ``(thread, reply)`` pair per thread to resolve before the cancel, and the
+    ids holding a thread with no reply to give it. An already-canceled task is
+    skipped, so a re-run after a partly failed write posts nothing twice."""
+    pairs: list[tuple[str, str]] = []
+    unanswered: list[str] = []
+    for issue in cancel:
+        if already_moved(issue, cancel=True):
+            continue
+        ident = issue["identifier"]
+        threads = open_threads(fetch_comments(api_key, ident))
+        if not threads:
+            continue
+        if ident not in replies:
+            unanswered.append(ident)
+            continue
+        pairs.extend((t["id"], replies[ident]) for t in threads)
+    return pairs, unanswered
+
+
 def plan_approval(
-    approve: list[dict], cancel: list[dict], held: list[str], pool: str = "staged"
+    approve: list[dict],
+    cancel: list[dict],
+    held: list[str],
+    pool: str = "staged",
+    unanswered: list[str] | None = None,
 ) -> tuple[dict[str, dict], list[str]]:
     """``(updates, already)``: the batch ``board_batch.apply_fields`` takes and
     the ids a previous run already moved — or a refusal naming every reason the
@@ -960,6 +1016,11 @@ def plan_approval(
         problems.append(f"both approved and canceled: {', '.join(sorted(overlap))}")
     if held:
         problems.append(f"still held by an open thread: {', '.join(held)}")
+    if unanswered:
+        problems.append(
+            "canceled with an open thread and no --reply-file to answer it: "
+            + ", ".join(unanswered)
+        )
     outside = [i["identifier"] for i in approve + cancel if not in_pool(i, pool)]
     if outside:
         problems.append(f"not {POOL_WHERE[pool]}: {', '.join(outside)}")
@@ -1038,6 +1099,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     review = sub.add_parser("review", help="approved or held, per ticked task")
     approve = sub.add_parser("approve", help="the one batch write at the end")
     approve.add_argument("--cancel", nargs="+", default=[])
+    approve.add_argument(
+        "--reply-file",
+        nargs="+",
+        default=[],
+        help="--cancel only: the reply posted into each canceled task's open "
+        "threads, which it resolves before the cancel — one shared file, or "
+        "one per --cancel id in order",
+    )
     approve.add_argument(
         "--allow",
         nargs="+",
@@ -1333,7 +1402,10 @@ def run(argv: list[str]) -> int:
         if not approve and not cancel:
             raise RatifyError("nothing to approve or cancel")
         _, held = review_lines(key, [i for i in approve if in_pool(i, pool)], pool)
-        updates, already = plan_approval(approve, cancel, held, pool)
+        pairs, unanswered = cancel_threads(
+            key, cancel, reply_texts(args.reply_file, cancel)
+        )
+        updates, already = plan_approval(approve, cancel, held, pool, unanswered)
         if args.title is not None:
             ident = approve[0]["identifier"]
             if ident in updates:
@@ -1344,6 +1416,10 @@ def run(argv: list[str]) -> int:
                 print(f"TITLE NOT APPLIED {ident} | retitle it with board_batch.py")
         for ident in already:
             print(f"ALREADY {ident} | already in its target state, skipped")
+        if pairs:
+            # Every refusal above has passed, so the replies land only for a
+            # batch that will write; a re-run finds the threads resolved.
+            resolve_threads(key, pairs, dry_run=args.dry_run)
         by_number = {int(i["number"]): i for i in approve + cancel}
         board_batch.apply_fields(key, updates, by_number, dry_run=args.dry_run)
         return 0

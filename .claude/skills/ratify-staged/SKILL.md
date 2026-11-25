@@ -183,12 +183,15 @@ the operator's approval, and the session executes it in one write
 
 ```sh
 python3 .claude/tools/ratify_staged.py approve --ids <approved …> \
-  --cancel <rejects …>
+  --cancel <rejects …> --reply-file <scratchpad>/reject.md
 ```
 
 Every approved task loses the milestone and moves to Todo; every
-reject is canceled. The tool refuses the whole batch, writing
-nothing, while an approved task still holds an open thread. A write
+reject's open thread gets the reply file's reason (one shared file,
+or one per reject in order), is resolved by it, and the reject is
+canceled. The tool refuses the whole batch, writing nothing, while
+an approved task still holds an open thread or a reject holds one
+with no `--reply-file`. A write
 that fails partway is re-run with the same ids: tasks it already
 moved report `ALREADY` and are skipped.
 

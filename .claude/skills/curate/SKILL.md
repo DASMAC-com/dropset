@@ -415,8 +415,14 @@ follow. Then, per ticked task:
   with no answer reads as approved. The task carries to the next
   batch.
 
-- **A comment asking to drop it**: cancel it, the reason in the
-  reply (`approve --pool inbox --cancel <id>`).
+- **A comment asking to drop it**: write the reason to a file, then
+  one call replies into the thread, resolves it and cancels — a
+  cancel holding an open thread is refused without the file:
+
+  ```sh
+  python3 .claude/tools/ratify_staged.py approve --pool inbox \
+    --cancel <id> --reply-file <scratchpad>/drop-<id>.md
+  ```
 
 - **A comment asking to defer it**: it stays in the pool, the
   thread resolved and the deferral noted in the reply.
@@ -447,8 +453,8 @@ python3 .claude/tools/ratify_staged.py review --pool operator --ids <id>
   It becomes `[Chore/Bedrock]` with its body kept and stays in
   Todo; the scheduler dispatches it when the fleet admits it.
 
-- **`drop`**: cancel it (`approve --pool operator --cancel <id>`),
-  the reason in the reply.
+- **`drop`**: the same one call as an inbox drop, with
+  `--pool operator`.
 
 - **Any other comment is a deferral**: reply in its thread with
   the line `Deferred <YYYY-MM-DD>: <the operator's reason>` (the
