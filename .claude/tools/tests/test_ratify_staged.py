@@ -1278,6 +1278,17 @@ class OperatorRunTests(unittest.TestCase):
                 + ["--reply-file", *files[:2]],
             )
 
+    def test_per_id_files_refuse_two_spellings_of_one_id(self):
+        files = [self._reply("a"), self._reply("b")]
+        fake = FakeLinearThreads([_inbox(1)])
+        with self.assertRaisesRegex(RatifyError, "two of the ids name one issue"):
+            self._run(
+                fake,
+                ["approve", "--pool", "inbox", "--cancel", "1", "ENG-1"]
+                + ["--reply-file", *files],
+            )
+        self.assertEqual((fake.calls, fake.writes), ([], []))
+
     def test_a_reply_file_needs_a_cancel(self):
         with self.assertRaisesRegex(RatifyError, "answers a --cancel"):
             self._run(

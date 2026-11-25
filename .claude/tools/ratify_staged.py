@@ -953,8 +953,15 @@ def reply_texts(paths: list[str], cancel: list[dict]) -> dict[str, str]:
         if not text:
             raise RatifyError(f"--reply-file {path} is empty")
         texts.append(text)
-    texts = texts * len(cancel) if len(texts) == 1 else texts
-    return {i["identifier"]: t for i, t in zip(cancel, texts)}
+    if len(texts) == 1:
+        return {i["identifier"]: texts[0] for i in cancel}
+    idents = [i["identifier"] for i in cancel]
+    if len(set(idents)) != len(idents):
+        raise RatifyError(
+            "--reply-file pairs one file with each --cancel id, but two of the ids "
+            "name one issue — drop the duplicate or pass one shared file"
+        )
+    return dict(zip(idents, texts))
 
 
 def cancel_threads(

@@ -1350,6 +1350,10 @@ class Finished(unittest.TestCase):
             session_dispatch.finished_sessions(["✳ 914"], api_key="k", post=post), []
         )
         self.assertEqual(session_dispatch.finished_sessions(["✳ 914"], api_key=""), [])
+        malformed = session_dispatch.finished_sessions(
+            ["✳ 914"], api_key="k", post=lambda *_args: None
+        )
+        self.assertEqual(malformed, [])
 
 
 class RuntimeConfig(unittest.TestCase):

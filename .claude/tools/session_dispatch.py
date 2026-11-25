@@ -827,19 +827,23 @@ def finished_sessions(names=None, api_key: str | None = None, post=None) -> list
         post = post or linear_issue._post
         variables = {f"i{n}": f"ENG-{tag}" for n, tag in enumerate(tags)}
         data = post(api_key, linear_issue._state_query(len(tags)), variables)
+        states = [
+            ((data.get(f"i{n}") or {}).get("state") or {}).get("name")
+            for n in range(len(tags))
+        ]
     except (
+        AttributeError,
         iterm_api.ItermUnavailable,
         linear_issue.LinearIssueError,
         OSError,
         ValueError,
     ):
         return []
-    out = []
-    for n, tag in enumerate(tags):
-        state = ((data.get(f"i{n}") or {}).get("state") or {}).get("name")
-        if state in HANDED_OFF_STATES:
-            out.append(f"{tag} ({state})")
-    return out
+    return [
+        f"{tag} ({state})"
+        for tag, state in zip(tags, states)
+        if state in HANDED_OFF_STATES
+    ]
 
 
 def _total_binds(result: Gate) -> bool:
