@@ -191,8 +191,9 @@ the document's state sections.
    self-waiting.** A yellow tab is a trigger problem, not a window
    problem: it turns yellow only for a request actually waiting on
    the operator, never for classifier-approved requests in rapid
-   succession. The debounce is an environment variable with a
-   5-second default.
+   succession; a parked tab's green mark qualifies, since it waits
+   on exactly one operator action, its close. The debounce is an
+   environment variable with a 5-second default.
 
 1. **No hardcoded 200ms.** Expiry defaults derive from the
    observed slot pace.

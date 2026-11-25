@@ -2154,8 +2154,9 @@ explore() {
   prompt+=" task. Move the issue to In Review when you hand the deliverable"
   prompt+=" off; only the operator marks it Done. Before announcing any spec"
   prompt+=" or findings draft, run python3 .claude/tools/spec_markers.py on it and"
-  prompt+=" fix what it names. The full shape is in"
-  prompt+=" docs/conventions/local-integrations.md."
+  prompt+=" fix what it names. A fleet wind-down message is a pause: stand"
+  prompt+=" down by park, per docs/conventions/fleet-winddown.md. The full"
+  prompt+=" shape is in docs/conventions/local-integrations.md."
 
   # AN EXISTING SESSION OR WORKTREE KEEPS THE SUBSTRATE ITS MARKER RECORDS —
   # anthropic where there is none, as `_ds_substrate_read` has it. The marker
