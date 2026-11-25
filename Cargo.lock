@@ -1852,7 +1852,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bs58",
+ "crc32fast",
  "dropset-db-schema",
+ "futures-util",
  "http 1.4.2",
  "orca_whirlpools_client",
  "orca_whirlpools_core",
@@ -1869,6 +1871,7 @@ dependencies = [
  "sqlx",
  "testcontainers-modules",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
 ]
 

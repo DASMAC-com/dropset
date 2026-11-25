@@ -58,6 +58,20 @@ sqlx = { version = "0.8", default-features = false, features = [
 ], optional = true }
 
 [dev-dependencies]
+# The book-feed capture example (examples/capture_ws_books.rs) and the Kraken
+# checksum replay test over its fixtures (tests/kraken_book_checksum.rs). All
+# three were already in the lock through other workspace crates. `raw_value`
+# keeps a Kraken `price` / `qty` JSON number's exact text, trailing zeros
+# included, which a parse into `f64` would drop.
+crc32fast = "1"
+futures-util = { version = "0.3", default-features = false, features = [
+  "sink",
+] }
+serde_json = { version = "1", features = ["raw_value"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = [
+  "connect",
+  "rustls-tls-webpki-roots",
+] }
 # Builds a `reqwest::Response` in-process (reqwest converts from
 # `http::Response`), so the body-size cap is exercised without a live venue or
 # a mock server.

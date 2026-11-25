@@ -331,6 +331,7 @@ topup
 transfero
 tryb
 tsup
+tungstenite
 twelvedata
 txns
 unblended
