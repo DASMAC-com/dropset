@@ -51,6 +51,12 @@ queue profile by hour, and the launch records' figures (``sessions/<id>.load``)
 — then the ranked causes written for the fold analyst, each with its hours,
 its median per session and a ``wait:<dimension>:<cause>`` fingerprint.
 
+**The flows section** follows (``flow_shapes.py``): the day's sessions ranked
+together for repeated runs of judgment-free turns, by the prefix replay one
+tool run would save, each with a ``flow:<first>-to-<last>-<n>`` fingerprint —
+the fold analyst's answer to which turns could have been eliminated. The top
+few by default, every shape with ``--flows-full``.
+
 Stdout is one JSON line — sessions, dollars, flagged lines, digest path — the
 line upkeep's ``digest`` step reports. Stdlib only; a Python skill-tool under
 ``.claude/tools/``, deliberately not a Cargo workspace member. Tests live in
@@ -72,6 +78,7 @@ from pathlib import Path
 import ci_metrics
 import ci_verdicts
 import fleet_cost
+import flow_shapes
 import machine_load
 import session_metrics as sm
 import wait_ledger
@@ -694,10 +701,12 @@ def render(
     calibration: dict | None,
     ci: dict | None = None,
     wait: list[str] | None = None,
+    flows: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     """The digest's Markdown and its flagged lines; ``ci`` is the
-    :func:`ci_report` (``None`` when not requested) and ``wait`` the
-    :func:`wait_ledger.digest_section` lines."""
+    :func:`ci_report` (``None`` when not requested), ``wait`` the
+    :func:`wait_ledger.digest_section` lines and ``flows`` the
+    :func:`flow_shapes.digest_section` lines."""
     flags: list[str] = []
     out = [f"# Session digest — {date}", ""]
     out += calibration_lines(calibration, flags)
@@ -778,6 +787,8 @@ def render(
     out.append("")
     if wait is not None:
         out += ["## Wait", "", *wait, ""]
+    if flows is not None:
+        out += ["## Flows", "", *flows, ""]
     out.append("## Sessions")
     out.append("")
     for s in sorted(sessions, key=lambda s: -(s.window_dollars or 0.0)):
@@ -913,6 +924,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="list every wait cause, one-session short ones included",
     )
+    parser.add_argument(
+        "--flows-full",
+        action="store_true",
+        help=f"list every flow shape, not the top {flow_shapes.TOP_N}",
+    )
     parser.add_argument("--now", help="override the current instant (testing)")
     parser.add_argument(
         "--projects", help="the Claude projects directory (default: the Claude home's)"
@@ -974,8 +990,20 @@ def main(argv: list[str] | None = None) -> int:
     wait_lines, wait_twin = wait_section(
         base, sessions, since_text, until_text, ci, args.wait_full
     )
+    flow_lines = flow_shapes.digest_section(
+        [s.report.get("flow_runs", []) for s in sessions],
+        None if args.flows_full else flow_shapes.TOP_N,
+    )
     text, flags = render(
-        date, since_text, sessions, figures, history, calibration, ci, wait_lines
+        date,
+        since_text,
+        sessions,
+        figures,
+        history,
+        calibration,
+        ci,
+        wait_lines,
+        flow_lines,
     )
     md_path = directory / f"digest-{date}.md"
     md_path.write_text(text, encoding="utf-8")

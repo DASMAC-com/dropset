@@ -46,8 +46,9 @@ so this is the planned multi-region read the context-economy
 convention licenses. Read the day header (its flagged list), the
 `## CI` section (the merge queue's runs and jobs; a flagged CI line
 also joins the header's list), the `## Wait` section (the day's
-ranked wait and its causes "for the analyst"), then every block under
-`## Sessions`:
+ranked wait and its causes "for the analyst"), the `## Flows` section
+(the day's repeated judgment-free turn runs, ranked by the prefix
+replay one tool run would save), then every block under `## Sessions`:
 its top sinks, largest results,
 resident-prose share, hardening candidates with their cost kind, and
 its **Session account** — the session's own statement of what it
@@ -69,7 +70,10 @@ bootstrap read does not). Weigh in this order:
 - **Turns before payload.** A lever that collapses a judgment-free
   multi-turn flow into one tool run outranks one that shrinks a result
   (same doc → "Session length is itself a cost lever"). Rank by
-  estimated dollars, not tokens.
+  estimated dollars, not tokens. The `## Flows` rows are these
+  candidates, measured: each carries its runs, turns saved and a
+  `flow:` fingerprint, and a row recurring across sessions is one
+  lever, not one per session.
 
 - **A hardening candidate** with measured recurrence names `/harden`
   as its edit; state its cost kind, since a `wall-clock` or

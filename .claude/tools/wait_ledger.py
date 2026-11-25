@@ -8,10 +8,12 @@ the ``<task-notification>`` that names its id. One line per dimension,
 ranked largest first, so the next bottleneck is always the top line:
 
 =================  ==========================================================
-pool lock          a Bash call whose result carries cargo's ``Blocking
-                   waiting for file lock`` or ``run_quiet.py``'s ``waited on
-                   a cargo file lock``, by step (the ``make`` target,
-                   ``lint_paths.py``'s changed-set lint, or the cargo verb)
+pool lock          a build-shaped Bash call (``make``, ``cargo``, a
+                   ``run_quiet.py``-wrapped runner, ``lint_paths.py``) whose
+                   result carries cargo's ``Blocking waiting for file lock``
+                   or ``run_quiet.py``'s ``waited on a cargo file lock``, by
+                   step (the ``make`` target, ``lint_paths.py``'s changed-set
+                   lint, or the cargo verb)
 CI: checks         ``wait_for_checks.py`` without ``--queue``, and a bare
                    ``gh pr checks --watch`` / ``gh run watch``
 CI: merge queue    ``wait_for_checks.py --queue``
@@ -181,6 +183,31 @@ def bash_wait(command: str) -> tuple[str, str] | None:
     if tokens[:3] == ["gh", "run", "watch"]:
         return CHECKS, ""
     return None
+
+
+def is_build_shaped(command: str) -> bool:
+    """Whether a command can queue on the cargo pool lock: ``make``,
+    ``cargo``, anything ``run_quiet.py`` wraps, or ``lint_paths.py``.
+
+    Only these count a lock marker in their result as a wait — a search over
+    the ledger's own source prints the marker too, and waited on nothing."""
+    try:
+        raw = shlex.split(command, comments=True)
+    except ValueError:
+        raw = command.split()
+    if any(t.endswith("run_quiet.py") for t in raw[:2]):
+        return True
+    tokens = _tokens(command)
+    if not tokens:
+        return False
+    program = Path(tokens[0]).name
+    if program in ("make", "cargo"):
+        return True
+    return (
+        program.startswith("python")
+        and len(tokens) > 1
+        and Path(tokens[1]).name == "lint_paths.py"
+    )
 
 
 def lock_step(command: str) -> str:
@@ -380,6 +407,7 @@ class WaitLedger:
         if (
             opened.dimension is None
             and opened.command
+            and is_build_shaped(opened.command)
             and any(m in text for m in LOCK_MARKERS)
         ):
             opened.dimension, opened.cause = LOCK, lock_step(opened.command)

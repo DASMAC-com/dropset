@@ -458,8 +458,9 @@ class WaitSectionTests(DigestFixture):
         self.run_digest()
         text = self.digest_text()
         self.assertLess(text.index("## CI"), text.index("## Wait"))
-        self.assertLess(text.index("## Wait"), text.index("## Sessions"))
-        wait = text.split("## Wait")[1].split("## Sessions")[0]
+        self.assertLess(text.index("## Wait"), text.index("## Flows"))
+        self.assertLess(text.index("## Flows"), text.index("## Sessions"))
+        wait = text.split("## Wait")[1].split("## Flows")[0]
         self.assertIn("Queue profile by hour (depth / longest wait): 03h 2/300s", wait)
         self.assertIn("memory refusals 1; peak in_use 33.0 GiB", wait)
         self.assertIn("**For the analyst**", wait)

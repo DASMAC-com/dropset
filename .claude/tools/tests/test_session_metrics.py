@@ -321,6 +321,14 @@ class BashSignatures(unittest.TestCase):
             "fetch-remote-assets.mjs",
         )
 
+    def test_an_absolute_interpreter_is_named_by_its_script_too(self):
+        self.assertEqual(
+            sm.bash_signature(
+                "/opt/homebrew/bin/python3 .claude/tools/search_source.py 'Foo('"
+            ),
+            "search_source.py",
+        )
+
     def test_a_bare_interpreter_with_no_script_is_unchanged(self):
         self.assertEqual(sm.bash_signature("python3 foo bar.py"), "python3 foo")
 

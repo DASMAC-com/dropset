@@ -79,6 +79,10 @@ holds no judgment — the one-run `init-pr` bootstrap and the queue watch
 that dismisses a merged PR's notifications itself are the worked
 instances. The fold analyst asks the question of every digested
 session: **which of its turns could have been eliminated entirely?**
+The digest's `## Flows` section answers it by measurement
+(`.claude/tools/flow_shapes.py`): repeated runs of judgment-free turns
+across the day's sessions, ranked by the prefix replay one tool run in
+their place would save.
 
 **The line band: target 300–800 changed lines per PR.** Measured across
 the fleet on 2026-09-11 — per-session cost at verified Bedrock rates,
