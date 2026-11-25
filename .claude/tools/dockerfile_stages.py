@@ -47,17 +47,18 @@ Two ways of checking nothing at all, both of which are failures. Matching
 **zero** Rust stages across every Dockerfile means the discovery broke (a
 renamed file, a new instruction spelling). And per file, a Dockerfile building
 ``FROM`` a Rust image in which no stage runs cargo is reported too — the
-repo-global alarm cannot see that one, because the four known images keep the
+repo-global alarm cannot see that one, because the known Rust images keep the
 total non-zero. A guard that silently checks nothing is worse than no guard.
 
 The parse is deliberately small and local — comments dropped, continuations
 joined, ``FROM``/``RUN``/``COPY``/``WORKDIR`` read positionally. It is not a
 Dockerfile interpreter: no ``ARG`` substitution, no heredocs. Heredocs are
-absent from all five of this repo's Dockerfiles (checked). ``ARG`` is not — the
+absent from all six of this repo's Dockerfiles (checked). ``ARG`` is not — the
 Node-only ``explorer.Dockerfile`` interpolates one into its ``FROM`` — and that
 is harmless here only because the file has no Rust stage, so an unexpanded
-``${NODE_VERSION}`` never reaches a decision. A full parser would be a
-dependency this guard does not earn.
+``${NODE_VERSION}`` never reaches a decision. (``infra/node/Dockerfile``'s
+``BUILD_COMMIT`` is read only inside a ``RUN``, never in a ``FROM``.) A full
+parser would be a dependency this guard does not earn.
 """
 
 from __future__ import annotations
@@ -492,8 +493,8 @@ def check_file(path: str, text: str) -> tuple[list[str], int]:
     rust_stages = [stage for stage in stages if stage.is_rust]
     if not rust_stages:
         # Backstop for the detector itself. The zero-Rust alarm in `check()` is
-        # repo-GLOBAL, so while the four known images keep the total non-zero,
-        # a fifth file whose cargo invocation this regex misses — a wrapper
+        # repo-GLOBAL, so while the known Rust images keep the total non-zero,
+        # a new file whose cargo invocation this regex misses — a wrapper
         # script, a path-qualified binary, an `ONBUILD` — would pass in total
         # silence. A file that looks Rust-shaped and yields no Rust stage is
         # therefore reported per file. Comments are already dropped by `parse`,

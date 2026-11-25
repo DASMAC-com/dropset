@@ -8,9 +8,10 @@ name = "dropset-node"
 path = "src/main.rs"
 
 [dependencies]
-# The standard library cannot catch a signal. This is the one dependency, and
-# no async runtime: that choice belongs to the node core, which may replace
-# the handler. Already in the lockfile through crossterm.
+# The standard library cannot catch a signal, so this is the only dependency.
+# There is deliberately no async runtime: that choice belongs to the node
+# core, which may replace the handler. Already in the lockfile through
+# crossterm.
 signal-hook = "0.3"
 
 [package]

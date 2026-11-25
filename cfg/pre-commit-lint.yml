@@ -132,7 +132,7 @@ repos:
 # hex>`, as `infra/node/Dockerfile` does): the digest alone is 71 columns and a
 # continuation cannot split a token, so that line cannot be wrapped.
 - hooks:
-  - entry: '^(?!FROM \S+@sha256:[0-9a-f]{64}( AS \S+)?$).{81,}$'
+  - entry: '^(?!FROM [^\s:@]+:\S+@sha256:[0-9a-f]{64}( AS [\w.-]+)?$).{81,}$'
     files: '(^|/)(Makefile|.*\.mk|Dockerfile|.*\.Dockerfile)$'
     id: 'line-length-80'
     language: 'pygrep'

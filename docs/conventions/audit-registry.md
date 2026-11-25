@@ -539,8 +539,8 @@ parked set (feeds <-> market-data <-> db-schema <-> grafana): the SECOND
 node <-> ci-infra deploy: the node's three stdout lines (start, heartbeat,
   shutdown; docs/node.md) are what the AWS deploy reads back from its logs
   as proof the image ran, the start line's build field matched against the
-  deployed commit. infra/node/Dockerfile's BUILD_COMMIT argument feeds
-  that field at compile time (DROPSET_NODE_BUILD). The line formats are
+  deployed commit's full SHA. infra/node/Dockerfile's BUILD_COMMIT argument
+  feeds that field at compile time (DROPSET_NODE_BUILD). The line formats are
   pinned by node/src/main.rs's unit tests and the shutdown path by
   node/tests/shutdown.rs; nothing in the repo checks the deploy end.
 ```

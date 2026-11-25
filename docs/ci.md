@@ -10,11 +10,14 @@ three Rust-touching workflows (`lint.yml`, `sdk.yml`, `test.yml`).
 compiler version. No workflow names a version, and each Dockerfile that
 builds Rust takes `FROM rust:1-bookworm` — a major-version base image whose
 rustup then resolves this file, so the exact compiler still comes from here.
+(The node image pins that same tag by digest.)
 
-**Where** an image resolves it is load-bearing, not incidental. The base tag
-floats, so rustup has to download the pinned toolchain — five components, and
-roughly five minutes of them when measured on an Apple-silicon laptop — and the
-layer that download lands in decides how often it is paid. Each Rust image
+**Where** an image resolves it is load-bearing, not incidental. The base
+image's compiler need not match the pin — the localnet images' tag floats, and
+the node image's digest is fixed but no closer — so rustup has to download the
+pinned toolchain — five components, and roughly five minutes of them when
+measured on an Apple-silicon laptop — and the layer that download lands in
+decides how often it is paid. Each Rust image
 therefore copies `rust-toolchain.toml` **alone** into its `chef` stage and runs
 `rustup toolchain install` there, before any source `COPY`: the layer is then
 keyed only on the pin file, so it survives every source change, and

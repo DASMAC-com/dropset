@@ -21,7 +21,13 @@ const SHUTDOWN_LINE: &str = "dropset-node shutting down";
 /// `DROPSET_NODE_BUILD` (the Dockerfile passes its `BUILD_COMMIT` argument
 /// through). Absent or empty reads as `unknown`.
 fn build() -> &'static str {
-    match option_env!("DROPSET_NODE_BUILD") {
+    build_from(option_env!("DROPSET_NODE_BUILD"))
+}
+
+/// The build field for a raw compile-time value, split out of `build` so
+/// the `unknown` fallback is testable: `option_env!` is fixed per compile.
+fn build_from(raw: Option<&str>) -> &str {
+    match raw {
         Some(commit) if !commit.is_empty() => commit,
         _ => "unknown",
     }
@@ -58,9 +64,21 @@ fn main() -> ExitCode {
     // Waiting on the channel, not sleeping, is what makes shutdown prompt: a
     // signal ends the wait at once rather than at the next heartbeat.
     let mut beats: u64 = 0;
-    while let Err(RecvTimeoutError::Timeout) = stop_rx.recv_timeout(HEARTBEAT_INTERVAL) {
-        beats += 1;
-        println!("{}", heartbeat_line(beats));
+    loop {
+        match stop_rx.recv_timeout(HEARTBEAT_INTERVAL) {
+            Err(RecvTimeoutError::Timeout) => {
+                beats += 1;
+                println!("{}", heartbeat_line(beats));
+            }
+            Ok(()) => break,
+            // The signal thread ended without a signal. That is not a clean
+            // stop, so it must not print the shutdown line or exit 0, which
+            // a host reads as one.
+            Err(RecvTimeoutError::Disconnected) => {
+                eprintln!("dropset-node: the signal thread ended unexpectedly");
+                return ExitCode::FAILURE;
+            }
+        }
     }
 
     println!("{SHUTDOWN_LINE}");
@@ -77,6 +95,13 @@ mod tests {
             start_line("0.1.0", "abc1234"),
             "dropset-node 0.1.0 abc1234 started"
         );
+    }
+
+    #[test]
+    fn build_reads_unknown_when_absent_or_empty() {
+        assert_eq!(build_from(Some("abc1234")), "abc1234");
+        assert_eq!(build_from(Some("")), "unknown");
+        assert_eq!(build_from(None), "unknown");
     }
 
     #[test]

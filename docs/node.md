@@ -17,13 +17,14 @@ One line to standard output per stage of its life:
 | Shutdown | `dropset-node shutting down`                |
 
 - `<version>` is the crate version.
-- `<build>` is the git commit the binary was built from, baked in at
-  compile time from the `DROPSET_NODE_BUILD` environment variable. It
-  reads `unknown` when that is absent or empty.
+- `<build>` is the full git commit SHA the binary was built from, baked
+  in at compile time from the `DROPSET_NODE_BUILD` environment variable.
+  It reads `unknown` when that is absent or empty.
 - `<n>` counts the heartbeats from 1.
 - The shutdown line prints on the terminate signal or the interrupt
   signal, at once rather than at the next heartbeat, and the process
-  then exits with success.
+  then exits with success. Any other exit is a failure: the node exits
+  non-zero, without the shutdown line.
 
 Run it locally with `cargo run -p dropset-node`; Ctrl-C stops it.
 
@@ -37,9 +38,11 @@ only.
 
 - Both base images come from Docker Hub, pinned by the digest of their
   multi-arch index, and the image is built for ARM (`linux/arm64`).
-- The `BUILD_COMMIT` build argument becomes the start line's `<build>`.
-- The node runs as the non-root `dropset` user, as the container's
-  first process, so the host's stop signal reaches it directly.
+- The `BUILD_COMMIT` build argument, the full commit SHA, becomes the
+  start line's `<build>`.
+- The node runs as the non-root `dropset` user (uid 10001), as the
+  container's first process, so the host's stop signal reaches it
+  directly.
 - Its build caches are its own (`node-reg`, `node-git`).
 
 The image is built by the AWS stack's workflow and first run on AWS. It

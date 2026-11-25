@@ -783,14 +783,14 @@ class TestThisCheckout(unittest.TestCase):
         # inside a continued `RUN` where Docker's cache key would not. A
         # re-indented continuation still passes here.
         #
-        # Scoped to the localnet images, the ones a local daemon builds side
-        # by side. The node image (`infra/node/`) is built only by the AWS
-        # workflow and pins its base by digest, so sharing a layer with the
-        # floating localnet tag buys nothing; the per-file rules still hold
-        # it to the same pin-stage shape.
+        # The node image (`infra/node/`) is left out by name: it is built only
+        # by the AWS workflow, never by a local daemon beside the others, and
+        # it pins its base by digest, so sharing a layer with the floating
+        # localnet tag buys nothing. The per-file rules still hold it to the
+        # same pin-stage shape, and any other new image is compared here.
         keys: dict[str, tuple[object, ...]] = {}
         for rel in ds.discover(self.root):
-            if not rel.startswith("infra/localnet/"):
+            if rel.startswith("infra/node/"):
                 continue
             with open(os.path.join(self.root, rel), encoding="utf-8") as handle:
                 stages = ds.parse(handle.read())
