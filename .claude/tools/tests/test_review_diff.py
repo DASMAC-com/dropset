@@ -1274,9 +1274,21 @@ class GateTests(unittest.TestCase):
             '#[test]\n#[ignore = "needs docker"]\nfn store() {}\n',
             "Ignored test",
         )
-        v = rd.gate("main", self.out, fetch=False)
+        with mock.patch.object(rd, "POSTGRES_TEST_ROOTS", ("feeds/**",)):
+            v = rd.gate("main", self.out, fetch=False)
         self.assertTrue(v["ignored_test_changed"])
         self.assertTrue(self.targets_by_name(v)["make test-postgres"]["run"])
+
+    def test_an_empty_postgres_selection_resolves_nothing(self):
+        # An empty selection reaches no ignored test.
+        self.commit(
+            "feeds/tests/store.rs",
+            '#[test]\n#[ignore = "needs docker"]\nfn store() {}\n',
+            "Ignored test",
+        )
+        v = rd.gate("main", self.out, fetch=False)
+        self.assertFalse(v["ignored_test_changed"])
+        self.assertFalse(self.targets_by_name(v)["make test-postgres"]["run"])
 
     def test_a_tools_change_skips_rust_and_runs_tools_tests(self):
         self.commit(".claude/tools/x.py", "x = 1\n", "Tool")
@@ -1396,9 +1408,15 @@ class ResolveTargetsTests(unittest.TestCase):
             "tui/src/e2e.rs": ignored,
             "market-data/tests/oanda_direction.rs": ignored,
         }
-        self.assertEqual(
-            rd.ignored_test_files(files, read=files.get), ["feeds/tests/a.rs"]
-        )
+        roots = ("feeds/**", "market-data/**")
+        excludes = ("market-data/tests/oanda_direction.rs",)
+        with (
+            mock.patch.object(rd, "POSTGRES_TEST_ROOTS", roots),
+            mock.patch.object(rd, "POSTGRES_TEST_EXCLUDES", excludes),
+        ):
+            self.assertEqual(
+                rd.ignored_test_files(files, read=files.get), ["feeds/tests/a.rs"]
+            )
 
     def test_every_asm_offset_input_resolves_the_parity_target(self):
         for path in (

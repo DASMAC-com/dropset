@@ -18,8 +18,8 @@
 -- Seventeen positional binds, with four groups of same-typed columns — five
 -- BOOLEAN, two nullable DOUBLE PRECISION, four BIGINT, six TEXT — so a
 -- transposition inside any group is accepted silently by Postgres, into rows
--- that are never revised. `market-data/tests/fair_price_roundtrip.rs` is what
--- catches that.
+-- that are never revised. No test catches that since the old stack's Postgres
+-- tests were deleted, so review the column list and the bind chain together.
 INSERT INTO fair_price (
     ts, product_id, fair, anchor, regime, degrade, health,
     basis, basis_age_secs, basis_outlier, uncertain, basis_breach, usdc_breach,

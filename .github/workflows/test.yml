@@ -101,7 +101,7 @@ jobs:
           - '!pnpm-workspace.yaml'
           - '!cfg/**'
           # Only the CloudFormation tree and the node image's Dockerfile, which
-          # no Rust test reads: Rust tests in db-schema, market-data and feeds
+          # no Rust test reads: Rust tests in market-data, feeds and the TUI
           # read the localnet compose file and the secrets template, so
           # infra/localnet/ stays relevant.
           - '!infra/aws/**'
@@ -163,7 +163,7 @@ jobs:
     # RUSTC_WRAPPER); kept off every make target — the SBF build (poor
     # fit, already .so-cached) and make idl alike.
     #
-    # `version` is pinned rather than left to default, in all four jobs that
+    # `version` is pinned rather than left to default, in all three jobs that
     # use this action. Left empty the action resolves the newest sccache by
     # calling the GitHub API for mozilla/sccache's latest release on every
     # run, which both floats the compiler cache onto whatever shipped that
@@ -188,8 +188,8 @@ jobs:
     # dependency builds are near-identical, so they hold one dep-artifact
     # entry between them instead of each saving a full multi-GB target/. Only
     # the first job to finish saves it; the rest restore and rebuild whatever
-    # their own feature set adds. `test-postgres` is the deliberate holdout:
-    # it builds no program and would restore a gigabyte it never reads.
+    # their own feature set adds. `test-postgres` restores no cache at all:
+    # while its crate list is empty it builds nothing.
     #
     # Only a push to main saves. A cache entry is scoped to the ref that saved
     # it, and a run can restore only its own ref's entries or main's — so a
@@ -249,8 +249,8 @@ jobs:
       name: 'Build program (.so)'
       run: 'make program'
     # Install the nextest runner (downloaded binary, not compiled). Pinned in
-    # all four jobs, because a filter expression in the Postgres job is
-    # load-bearing for a required check; bump the four together.
+    # every job that installs it, so a required check never floats onto a new
+    # runner release; bump them together.
     - if: |
         needs.changes.outputs.code == 'true'
       uses: >- # v2.88.0
@@ -545,92 +545,29 @@ jobs:
         echo "SBF cache hit: ${H:-unknown}" >>"$S"
         sccache --show-stats >>"$S"
         echo '```' >>"$S"
-  # The SQL-backed crates (`dropset-feeds`, `dropset-indexer`,
-  # `dropset-market-data` and `dropset-db-schema`) reach a real Postgres
-  # through testcontainers, so their container-backed suites are `#[ignore]`d
-  # and the default `cargo nextest run` above skips them entirely — as it does
-  # the feature-gated unit tests, since the feeds transports are off by
-  # default. This job covers both gaps. It is deliberately toolchain-light:
-  # nothing here builds or loads the program, so it skips install-toolchain,
-  # the program keypair, and the SBF cache the other jobs need, and keeps its
-  # own rust-cache key rather than dragging in their multi-GB target/.
-  #
-  # testcontainers talks to the Docker daemon that ubuntu-latest already runs,
-  # so no `services:` block is needed — each test starts and disposes of its
-  # own database, which is what keeps them independent under nextest's
-  # process-per-test parallelism.
+  # The slot for the tests that need a running Postgres, kept under its
+  # required-check name. While `make test-postgres` selects no crate it
+  # succeeds without building anything, so this job installs no toolchain and
+  # restores or saves no Rust cache. A crate added to the list needs the
+  # toolchain, nextest and cache steps back here in the same change
+  # (docs/ci.md, "Tests (Postgres)").
   test-postgres:
     name: 'Tests (Postgres)'
     needs: 'changes'
-    # Every GITHUB_TOKEN use here is a read (checkout, and the setup and
-    # install actions' public release lookups); pin that rather than inherit
-    # the repository default, since this job runs third-party build scripts.
+    # Checkout is the one GITHUB_TOKEN use here, and it is a read.
     permissions:
       contents: 'read'
     runs-on: 'ubuntu-latest'
     steps:
     - uses: 'actions/checkout@v6'
-    # Compiler version from the workspace `rust-toolchain.toml`; see the note
-    # in lint.yml for the action choice and the neutralized defaults.
+    # The crate selection is the Makefile's `POSTGRES_TEST_CRATES`, the one
+    # owner a local run and review-pr also use; `postgres_ci_wiring.py` fails
+    # lint when a crate gains a Docker-gated test the list does not name, or
+    # when this step stops running `make test-postgres`.
     - if: |
         needs.changes.outputs.code == 'true'
-      uses: >- # v1.17.0
-        actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
-      with:
-        cache: false
-        rustflags: ''
-    - if: |
-        needs.changes.outputs.code == 'true'
-      uses: >- # v0.0.10
-        mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696
-      with:
-        version: 'v0.17.0'
-    # Saves only on a push to main; see the `test` job's rust-cache step.
-    - if: |
-        needs.changes.outputs.code == 'true'
-      uses: >- # v2.9.3
-        Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
-      with:
-        cache-on-failure: true
-        save-if: >-
-          ${{ github.event_name == 'push'
-          && github.ref == 'refs/heads/main' }}
-        shared-key: 'rust-postgres-${{ runner.os }}'
-    - if: |
-        needs.changes.outputs.code == 'true'
-      uses: >- # v2.88.0
-        taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32
-      with:
-        tool: 'cargo-nextest@0.9.143'
-    # The crate selection, the feature flags and the `oanda_direction`
-    # exclusion live in the Makefile's `test-postgres` target, the one owner
-    # a local run and review-pr also use; `postgres_ci_wiring.py` fails lint
-    # when a crate gains a Docker-gated test the target does not select, or
-    # when this step stops running the target.
-    #
-    # The schema comes from `dropset-db-schema` inside the tests themselves
-    # (docs/data-feeds.md §8) — there is no in-crate migrator left to lean on
-    # since the single-schema-owner split, and no DDL is issued here. No CI
-    # run holds the OANDA credential either; it lives in 1Password, reached
-    # through `secrets.local.env`.
-    - env:
-        RUSTC_WRAPPER: 'sccache'
-      if: |
-        needs.changes.outputs.code == 'true'
-      name: 'Run store and feature-gated tests against Postgres'
+      name: 'Run the Postgres-backed tests'
       run: 'make test-postgres'
-    # See the `test` job's summary step. No SBF line here: this job builds no
-    # program and so has no `sbf-cache` step to report on.
-    - continue-on-error: true
-      if: |
-        !cancelled() && needs.changes.outputs.code == 'true'
-      name: 'Cache effectiveness summary'
-      run: |
-        S="$GITHUB_STEP_SUMMARY"
-        echo '### Cache effectiveness' >>"$S"
-        echo '```' >>"$S"
-        sccache --show-stats >>"$S"
-        echo '```' >>"$S"
 name: 'Tests'
 'on':
   merge_group: null

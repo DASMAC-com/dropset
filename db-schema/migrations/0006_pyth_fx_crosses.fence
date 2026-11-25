@@ -1,4 +1,7 @@
-# Relations this migration declares; probed by db-schema/tests/schema_fence.rs.
+# Relations this migration declares, parsed and paired with its migration by
+# db-schema/tests/schema_fence.rs. No test checks them against a database:
+# any container test a comment below names was deleted, so its claim is
+# history, not current coverage.
 #
 # The seeded rows this migration adds are not declared here: `rows` pins an
 # exact count, and the roster is expected to grow. Its content is pinned by

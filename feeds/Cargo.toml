@@ -62,17 +62,6 @@ sqlx = { version = "0.8", default-features = false, features = [
 # `http::Response`), so the body-size cap is exercised without a live venue or
 # a mock server.
 http = "1"
-# The store path is exercised against a real Postgres in a throwaway container
-# (feeds/tests/store_postgres.rs), so the `feed_cursors` upsert and the store
-# sink's cursor-advance are covered end to end. Those tests are `#[ignore]`d —
-# they need a Docker daemon; run them with
-# `cargo test -p dropset-feeds --features store -- --ignored`.
-#
-# The schema owner is a dev-dependency only: the framework depends on the
-# `feed_cursors` table existing, never on who created it, so nothing but the
-# test needs this edge. `test-support` brings the shared throwaway-Postgres
-# start (db-schema/src/testing.rs).
-dropset-db-schema = { path = "../db-schema", features = ["test-support"] }
 # Names the certificate error tests/tls_distrust.rs matches in a refused
 # handshake's source chain. The same 0.23 line `reqwest` pulls, with no
 # features of its own: enabling a second crypto provider here would leave
@@ -82,14 +71,6 @@ rustls = { version = "0.23", default-features = false }
 # expired or misnamed probe certificate cannot pass the test. The floor is the
 # release that added the distrust list: the lock cannot resolve below it.
 rustls-webpki = { version = "0.103.16", default-features = false }
-sqlx = { version = "0.8", default-features = false, features = [
-  "runtime-tokio",
-  "tls-rustls",
-  "postgres",
-  "macros",
-  "json",
-] }
-testcontainers-modules = { version = "0.15", features = ["postgres"] }
 # `net` + `io-util` are test-only: `src/testing.rs`'s one-shot loopback
 # listener serves hand-written responses to the client under test. It is the
 # only way to observe a refused redirect, and the only route into a poll

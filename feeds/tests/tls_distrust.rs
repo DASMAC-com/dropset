@@ -20,9 +20,9 @@
 //! binaries built from the same lock with the same compiled-in roots, so a
 //! host run exercises the same trust path.
 //!
-//! It needs the network, so it is `#[ignore]`d, and `make test-postgres`
-//! excludes its binary: a required check must not depend on a live
-//! third-party host. Run it before the deploy ceremony with:
+//! It needs the network, so it is `#[ignore]`d and no CI job runs it: a
+//! required check must not depend on a live third-party host. Run it before
+//! the deploy ceremony with:
 //!
 //! ```sh
 //! make tls-distrust-check

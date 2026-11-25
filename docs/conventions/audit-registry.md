@@ -252,10 +252,8 @@ db-schema <-> feeds: db-schema/migrations defines feed_cursors; the
   without creating it, since feeds no longer runs sqlx::migrate!. The
   column set and the cursor-after-commit idempotent write must track the
   migration — a column the framework expects and the migration lacks
-  fails at query time, not at startup. db-schema is a feeds
-  dev-dependency, so feeds/tests/store_postgres.rs provisions the real
-  migration rather than a copy of the table beside it — which is what
-  makes this seam testable.
+  fails at query time, not at startup. No test holds this seam since the
+  old stack's Postgres tests were deleted; make demo is the only check.
 db-schema <-> indexer: db-schema/migrations defines the indexer's tables
   and the shared _sqlx_migrations state; indexer/src/store.rs holds the
   row types, reads, and ON CONFLICT writers against them and carries no
@@ -306,8 +304,8 @@ market-data <-> maker-bot cex_prices read path: the store read that is on
   The reader's ROSTER is the caller's, not the reader's: FxStoreSource::new
   takes the source list and FxStoreSource::fx is the FX-anchor spelling of
   it. A source set that omits a venue returns no error, only fewer rows,
-  so a mis-scoped roster reads as collectors being behind — the failure
-  market-data/tests/fx_store_sources.rs exists to pin.
+  so a mis-scoped roster reads as collectors being behind; no test pins
+  it since the old stack's Postgres tests were deleted.
 db-schema <-> market-data config: a THIRD kind of contract, unlike the
   two row-shape seams above — db-schema/migrations both defines AND seeds
   pyth_fx_feeds, which market-data/src/pyth_roster.rs reads at startup as
@@ -333,8 +331,8 @@ db-schema <-> market-data instruments: the THIRD write path into the
   called at startup by EVERY collector binary under market-data/src/bin
   — so a collector that never starts leaves no row, which is the point:
   a dark collector is visible as an absent registration rather than as
-  silence. Readers are the two views, market-data's Grafana source
-  variable, and market-data/tests/instruments.rs.
+  silence. Readers are the two views and market-data's Grafana source
+  variable.
   Two coupling hazards to watch, both stated in the migration itself:
   the currency_kinds seed is coupled to the roster file with NOTHING
   checking it (an unseeded currency classifies as 'unclassified' rather
@@ -380,10 +378,9 @@ db-schema <-> market-data fair price: the FOURTH write path into the
   positional binds against
   four adjacent BOOLEANs, two nullable DOUBLE PRECISIONs and four
   BIGINTs, where a transposition is accepted silently by Postgres into
-  rows that are never revised; market-data/tests/fair_price_roundtrip.rs
-  pins it one-hot across four rows, because no SINGLE row can catch every
-  pairwise boolean swap — two columns holding the same value are
-  interchangeable by construction.
+  rows that are never revised. The container test that pinned it one-hot
+  across four rows was deleted with the old stack's Postgres tests, so
+  review alone holds it now.
   publish's error is CLASSIFIED, not opaque: PublishError splits a failure
   worth retrying from one that will be refused forever. Do NOT read the
   split as reached-a-database vs never-reached — several SQLSTATE classes
@@ -532,10 +529,10 @@ parked set (feeds <-> market-data <-> db-schema <-> grafana): the SECOND
   keys on membership, never on a NULL last_ok_at: never-answered is
   deliberately a FIRING state, so an exclusion rewritten to key on NULL
   would blind the alert to every genuinely never-answered feed with nothing
-  in a diff to show it. market-data/tests/parked_mirror.rs holds the writer
-  end (whole-set write, both prune paths, the cascade); nothing in the repo
-  semantically validates the two Grafana consumers, so those hops are held
-  by review alone, exactly as push liveness's last two are.
+  in a diff to show it. No test holds the writer end since the old stack's
+  Postgres tests were deleted, and nothing in the repo semantically
+  validates the two Grafana consumers, so every hop is held by review
+  alone.
 node <-> ci-infra deploy: the node's three stdout lines (start, heartbeat,
   shutdown; docs/node.md) are what the AWS deploy reads back from its logs
   as proof the image ran, the start line's build field matched against the
