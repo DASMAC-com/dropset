@@ -1411,6 +1411,14 @@ shell disagrees. Only literal assignments at column zero are read, so a knob
 set inside a function or conditional, a knob the profile does not set, and
 an unreadable profile all fall back to the environment.
 
+A held verb is waited for in the tool, never retried by hand:
+`session_dispatch.py --wait <minutes>` re-reads the gate every 30 seconds
+until the batch fits or the minutes run out, then dispatches what it
+admits, so a full fleet costs one backgrounded call instead of a turn per
+retry. A hold on the total names the **finished** sessions — an idle tab
+(no busy glyph in its name) whose issue is In Review or Done — since a
+finished session keeps its tab, and its slot, until the tab closes.
+
 | Knob                    | Default      | Bounds                                                               |
 | ----------------------- | ------------ | -------------------------------------------------------------------- |
 | `DS_FLEET_TOTAL`        | required     | live top-level clients of every class at once                        |

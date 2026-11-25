@@ -1238,6 +1238,103 @@ class GatedRun(unittest.TestCase):
         self.assertIn("unreadable; fleet knobs from the environment", err)
         self.assertIn("admitting under the total 12 alone", err)
 
+    def test_a_total_hold_names_the_finished_sessions(self):
+        refused = reading(slots=0, reasons=["total"], building=20)
+        with unittest.mock.patch.object(
+            session_dispatch, "finished_sessions", return_value=["914 (In Review)"]
+        ):
+            _, _, out, _, _ = self._run("task", "1", readings=(refused,))
+        self.assertIn("finished (idle tab, issue handed off): 914 (In Review)", out)
+
+    def test_a_trailing_wait_flag_is_refused(self):
+        rc, seen, _, err, _ = self._run("task", "1", "--wait", "5")
+        self.assertEqual((rc, seen), (2, []))
+        self.assertIn("must come BEFORE the verb", err)
+
+
+def _gated(held: bool, remedies=("any session closing",)):
+    return session_dispatch.Gate(
+        admitted=[] if held else [slot(["task", "1"])],
+        held=[(slot(["task", "1"]), "20 clients of the total 20")] if held else [],
+        remedies=list(remedies) if held else [],
+        notes=[],
+        overridden=[],
+    )
+
+
+class WaitForRoom(unittest.TestCase):
+    def _wait(self, results, minutes=5):
+        now = [0.0]
+        calls = []
+
+        def gater(_slots, _directory, over_budget=False):
+            calls.append(now[0])
+            return results[min(len(calls), len(results)) - 1]
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        err = io.StringIO()
+        with redirect_stderr(err):
+            got = session_dispatch.wait_for_room(
+                [slot(["task", "1"])],
+                Path("/s"),
+                minutes=minutes,
+                gater=gater,
+                clock=lambda: now[0],
+                sleep=sleep,
+            )
+        return got, calls, err.getvalue()
+
+    def test_it_blocks_until_a_slot_frees_then_returns_the_admitting_gate(self):
+        got, calls, err = self._wait([_gated(True), _gated(True), _gated(False)])
+        self.assertEqual(got.held, [])
+        self.assertEqual(calls, [0.0, 30.0, 60.0])
+        self.assertIn("waiting up to 5 min for a slot (1 held)", err)
+
+    def test_it_returns_the_held_gate_at_the_deadline(self):
+        got, calls, _ = self._wait([_gated(True)], minutes=1)
+        self.assertTrue(got.held)
+        self.assertEqual(calls, [0.0, 30.0, 60.0])
+
+    def test_an_unset_total_returns_at_once(self):
+        unset = _gated(True, remedies=["the knob set in the runtime config"])
+        got, calls, err = self._wait([unset])
+        self.assertTrue(got.held)
+        self.assertEqual((calls, err), ([0.0], ""))
+
+
+class Finished(unittest.TestCase):
+    def test_only_idle_issue_keyed_tabs_are_read(self):
+        names = ["✳ 914", "◐ 915", "916", "⠂ 917", "schedule-24", "✳ claude 2.1.5"]
+        self.assertEqual(session_dispatch.idle_tags(names), ["914", "916"])
+
+    def test_a_handed_off_issue_is_finished_and_in_progress_is_not(self):
+        seen = {}
+
+        def post(_key, _query, variables):
+            seen.update(variables)
+            return {
+                "i0": {"state": {"name": "In Review"}},
+                "i1": {"state": {"name": "In Progress"}},
+                "i2": {"state": {"name": "Done"}},
+            }
+
+        got = session_dispatch.finished_sessions(
+            ["✳ 914", "✳ 915", "916"], api_key="k", post=post
+        )
+        self.assertEqual(got, ["914 (In Review)", "916 (Done)"])
+        self.assertEqual(seen, {"i0": "ENG-914", "i1": "ENG-915", "i2": "ENG-916"})
+
+    def test_a_failed_lookup_names_nothing(self):
+        def post(*_args):
+            raise session_dispatch.linear_issue.LinearIssueError("down")
+
+        self.assertEqual(
+            session_dispatch.finished_sessions(["✳ 914"], api_key="k", post=post), []
+        )
+        self.assertEqual(session_dispatch.finished_sessions(["✳ 914"], api_key=""), [])
+
 
 class RuntimeConfig(unittest.TestCase):
     def _read(self, text):

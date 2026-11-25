@@ -949,7 +949,7 @@ def reply_texts(paths: list[str], cancel: list[dict]) -> dict[str, str]:
         try:
             text = Path(path).read_text(encoding="utf-8").strip()
         except OSError as exc:
-            raise RatifyError(f"--reply-file {path}: {exc.strerror}") from exc
+            raise RatifyError(f"--reply-file {path}: {exc}") from exc
         if not text:
             raise RatifyError(f"--reply-file {path} is empty")
         texts.append(text)

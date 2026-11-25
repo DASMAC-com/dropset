@@ -433,9 +433,16 @@ python3 .claude/tools/session_dispatch.py task 1234 + plan
 ```
 
 It prints one `verb -> tty` line each, a `held` line per verb the
-machine refused, then a roll-call of open sessions — the
-roll-call and the `held` lines are the confirmation to relay; a
-held verb rides the next dispatch, when a session hands off.
+machine refused (a hold on the total also names the **finished**
+sessions: idle tab, issue In Review or Done), then a roll-call of
+open sessions — the confirmation to relay. **Never retry a held
+verb by hand**: re-dispatch it once in the wait form, with
+`run_in_background: true`; it blocks until the batch fits or the
+minutes run out, and exits on its own:
+
+```sh
+python3 .claude/tools/session_dispatch.py --wait 30 task 1234
+```
 
 **Type the bare verb the title token names** (`linear-automation.md` →
 "The verb/substrate title token"): `[Chore/Bedrock]` on 1234 is

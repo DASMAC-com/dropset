@@ -53,8 +53,13 @@ stdlib-only while still reaching a library that is not.
 (no cargo, no Docker, no PR) or `building` — and the machine-load probe
 (`machine_load.py`) is read once for the batch. What fits is admitted; the rest
 is printed as `held` with the number that refused it, and a scheduler session
-re-dispatches it when a slot opens. Every slot, free or building, spends one
-of `DS_FLEET_TOTAL`, the ceiling on live top-level clients the probe applies
+re-dispatches it when a slot opens. `--wait <minutes>` does that waiting in the
+tool, re-reading the gate every `WAIT_POLL_S` until the batch fits or the time
+runs out, so a full fleet costs one call rather than a turn per retry. A hold
+on the total also names the **finished** sessions: an idle tab whose issue is
+In Review or Done, holding a slot until it closes. Every slot, free or
+building, spends one of `DS_FLEET_TOTAL`, the ceiling on live top-level
+clients the probe applies
 and nothing here overrides. `--over-budget` admits past every other check, as
 the operator's word in their own tab. A probe with no reading (exit 3) never
 halts the fleet: the batch is admitted under the total alone, and the dispatch
@@ -79,6 +84,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -777,6 +783,99 @@ def held_lines(result: Gate) -> list[str]:
     return lines
 
 
+#: An issue-keyed session name — the bare tag after an optional status glyph,
+#: as `fleet_resume._TAG_RE` reads it (that module imports this one, so the
+#: pattern is restated rather than imported).
+_SESSION_TAG = re.compile(
+    r"\A(\W*?)\s*(?:(?:eng|ceo|exp)-)?(\d+)\s*\Z", re.I | re.ASCII
+)
+
+#: A client mid-turn spins its title glyph (the quarter circles, or a braille
+#: spinner); an idle one shows a static mark, or none once its client exits.
+_BUSY_GLYPH = re.compile(r"[◐-◓⠀-⣿]")
+
+#: The states in which a session's work is handed off: its tab can close.
+HANDED_OFF_STATES = ("In Review", "Done")
+
+#: How often `--wait` re-reads the gate.
+WAIT_POLL_S = 30
+
+
+def idle_tags(names: list[str]) -> list[str]:
+    """The tags of issue-keyed sessions whose name shows no busy glyph."""
+    tags = []
+    for name in names:
+        match = _SESSION_TAG.match(str(name).strip())
+        if match and not _BUSY_GLYPH.search(match.group(1)):
+            tags.append(str(int(match.group(2))))
+    return tags
+
+
+def finished_sessions(names=None, api_key: str | None = None, post=None) -> list[str]:
+    """``<tag> (<state>)`` for each idle tab whose issue is In Review or Done:
+    a finished session holding a slot of the total until its tab closes.
+
+    Best effort, and empty on any failure: it only names what closing would
+    free, and never changes what the gate admits."""
+    try:
+        names = iterm_api.session_names() if names is None else names
+        tags = idle_tags(names)
+        if api_key is None:
+            api_key = os.environ.get("LINEAR_API_KEY", "")
+        if not tags or not api_key:
+            return []
+        post = post or linear_issue._post
+        variables = {f"i{n}": f"ENG-{tag}" for n, tag in enumerate(tags)}
+        data = post(api_key, linear_issue._state_query(len(tags)), variables)
+    except (iterm_api.ItermUnavailable, linear_issue.LinearIssueError, OSError):
+        return []
+    out = []
+    for n, tag in enumerate(tags):
+        state = ((data.get(f"i{n}") or {}).get("state") or {}).get("name")
+        if state in HANDED_OFF_STATES:
+            out.append(f"{tag} ({state})")
+    return out
+
+
+def _total_binds(result: Gate) -> bool:
+    return "any session closing" in result.remedies
+
+
+def wait_for_room(
+    slots: list[Slot],
+    directory: Path,
+    *,
+    minutes: float,
+    over_budget: bool = False,
+    gater=None,
+    clock=None,
+    sleep=None,
+) -> Gate:
+    """Re-read the gate until nothing is held or `minutes` pass, then return
+    the last reading — the tool blocks here, so the caller spends one call on
+    a full fleet rather than one turn per retry. A hold no session closing can
+    heal (the total unset) returns at once."""
+    gater = gater or gate
+    clock = clock or time.monotonic
+    sleep = sleep or time.sleep
+    deadline = clock() + minutes * 60
+    result = gater(slots, directory, over_budget=over_budget)
+    announced = False
+    while result.held and result.remedies and clock() < deadline:
+        if result.remedies == ["the knob set in the runtime config"]:
+            break
+        if not announced:
+            print(
+                f"session-dispatch: waiting up to {minutes:g} min for a slot "
+                f"({len(result.held)} held)",
+                file=sys.stderr,
+            )
+            announced = True
+        sleep(max(0.0, min(WAIT_POLL_S, deadline - clock())))
+        result = gater(slots, directory, over_budget=over_budget)
+    return result
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="session_dispatch.py",
@@ -802,6 +901,14 @@ def run(argv: list[str]) -> int:
         action="store_true",
         help="admit the whole batch past the machine checks (the total still binds)",
     )
+    parser.add_argument(
+        "--wait",
+        type=float,
+        default=0,
+        metavar="MINUTES",
+        help="block up to MINUTES until the held fit, re-reading the gate every "
+        f"{WAIT_POLL_S}s, then dispatch what it admits",
+    )
     parser.add_argument("--state-dir", type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument(
         "verb",
@@ -816,7 +923,7 @@ def run(argv: list[str]) -> int:
     # stray word so nothing is typed, but that is luck rather than design, and
     # dry-run is the look-before-you-type affordance on a boundary that types
     # into a live shell. Catch it explicitly and say where the flag goes.
-    flags = ("--dry-run", "-n", "--class", "--over-budget", "--state-dir")
+    flags = ("--dry-run", "-n", "--class", "--over-budget", "--wait", "--state-dir")
     if stray := [word for word in args.verb if word.split("=")[0] in flags]:
         print(
             f"session-dispatch: {stray[0]} must come BEFORE the verb "
@@ -827,6 +934,12 @@ def run(argv: list[str]) -> int:
                 if args.verb[:2] == ["fleet", "go"]
                 else ""
             ),
+            file=sys.stderr,
+        )
+        return 2
+    if args.wait < 0:
+        print(
+            "session-dispatch: --wait takes a positive number of minutes",
             file=sys.stderr,
         )
         return 2
@@ -899,10 +1012,23 @@ def _dispatch_tabs(
     # which, and re-dispatching them later cannot double an admitted one.
     directory = args.state_dir or state_dir()
     slots = [classify(words, args.cls) for words in groups]
-    gated = gate(slots, directory, over_budget=args.over_budget)
+    if args.wait:
+        gated = wait_for_room(
+            slots, directory, minutes=args.wait, over_budget=args.over_budget
+        )
+    else:
+        gated = gate(slots, directory, over_budget=args.over_budget)
     for note in gated.notes:
         print(f"session-dispatch: {note}", file=sys.stderr)
     held = held_lines(gated)
+    if gated.held and _total_binds(gated):
+        # The total is held by tabs, not clients' work: name the finished
+        # sessions whose tabs closing would free a slot.
+        finished = finished_sessions()
+        held.append(
+            "finished (idle tab, issue handed off): "
+            + (", ".join(finished) if finished else "none found")
+        )
     if not gated.admitted:
         print("\n".join(held))
         return 0
