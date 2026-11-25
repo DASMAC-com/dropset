@@ -797,6 +797,7 @@ admin login like the stack's deploy:
 
 ```sh
 aws cloudformation create-change-set \
+  --region us-west-2 \
   --stack-name dropset-bedrock-agent \
   --change-set-name import-cost-anomaly \
   --change-set-type IMPORT \
@@ -812,19 +813,29 @@ aws cloudformation create-change-set \
     ParameterKey=TokenRateCacheWrite,UsePreviousValue=true \
     ParameterKey=TokenRateInput,UsePreviousValue=true \
     ParameterKey=TokenRateOutput,UsePreviousValue=true
+aws cloudformation wait change-set-create-complete \
+  --region us-west-2 \
+  --stack-name dropset-bedrock-agent \
+  --change-set-name import-cost-anomaly
 aws cloudformation describe-change-set \
+  --region us-west-2 \
   --stack-name dropset-bedrock-agent \
   --change-set-name import-cost-anomaly
 aws cloudformation execute-change-set \
+  --region us-west-2 \
   --stack-name dropset-bedrock-agent \
   --change-set-name import-cost-anomaly
+aws cloudformation wait stack-import-complete \
+  --region us-west-2 \
+  --stack-name dropset-bedrock-agent
 ```
 
-The change set must list exactly two `Import` actions. Afterward,
-`aws cloudformation detect-stack-drift` and
-`describe-stack-resource-drifts` should read `IN_SYNC` for both. A
-template edit that differs from the console values surfaces there,
-not at import time.
+The change set must list exactly two `Import` actions; execute it only then.
+Afterward, run `aws cloudformation detect-stack-drift` with
+`--logical-resource-ids CostAnomalyMonitor CostAnomalySubscription`, wait for
+`describe-stack-drift-detection-status` to read `DETECTION_COMPLETE`, and
+`describe-stack-resource-drifts` should then read `IN_SYNC` for both. A template
+edit that differs from the console values surfaces there, not at import time.
 
 ## Secrets
 

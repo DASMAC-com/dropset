@@ -44,7 +44,9 @@ Parameters:
       it. Left empty, no budget or anomaly subscription is created at all,
       because an alert with an undeliverable subscriber is a tripwire that
       silently never fires, and the spend-cap topic gets no subscriber; the
-      kill switch works either way.
+      kill switch works either way. Clearing it on a stack that already
+      holds the imported anomaly subscription does not delete that
+      subscription: Retain orphans it, still mailing the old address.
     Type: 'String'
   BudgetLimitUsd:
     Default: '10000'
