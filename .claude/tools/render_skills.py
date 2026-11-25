@@ -29,8 +29,9 @@ conditional it is not a shared block — it is two blocks.
 so the next pass does not over-build: the one block ever extracted (a model
 guard shared by two skills) was retired once the launcher pinned the model,
 and the several "runs in the base repo" mentions each say something different
-about why. No block is extracted today; the gate stays so the next genuinely
-verbatim repetition has a home. Extract only on that.
+about why. The one block today is ``board-tool-shapes``, the board tools'
+full call lines, which four skills repeat verbatim. Extract only on that kind
+of genuinely verbatim repetition.
 
 Usage::
 

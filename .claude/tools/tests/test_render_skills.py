@@ -23,6 +23,20 @@ import render_skills as rs  # noqa: E402
 
 BLOCK = "Shared prose about {{verb}}.\n\nA second paragraph.\n"
 
+#: The checkout this test runs in: `.claude/tools/tests/` is three levels down.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+class RepoTreeTests(unittest.TestCase):
+    """`make render-check` is wired into no workflow, so this is the gate CI
+    runs (through `make tools-tests`) over the committed skill files."""
+
+    def test_the_committed_skills_are_in_sync_with_their_shared_blocks(self):
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            code = rs.run(["render_skills.py", "--root", str(REPO_ROOT), "--check"])
+        self.assertEqual(code, 0, out.getvalue())
+
 
 class RenderTests(unittest.TestCase):
     def setUp(self):

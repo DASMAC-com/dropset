@@ -31,6 +31,31 @@ time plus
 any rejects, and `gate` is refused, since nothing is staged. The steps
 below are the staged pool's and are unchanged.
 
+<!-- render:begin board-tool-shapes -->
+
+**Board-tool call shapes** — copy whole, never probe `--help`:
+
+```sh
+python3 .claude/tools/board_batch.py state --id ENG-<n> --state '<State>'
+python3 .claude/tools/board_batch.py edges --pairs <file>
+python3 .claude/tools/board_batch.py edges --blocker ENG-<a> \
+  --blocked ENG-<b> [--remove]
+python3 .claude/tools/linear_issue.py read ENG-<n> --out <file>
+python3 .claude/tools/linear_issue.py append --id ENG-<n> --file <file>
+python3 .claude/tools/linear_issue.py create --body-dir <dir> \
+  --state Backlog --milestone 'Session pending' [--parent ENG-<n>]
+python3 .claude/tools/linear_patch.py patch --ops <file> ENG-<n>
+python3 .claude/tools/session_dispatch.py [--wait <min>] task <n>
+```
+
+`--pairs`: a JSON list of `{"blocker": "ENG-<a>", "blocked": …}`.
+A `--body-dir` file is a `title:` line, optional `state:` /
+`milestone:` / `priority:` / `verb:` / `substrate:` / `parent:`
+lines, a blank line, the body. Every write takes `--dry-run`; every
+flag precedes a dispatched verb.
+
+<!-- render:end board-tool-shapes -->
+
 ## 1. The filing ask
 
 When the operator says the spec is agreed, one `AskUserQuestion`,
@@ -183,14 +208,21 @@ the operator's approval, and the session executes it in one write
 
 ```sh
 python3 .claude/tools/ratify_staged.py approve --ids <approved …> \
-  --cancel <rejects …>
+  --cancel <rejects …> --reply-file <scratchpad>/reject.md
 ```
 
 Every approved task loses the milestone and moves to Todo; every
-reject is canceled. The tool refuses the whole batch, writing
-nothing, while an approved task still holds an open thread. A write
+reject's open thread gets the reply file's reason (one shared file,
+or one per reject in order), is resolved by it, and the reject is
+canceled; with no rejects, drop both flags. The tool refuses the
+whole batch, writing nothing, while
+an approved task still holds an open thread or a reject holds one
+with no `--reply-file`. A write
 that fails partway is re-run with the same ids: tasks it already
-moved report `ALREADY` and are skipped.
+moved report `ALREADY` and are skipped. The one exception is a
+reply that landed and a resolve that failed: finish that thread
+with the `linear_gate.py resolve` line the error prints, then
+re-run, or the reply posts twice.
 
 ## 5. The close gate
 

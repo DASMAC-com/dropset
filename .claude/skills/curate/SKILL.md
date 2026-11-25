@@ -46,6 +46,31 @@ There is **no governing issue**: the curator is a session that
 runs every day, named by its date, so it writes no issue state of
 its own and has no close tool.
 
+<!-- render:begin board-tool-shapes -->
+
+**Board-tool call shapes** — copy whole, never probe `--help`:
+
+```sh
+python3 .claude/tools/board_batch.py state --id ENG-<n> --state '<State>'
+python3 .claude/tools/board_batch.py edges --pairs <file>
+python3 .claude/tools/board_batch.py edges --blocker ENG-<a> \
+  --blocked ENG-<b> [--remove]
+python3 .claude/tools/linear_issue.py read ENG-<n> --out <file>
+python3 .claude/tools/linear_issue.py append --id ENG-<n> --file <file>
+python3 .claude/tools/linear_issue.py create --body-dir <dir> \
+  --state Backlog --milestone 'Session pending' [--parent ENG-<n>]
+python3 .claude/tools/linear_patch.py patch --ops <file> ENG-<n>
+python3 .claude/tools/session_dispatch.py [--wait <min>] task <n>
+```
+
+`--pairs`: a JSON list of `{"blocker": "ENG-<a>", "blocked": …}`.
+A `--body-dir` file is a `title:` line, optional `state:` /
+`milestone:` / `priority:` / `verb:` / `substrate:` / `parent:`
+lines, a blank line, the body. Every write takes `--dry-run`; every
+flag precedes a dispatched verb.
+
+<!-- render:end board-tool-shapes -->
+
 ## Bootstrap: the state of play
 
 **The curator runs the start-of-day bootstrap** (ruling 2, amended
@@ -415,8 +440,14 @@ follow. Then, per ticked task:
   with no answer reads as approved. The task carries to the next
   batch.
 
-- **A comment asking to drop it**: cancel it, the reason in the
-  reply (`approve --pool inbox --cancel <id>`).
+- **A comment asking to drop it**: write the reason to a file, then
+  one call replies into the thread, resolves it and cancels — a
+  cancel holding an open thread is refused without the file:
+
+  ```sh
+  python3 .claude/tools/ratify_staged.py approve --pool inbox \
+    --cancel <id> --reply-file <scratchpad>/drop-<id>.md
+  ```
 
 - **A comment asking to defer it**: it stays in the pool, the
   thread resolved and the deferral noted in the reply.
@@ -447,8 +478,8 @@ python3 .claude/tools/ratify_staged.py review --pool operator --ids <id>
   It becomes `[Chore/Bedrock]` with its body kept and stays in
   Todo; the scheduler dispatches it when the fleet admits it.
 
-- **`drop`**: cancel it (`approve --pool operator --cancel <id>`),
-  the reason in the reply.
+- **`drop`**: the same one call as an inbox drop, with
+  `--pool operator`.
 
 - **Any other comment is a deferral**: reply in its thread with
   the line `Deferred <YYYY-MM-DD>: <the operator's reason>` (the
@@ -462,22 +493,20 @@ python3 .claude/tools/ratify_staged.py review --pool operator --ids <id>
 
 **Then execute the ticked proposals** from question 2:
 
-- **An edge**: `board_batch.py edges --pairs <file>`, rehearsed
-  with `--dry-run` first.
+- **An edge**: `edges --pairs` (above), `--dry-run` first.
 - **A priority**: `board_batch.py priorities --updates <file>`,
-  rehearsed with `--dry-run` first, under the agreement rule.
-- **The kills**: cancel them all first, in one call that keeps the
-  pool guard (`approve --pool inbox --cancel <id> <id> …`). The
-  guard refuses the **whole** call, writing nothing, when any id is
-  out of the pool or holds an open thread: drop the ids it names
-  and re-run. Then append every killed issue's evidence in **one**
-  `board_batch.py fields --updates <file>` call, each entry
-  `{"state": "Canceled", "reason": "<evidence>"}` (the state
-  re-write is a no-op; the reasons land after it, zero-echo), never
-  an append per issue. **That call has no pool guard and writes the
-  cancel itself**, so build its file only from the ids `approve`
-  reported canceled. A kill the guard refused is not executed: no
-  reason, and the batch message hands it to the scheduler.
+  `--dry-run` first, under the agreement rule.
+- **The kills**: cancel them all first, in one call that keeps the pool guard
+  (`approve --pool inbox --cancel <id> <id> …`). The guard refuses the **whole**
+  call, writing nothing, when any id is out of the pool, or holds an open thread
+  with no `--reply-file`: drop the ids it names and re-run. Then append every
+  killed issue's evidence in **one** `board_batch.py fields --updates <file>`
+  call, each entry `{"state": "Canceled", "reason": "<evidence>"}` (the state
+  re-write is a no-op; the reasons land after it, zero-echo), never an append
+  per issue. **That call has no pool guard and writes the cancel itself**, so
+  build its file only from the ids `approve` reported canceled. A kill the guard
+  refused is not executed: no reason, and the batch message hands it to the
+  scheduler.
 - **A merge**: only when every id is in the last pool listing — a
   merge never closes a Todo or dispatched issue from this tab. Run
   `merge-tasks` over its ids; the label names the survivor. A merge

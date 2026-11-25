@@ -77,6 +77,31 @@ recorded. There is no in-session model check: the `plan` helper pins
 the model and refuses an unresolved tier. Verbs:
 `docs/conventions/local-integrations.md`.
 
+<!-- render:begin board-tool-shapes -->
+
+**Board-tool call shapes** — copy whole, never probe `--help`:
+
+```sh
+python3 .claude/tools/board_batch.py state --id ENG-<n> --state '<State>'
+python3 .claude/tools/board_batch.py edges --pairs <file>
+python3 .claude/tools/board_batch.py edges --blocker ENG-<a> \
+  --blocked ENG-<b> [--remove]
+python3 .claude/tools/linear_issue.py read ENG-<n> --out <file>
+python3 .claude/tools/linear_issue.py append --id ENG-<n> --file <file>
+python3 .claude/tools/linear_issue.py create --body-dir <dir> \
+  --state Backlog --milestone 'Session pending' [--parent ENG-<n>]
+python3 .claude/tools/linear_patch.py patch --ops <file> ENG-<n>
+python3 .claude/tools/session_dispatch.py [--wait <min>] task <n>
+```
+
+`--pairs`: a JSON list of `{"blocker": "ENG-<a>", "blocked": …}`.
+A `--body-dir` file is a `title:` line, optional `state:` /
+`milestone:` / `priority:` / `verb:` / `substrate:` / `parent:`
+lines, a blank line, the body. Every write takes `--dry-run`; every
+flag precedes a dispatched verb.
+
+<!-- render:end board-tool-shapes -->
+
 ## Cycling
 
 The hub's prefix only grows, so the session **cycles**: close
@@ -433,9 +458,16 @@ python3 .claude/tools/session_dispatch.py task 1234 + plan
 ```
 
 It prints one `verb -> tty` line each, a `held` line per verb the
-machine refused, then a roll-call of open sessions — the
-roll-call and the `held` lines are the confirmation to relay; a
-held verb rides the next dispatch, when a session hands off.
+machine refused (a hold on the total also names the **finished**
+sessions: idle tab, issue In Review or Done), then a roll-call of
+open sessions — the confirmation to relay. **Never retry a held
+verb by hand**: re-dispatch it once in the wait form, with
+`run_in_background: true`; it blocks until the batch fits or the
+minutes run out, and exits on its own:
+
+```sh
+python3 .claude/tools/session_dispatch.py --wait 30 task 1234
+```
 
 **Type the bare verb the title token names** (`linear-automation.md` →
 "The verb/substrate title token"): `[Chore/Bedrock]` on 1234 is
