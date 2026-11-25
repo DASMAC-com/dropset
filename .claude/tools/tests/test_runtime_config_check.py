@@ -156,11 +156,12 @@ class StaticTests(Fixture):
         self.put(
             ".claude/shell/runtime-config.example.zsh",
             EXAMPLE.replace("# export DS_WAIT=120", "DS_WAIT=120")
-            + "# DS_WAIT=1 plan\n",
+            + "# DS_WAIT=1 plan\n# DS_WAIT='a b'\n",
         )
         code, out = self.call("--static")
         self.assertEqual(code, 1)
-        self.assertEqual(out.count("export gap:"), 1, out)
+        # The plain line and the quoted one with a space; never the prefix.
+        self.assertEqual(out.count("export gap:"), 2, out)
         self.assertIn("export gap: DS_WAIT", out)
 
     def test_a_malformed_manifest_exits_2(self):
@@ -329,6 +330,19 @@ class LiveTests(Fixture):
         self.assertIn("DS_LANES=2", data["rows"])
         self.assertTrue(
             data["line"].startswith("config: 1 assigned but not exported (DS_WAIT)"),
+            data["line"],
+        )
+
+    def test_a_missing_and_an_unexported_row_are_reported_apart(self):
+        env = {k: v for k, v in self.ENV.items() if k != "DS_LANES"}
+        env[rc.UNEXPORTED_ENV] = "DS_WAIT"
+        data = json.loads(self.call("--live", "--json", env=env)[1])
+        self.assertEqual(sorted(data["missing"]), ["DS_LANES", "DS_WAIT"])
+        self.assertTrue(
+            data["line"].startswith(
+                "config: 1 required missing (DS_LANES); "
+                "1 assigned but not exported (DS_WAIT)"
+            ),
             data["line"],
         )
 

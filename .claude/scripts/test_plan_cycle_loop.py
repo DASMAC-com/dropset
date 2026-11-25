@@ -222,6 +222,18 @@ class CycleLoop(unittest.TestCase):
         self.assertIn("not cycling", result.stderr)
         self.assertEqual(len(self._launches()), 1)
 
+    def test_turning_the_pool_off_in_the_profile_lifts_the_cargo_pair(self):
+        knobs = {k: v for k, v in _KNOBS.items() if k != "CARGO_BUILD_JOBS"}
+        result = self._plan(cycles=1, knobs=knobs, profile="DS_CARGO_POOL=0\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self._launches()), 2)
+
+    def test_an_unreadable_profile_relaunches_on_the_shells_knobs(self):
+        result = self._plan(cycles=1)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("unreadable; relaunching on this shell's knobs", result.stderr)
+        self.assertEqual(len(self._launches()), 2)
+
     def test_a_live_same_name_session_blocks_the_relaunch(self):
         (self.home / "sessions" / "1.json").write_text(
             json.dumps({"pid": os.getpid(), "name": self.name, "sessionId": "x"})

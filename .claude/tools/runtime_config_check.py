@@ -47,7 +47,8 @@ itself; a row a tool or hook reads that it names is reported ``UNEXPORTED``
 and counted missing, required or not, since every other Python child reads it
 unset. ``--names`` prints the row names that helper passes, one per line.
 
-Exit 0 clean, 1 drift (static) or a missing required row (live), 2 on an
+Exit 0 clean, 1 drift (static) or a missing required or unexported tool-read
+row (live), 2 on an
 unreadable or malformed manifest. Standard library only; a skill-tool, not a
 Cargo workspace member. Tests live in ``tests/test_runtime_config_check.py``.
 """
@@ -95,7 +96,9 @@ SHELL_DEFAULT_RE = re.compile(rf"\$\{{({PREFIX}):-([^}}]*)\}}")
 #: `export`; a `NAME=v cmd` per-command prefix is matched apart, as no profile
 #: line.
 ASSIGN_RE = re.compile(rf"^#?\s*(export\s+)?({PREFIX})=")
-PREFIX_LINE_RE = re.compile(rf"^#?\s*{PREFIX}=\S*\s+[^#\s]")
+PREFIX_LINE_RE = re.compile(
+    rf"""^#?\s*{PREFIX}=(?:'[^']*'|"[^"]*"|[^\s'"]\S*|)\s+[^#\s]"""
+)
 #: The names `_ds_upkeep` had to export itself, space separated: assigned in
 #: the profile but not exported, so every other Python child reads them unset.
 UNEXPORTED_ENV = "DS_CONFIG_UNEXPORTED"

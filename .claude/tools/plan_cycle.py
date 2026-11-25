@@ -331,9 +331,15 @@ def cycle(repo: Path, date: str, kind: str = "plan") -> str:
     )
 
 
-#: The knobs a cycle relaunch re-reads: the machine-load probe's four and the
-#: cargo pool's two, every one the launch gate (`_ds_fleet_knobs`) checks.
-RELAUNCH_KNOBS = (*sd.FLEET_KNOBS, "DS_CARGO_LANES", "CARGO_BUILD_JOBS")
+#: The knobs a cycle relaunch re-reads: the machine-load probe's four, the
+#: cargo pool's two and the pool's off switch, which decides whether the
+#: launch gate (`_ds_fleet_knobs`) requires the pair at all.
+RELAUNCH_KNOBS = (
+    *sd.FLEET_KNOBS,
+    "DS_CARGO_LANES",
+    "CARGO_BUILD_JOBS",
+    "DS_CARGO_POOL",
+)
 
 
 def relaunch_knobs(env, path: Path) -> tuple[dict[str, str], list[str]]:

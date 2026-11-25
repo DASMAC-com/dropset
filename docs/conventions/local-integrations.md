@@ -1365,7 +1365,9 @@ or any Python tool reads** (`export NAME=value`, never a bare
 `NAME=value`). A plain profile assignment satisfies the shell's own
 check and reads as unset to every subprocess. A plain assignment is
 right only for a variable the shell helpers alone read, such as the
-`DS_OP_*` refs above and the model tiers.
+three 1Password refs above and the model tiers; the private-key
+guard's two `DS_OP_*` variables are read by a hook, so they are
+exported.
 
 **The config's shape is committed; its values are not.**
 `.claude/shell/runtime-config.manifest.json` has one row per variable
@@ -1424,10 +1426,13 @@ an unreadable profile all fall back to the environment.
 
 A daily role's **cycle relaunch** re-reads the same way, before it
 relaunches in the tab's old shell: `plan_cycle.py knobs` prints the four
-`DS_FLEET_*` knobs plus `DS_CARGO_LANES` and `CARGO_BUILD_JOBS` as the
-profile sets them now, the loop exports them, and then runs the launch
-gate (`_ds_fleet_knobs`). A knob raised since the tab opened reaches the
-cycled session, and a knob still missing refuses the relaunch by name.
+`DS_FLEET_*` knobs, `DS_CARGO_LANES`, `CARGO_BUILD_JOBS` and the pool's
+`DS_CARGO_POOL` switch as the profile sets them now, the loop exports
+them, and then runs the launch gate (`_ds_fleet_knobs`). A knob raised
+since the tab opened reaches the cycled session, and a knob still
+missing refuses the relaunch by name. It is a re-read, not a `source`
+of the profile, so a knob set by a non-literal value, inside a
+conditional or in a file the profile sources keeps the shell's value.
 
 | Knob                    | Default      | Bounds                                                               |
 | ----------------------- | ------------ | -------------------------------------------------------------------- |
