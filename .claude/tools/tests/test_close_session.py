@@ -389,15 +389,23 @@ class ReclaimTests(unittest.TestCase):
         return [i for i, c in enumerate(runner.calls) if c[0] == "make"]
 
     def test_clean_runs_in_the_tree_between_the_write_and_the_removal(self):
-        rc, result, runner, _ = run_close()
+        order = []
+        runner = FakeRun()
+
+        def tracking_run(cmd, cwd=None):
+            if cmd[0] == "make" or cmd[3:5] == ["worktree", "remove"]:
+                order.append(cmd[0] if cmd[0] == "make" else "remove")
+            return runner(cmd, cwd)
+
+        def writer(*_):
+            order.append("write")
+
+        rc, result = close(ns(), run=tracking_run, writer=writer, pid=1000)
         self.assertEqual(rc, 0, result)
         self.assertTrue(result["reclaimed"])
+        self.assertEqual(order, ["write", "make", "remove"])
         (at,) = self._cleans(runner)
         self.assertEqual(runner.calls[at], ["make", "-C", TREE, "clean"])
-        remove_at = next(
-            i for i, c in enumerate(runner.calls) if c[3:5] == ["worktree", "remove"]
-        )
-        self.assertLess(at, remove_at)
 
     def test_a_failed_clean_is_a_note_and_the_removal_still_happens(self):
         rc, result, _, _ = run_close(make_rc=2)

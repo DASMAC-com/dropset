@@ -77,8 +77,8 @@ skill answered them before its close) and, when removing, ``make clean`` run in
 the tree so its build trees free their disk now rather than at the next upkeep
 pass (best-effort too; ``reclaimed`` says whether it ran clean), then the
 worktree unlocked, removed **without** ``--force``, and its branch deleted. A
-removal that fails after the write re-locks the tree and
-exits 2. The issue is resolved by then (a removal follows only a Done or
+removal that fails after the write re-locks the tree and exits 2. The issue
+is resolved by then (a removal follows only a Done or
 Canceled write), so ``upkeep`` passes the tree to the pruner as a closed name:
 no upstream and unpushed work no longer hold it, and the restored lock goes
 stale once this session exits, so the next pass collects it. The exit-2 note
@@ -107,9 +107,9 @@ would be. A re-run after an exit 2 appends a second line; remove the tree by
 hand instead.
 
 Prints one JSON object ``{issue, state, worktree, branch, pr, dry_run,
-keep_worktree, park, refused, leftovers, state_written, notifications, reclaimed,
-removed,
-cost_line, client_pid, notes}`` (``client_pid`` the client a park ends, or
+keep_worktree, park, refused, leftovers, state_written, notifications,
+reclaimed, removed, cost_line, client_pid, notes}`` (``client_pid`` the client
+a park ends, or
 on a dry run would; ``state`` is ``None`` and ``keep_worktree`` true on a park;
 ``leftovers`` the ledger's item count, ``None`` when none
 was read; ``notifications`` the dismissal's one-line summary, ``None`` when no

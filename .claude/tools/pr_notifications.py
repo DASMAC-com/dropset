@@ -14,12 +14,13 @@ Usage:
 ``--pr`` selects every thread on the named PRs, whatever their state — the
 close path's form, which has already refused an open PR. **``--hold-attention``**
 (``--pr`` only) then leaves in the inbox every selected thread whose GitHub
-``reason`` is in ``ATTENTION_REASONS`` — a mention, a review request, a reply
-in a joined conversation — and lists each in ``held`` as ``{id, pr, state,
-reason, title}``: the queue watcher holds them at the merge so the
-``post-merge`` skill can answer each before its close, whose own ``--pr`` run
-(no hold) clears them. ``--settled`` selects
-every thread whose PR is merged or closed, whatever its issue's Linear state:
+``reason`` is in ``ATTENTION_REASONS`` (a mention, a review request, an
+assignment), or whose conversation's latest comment is another human's
+(``CONVERSATION_REASONS``, one comment read each), and lists each in ``held``
+as ``{id, pr, state, reason, title}``: the queue watcher holds them at the
+merge so the ``post-merge`` skill can answer each before its close, whose own
+``--pr`` run (no hold) clears them. ``--settled`` selects every thread whose
+PR is merged or closed, whatever its issue's Linear state:
 a merged PR whose issue sits In Review is settled code, and its threads are
 the bulk of the inbox. An open PR's threads are never selected by it.
 
@@ -86,18 +87,22 @@ MAX_PAGES = 10
 PR_LIST_LIMIT = 200
 MAX_LOOKUPS = 20
 SETTLED_STATES = ("MERGED", "CLOSED")
-# GitHub's thread reasons that mean someone wants an answer from this account:
-# a mention (direct or of a team), a review request or assignment, and
-# `comment` — a reply in a conversation this account already joined, which is
-# how a review comment's follow-up arrives. Every other reason (`author`,
-# `ci_activity`, `state_change`, `subscribed`, ...) is the bulk, safe to dismiss.
+# GitHub's thread reasons that always mean someone wants an answer from this
+# account: a mention (direct or of a team), a review request or an assignment.
 ATTENTION_REASONS = (
     "assign",
-    "comment",
     "mention",
     "review_requested",
     "team_mention",
 )
+# The reasons a conversation arrives under, held only when the thread's latest
+# comment is a human's other than this account's (:func:`wants_reply`). This
+# account opens the PRs, so a reviewer's comment on one comes as `author` —
+# measured on this repo's inbox, every PR thread was `author` or
+# `state_change` — and `comment` once this account has joined the thread. Every
+# other reason (`ci_activity`, `state_change`, `subscribed`, ...) is the bulk,
+# safe to dismiss.
+CONVERSATION_REASONS = ("author", "comment")
 
 
 def pr_url_re(repo: str) -> re.Pattern:
@@ -161,6 +166,7 @@ def list_threads(
                     meta[str(n["id"])] = {
                         "reason": n.get("reason"),
                         "title": subject.get("title"),
+                        "latest_comment_url": subject.get("latest_comment_url"),
                     }
         if len(raw) < PER_PAGE:
             break
@@ -230,19 +236,53 @@ def unsubscribes(thread: dict, keep_subscription: set[int], settled: bool) -> bo
     return not settled and thread["pr"] not in keep_subscription
 
 
-def hold(selected: list[dict], meta: dict[str, dict]) -> tuple[list[dict], list[dict]]:
-    """``(to dismiss, held)``: a thread whose reason is in
-    ``ATTENTION_REASONS`` is held, carrying its reason and title, so the
-    post-merge tail can answer it before anything marks it done."""
-    keep: list[dict] = []
+def wants_reply(gh: Gh, info: dict, viewer: Callable[[], str | None]) -> bool:
+    """Whether a conversation thread's latest comment is a human's other than
+    this account's — one ``gh api`` read of ``latest_comment_url``. A bot's
+    comment (``user.type`` ``Bot``) or this account's own is no question. An
+    unreadable comment, or an unknown viewer, holds: the close dismisses it
+    anyway, so the error costs one look rather than a lost question."""
+    url = info.get("latest_comment_url")
+    if not url:
+        return False
+    try:
+        comment = _json(gh, ["api", url])
+        login = viewer()
+    except (RuntimeError, ValueError):
+        return True
+    user = comment.get("user") if isinstance(comment, dict) else None
+    if not isinstance(user, dict) or login is None:
+        return True
+    return user.get("type") != "Bot" and user.get("login") != login
+
+
+def hold(
+    gh: Gh, selected: list[dict], meta: dict[str, dict]
+) -> tuple[list[dict], list[dict]]:
+    """``(to dismiss, held)``: a thread is held, carrying its reason and
+    title, when its reason is in ``ATTENTION_REASONS``, or is in
+    ``CONVERSATION_REASONS`` and :func:`wants_reply` — so the ``post-merge``
+    skill can answer it before anything marks it done."""
+    login: list[str | None] = []
+
+    def viewer() -> str | None:
+        if not login:  # one /user read, and only when a conversation needs it
+            me = _json(gh, ["api", "/user"])
+            login.append(me.get("login") if isinstance(me, dict) else None)
+        return login[0]
+
+    to_dismiss: list[dict] = []
     held: list[dict] = []
     for t in selected:
         info = meta.get(t["id"], {})
-        if info.get("reason") in ATTENTION_REASONS:
-            held.append({**t, "reason": info["reason"], "title": info.get("title")})
+        reason = info.get("reason")
+        if reason in ATTENTION_REASONS or (
+            reason in CONVERSATION_REASONS and wants_reply(gh, info, viewer)
+        ):
+            held.append({**t, "reason": reason, "title": info.get("title")})
         else:
-            keep.append(t)
-    return keep, held
+            to_dismiss.append(t)
+    return to_dismiss, held
 
 
 def dismiss(
@@ -287,7 +327,7 @@ def dismiss(
         states, result["notice"] = pr_states(gh, {num for _, num in threads}, repo)
     result["selected"], result["unresolved"] = select(threads, states, prs)
     if hold_attention:
-        result["selected"], result["held"] = hold(result["selected"], meta)
+        result["selected"], result["held"] = hold(gh, result["selected"], meta)
     if not apply:
         result["would_keep"] = sum(
             not unsubscribes(t, keep_subscription, settled) for t in result["selected"]

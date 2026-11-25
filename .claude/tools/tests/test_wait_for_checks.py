@@ -2404,6 +2404,17 @@ class DismissNotificationsTests(unittest.TestCase):
         )
         self.assertIn("notifications dismissed: 1, 1 held for a reply (mention)", line)
 
+    def test_an_exit_that_is_not_a_merge_holds_nothing(self):
+        """Only the merged line reports a held count, so only a merge holds:
+        a dequeued PR's mention is marked done as before."""
+        threads = [{**t, "reason": "mention"} for t in self.THREADS]
+        result, calls = self._run((0, json.dumps(threads), ""), merged=False)
+        deletes = [c[3] for c in calls if c[:3] == ["api", "-X", "DELETE"]]
+        self.assertEqual(
+            deletes, ["/notifications/threads/11", "/notifications/threads/14"]
+        )
+        self.assertEqual(result["held"], [])
+
     def test_a_failed_list_is_reported_not_raised(self):
         result, calls = self._run((1, "", "HTTP 401"))
         self.assertEqual(len(calls), 1)

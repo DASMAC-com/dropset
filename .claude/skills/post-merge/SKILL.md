@@ -50,12 +50,21 @@ a dropped step.
    on the issue or the PR; "closed, no explanation" is an item.
 
 1. **Answer the held notifications.** The merged line names any
-   thread held `for a reply` (a mention, a review request, a reply in
-   a joined conversation; the reasons are in `wait-for-queue-<pr>.json`
-   → `notifications.held`). Read that PR's conversation once through
-   the GitHub MCP and give each a disposition: an answer posted on the
-   PR, or a leftover (step 4) when it asks for work. The close
-   dismisses them; never leave one unread to it.
+   thread held `for a reply` (a mention, a review request, an
+   assignment, or a conversation whose latest comment is another
+   human's; each is in `wait-for-queue-<pr>.json` →
+   `notifications.held`). Typed on its own, list them with one dry run:
+
+   ```sh
+   python3 .claude/tools/pr_notifications.py dismiss --pr <number> \
+     --hold-attention
+   ```
+
+   Read that PR's conversation once through the GitHub MCP and give
+   each a disposition: an answer posted on the PR, or a leftover
+   (step 4) when it asks for work. The close summary lists each with
+   its disposition, and the close dismisses them; never leave one
+   unread to it.
 
 1. **Git safety.** Nothing uncommitted, nothing unpushed:
 
@@ -70,7 +79,9 @@ a dropped step.
    **Only pushed work survives a removal.** A locked signer is no
    reason to leave work uncommitted — commit and push with
    `--no-gpg-sign` (`commit-changes`). Surface anything modified and
-   decide where it goes; never report clear with a dirty tree.
+   decide where it goes; never report clear with a dirty tree. Nor is
+   anything here **load-bearing for another open PR** — an unmerged
+   sibling branch, or a file only this checkout has.
 
 1. **Every leftover has a disposition.** Each warning, nit and
    left-for-you item from the review summary and the PR body is
@@ -99,12 +110,13 @@ a dropped step.
 
 1. **Session metrics, unprompted.** Invoke `/session-metrics` — the
    brief, then the `Session account` — as the second-last act, so the
-   capture covers the whole task. No approval and no question. If
-   `review-pr` already ran it this session, say so and move on.
+   capture covers the whole task. No approval and no question. If it
+   already ran this session, say so and move on.
 
 1. **The one question.** Print the close summary — the cost line, what
-   landed (PR, merge time, the issue's checklist state), the leftovers
-   with their dispositions — then dry-run the close, which re-checks
+   landed (PR, merge time, the issue's checklist state), the held
+   notifications and the leftovers with their dispositions — then
+   dry-run the close, which re-checks
    the ledger, git safety, the PR and the worktree lock without writing:
 
    ```sh
@@ -118,7 +130,8 @@ a dropped step.
    move it and mark it Done? Removing the worktree ends shell, file
    writes and memory saves here."* — with **"Mark Done and remove the
    worktree (Recommended)"**, **"Mark Done, keep the worktree"** and
-   **"Not yet"**. Only this approval moves the issue to Done.
+   **"Not yet"**. Only this approval moves the issue to Done, and the
+   question is the last word: nothing is recited after it.
 
 ## The close
 
@@ -156,6 +169,11 @@ refuses the base checkout:
 python3 .claude/tools/board_batch.py state --id ENG-### --state Done
 ```
 
+## Landed content
+
 If you want landed content anyway — a merge resolution, say — slice
 it with `python3 .claude/tools/show_at_ref.py <ref> <path>`; **never
-`git show <ref>:<path>`**, which prints the whole blob.
+`git show <ref>:<path>`**, which prints the whole blob. This restates
+a general rule **at the call site on purpose** — a rule stated in one
+phase of a long session has repeatedly failed to fire in another — so
+a later de-duplication pass must leave it.
