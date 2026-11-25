@@ -3128,6 +3128,12 @@ a terminal closed outright, is covered by the next morning's digest.
   bare `architect <n>` reopen alike. It never overwrites a marker a
   `task` session wrote on the same number.
 
+- **`fleet down`** — the evening's wind-down listing
+  (`.claude/tools/fleet_winddown.py`, read-only): In Review finishes,
+  everything else pauses, each live PR's mergeability and queue entry
+  beside it, then the two message texts the scheduler sends. The
+  protocol is `fleet-winddown.md`.
+
 - **`fleet [go]`** — resume the whole **fleet**: one iTerm tab per
   in-flight Linear issue, each with `task resume <n>` typed **and Enter
   pressed**, and each flagged green for attention. The batch counterpart
@@ -3154,7 +3160,10 @@ a terminal closed outright, is covered by the next morning's digest.
     load-bearing since a merged PR with outstanding follow-up stays
     there (see `linear-automation.md` → "The Linear state tracks the
     SESSION, not the PR"). Matching the type means a workflow rename
-    cannot silently drop a session from the fleet.
+    cannot silently drop a session from the fleet. An In Review issue
+    whose PR has merged is reopened too, and the roll-call marks it
+    `PR merged, tail outstanding` (one GraphQL read of the branches;
+    a failed read only drops the note).
   - **It skips an issue whose session is already open**, so it is safe
     to run twice. The signal is the iTerm session *name*, which carries
     the tag because `task` passes `-n <tag>` — so the two are coupled:
