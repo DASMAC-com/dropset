@@ -18,9 +18,8 @@ Notes), in the same destination and
 format `linear-task` uses. Use when a project
 milestone lands, a feature ships, or before declaring a
 subsystem "stable" — or, with `--rotation N`, for a broad
-random sweep. The why behind each rule — measured incidents,
-retired designs — is in [`rationale.md`](rationale.md); read
-it only when a rule's edge is in question.
+random sweep. The measured incidents and retired designs
+behind the rules are in [`history.md`](history.md).
 
 Findings are parked Linear issues, so filing them does not
 put work in the pull queue. **The operator ratifies every finding with this
@@ -159,7 +158,7 @@ Optional (ask on a scoped run if not provided):
    words — is marked **mechanical** and runs on the helper
    tier (spelled `sonnet` in the Agent call; the launcher
    binds that slot to it) — a read-only lane, not a task
-   worker the Sonnet-tier rejection covers (`rationale.md`).
+   worker the Sonnet-tier rejection covers (`history.md`).
    No lane pins `haiku` — a lane that cheap is a Python
    tool.
 
@@ -211,7 +210,7 @@ Optional (ask on a scoped run if not provided):
    scope spans obviously separable lanes (comment-accuracy
    over source comments *plus* a spec doc *plus* five
    READMEs) invites an uncounted fan-out of its own
-   (`rationale.md`). If a dimension reads as lanes, make it
+   (`history.md`). If a dimension reads as lanes, make it
    separate agents here, where they are counted.
    A dimension with a **mechanical half** (hierarchy's child
    counts, doc-freshness's symbol sweep) splits the same
@@ -307,7 +306,7 @@ Optional (ask on a scoped run if not provided):
      *behavior*, never against the migration text: an
      applied migration is immutable, so it is the **least**
      authoritative statement of current behavior while
-     looking like the most (`rationale.md`).
+     looking like the most authoritative (`history.md`).
 
    - **Instruction integrity** — when the scope is agent
      infra, this is the dimension that matters most, and it
@@ -342,7 +341,7 @@ Optional (ask on a scoped run if not provided):
    **Every dimension prompt ends with the self-deflation
    clause** from `docs/conventions/sub-agent-brief.md`,
    appended verbatim — not optional boilerplate but the
-   cheapest noise gate in this skill (`rationale.md`).
+   cheapest noise gate in this skill (`history.md`).
 
 1. **Adversarial cross-check.** Spawn a fresh skeptic
    sub-agent (brief it with the same sub-agent brief; no
@@ -438,7 +437,7 @@ Optional (ask on a scoped run if not provided):
 
      **Not `save_issue`**, which echoes the whole stored
      body on a create too — worst for an audit's long folded
-     bodies (`rationale.md`).
+     bodies (`history.md`).
 
      **Meta-work prefix.** If every path the finding's fix
      will edit sits under the meta surface (`.claude/**`,
@@ -508,7 +507,7 @@ Optional (ask on a scoped run if not provided):
 
        **The fingerprint is the stable key; a `file:line`
        is not** — every citation is a snapshot of the
-       discovery commit (`rationale.md`). Write the
+       discovery commit (`history.md`). Write the
        fingerprint to name the *thing*, not its coordinates,
        and say in the body that the citations are
        as-of-discovery.
@@ -525,7 +524,7 @@ Optional (ask on a scoped run if not provided):
    **Record no collision links, and no relations of any
    kind.** The collision machinery is retired; reconciling
    overlap is a scheduler session's, judged on content
-   (`rationale.md`).
+   (`history.md`).
 
 1. **Report.** Print a short tally — findings by
    dimension and severity, deduped count, and the filed
@@ -590,7 +589,7 @@ Optional (ask on a scoped run if not provided):
   session splits into **sequential PRs** of roughly 4–5
   findings each: never fold across a deploy unit to reach
   4–5, and never carry a coherent set past a short session
-  to avoid a second issue (`rationale.md`).
+  to avoid a second issue (`history.md`).
 
 - Shell discipline (per `CLAUDE.md`): every command is one
   bare call reducing to an allow-glob — no `&&`, pipes,

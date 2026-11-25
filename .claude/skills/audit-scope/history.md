@@ -1,11 +1,11 @@
 <!-- cspell:word Gstack -->
 
-# `audit-scope` rationale
+# `audit-scope` history
 
-The why behind the rules in [`SKILL.md`](SKILL.md): measured
-incidents, retired designs and edge-case reasoning. The skill
-states each rule; read this file when a rule's edge is in
-question, never as part of the step list.
+The provenance behind the rules in [`SKILL.md`](SKILL.md):
+measured incidents, retired designs and edge-case reasoning. The
+skill states each rule; this ledger is never part of the step
+list.
 
 ## Origin: parked issues, not a checklist
 
@@ -58,8 +58,11 @@ skeptics killed **37**, an ~80% false-positive rate upstream of
 the skeptic, which earns its cost. The clause is the cheapest
 noise gate in the skill.
 
-The skeptic's sideways sweep and evidence-state duties, and the
-coverage line, are borrowed from Gstack's review and cso skills.
+## Borrowed shapes
+
+The skeptic's sideways-sweep and evidence-state duties are
+borrowed from Gstack's review and cso skills; the per-lane
+coverage line from its cso skill.
 
 ## A quoted migration
 

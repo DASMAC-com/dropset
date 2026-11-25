@@ -505,7 +505,7 @@ answers that without the body, and a `MISMATCH` means another
 writer landed since.
 
 **The close-out is its own branch: read [`closeout.md`](closeout.md)
-when you offer it** (wrap-up signaled, or a lull after significant
+before you offer it** (wrap-up signaled, or a lull after significant
 decisions — offer it unasked) **or `cycle` runs it.** It holds
 the gate, stopping the curator first, the section-patched rewrite
 to the shape above with its round-trip composition rules, the

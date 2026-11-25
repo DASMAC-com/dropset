@@ -21,7 +21,8 @@ answer. None live: report `curator: not live`.
 ## The deliverable: the whole document, section-patched
 
 **The close-out deliverable is the whole document, brought** to
-the ephemeral shape the skill names and nothing else: superseded
+the ephemeral shape the skill's "The Planning document is the
+living state" section names and nothing else: superseded
 phases, dated addenda and the session's incremental notes
 disappear (it is still no append log: `In-session notes` is
 swept), and no ruling, doctrine or method text survives outside
