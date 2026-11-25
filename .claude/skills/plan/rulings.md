@@ -259,7 +259,8 @@ the document's state sections.
    entry (2026-10-26, amended 2026-10-27). Anything required for
    launch, or that could result in a program update, is never left
    under a parking milestone; it sits in the un-parked Backlog at
-   High or above for the operator's review (2026-10-23).
+   High or above for the operator's review (operator direction,
+   2026-10-23).
 
 1. **Cost telemetry is reconciled against the bill.**
    Session-reported costs are projections;
@@ -336,12 +337,13 @@ the document's state sections.
    worktree.** The scheduler never tells a worker to edit a file
    beyond what the worker's ratified issue body says, by message or
    any other channel. A change that surfaces mid-flight goes to the
-   curator, who files it as its own task for the operator's review.
-   When a PR merges, its issue is marked Done and its worktree is
-   closed; anything further is done in another task, never added
-   late in the same worktree, whether by the scheduler's message,
-   the worker's own initiative or anyone else's. A Done issue gets
-   no follow-up PR (operator, 2026-10-31).
+   curator, who files it as its own task for the operator's review
+   (a split of the worker's own issue stays ruling 7's). When a PR
+   merges, its session closes: the issue goes to the operator's Done
+   and the worktree is closed; anything further is done in another
+   task, never added late in the same worktree, whether by the
+   scheduler's message, the worker's own initiative or anyone
+   else's. A Done issue gets no follow-up PR (operator, 2026-10-31).
 
 ## Rulings index (beyond the numbered set)
 
@@ -371,7 +373,8 @@ the document's state sections.
 - **No skill-size exceptions.** The headroom ratchet (ruling 4)
   governs until the frozen baseline is empty, no new baseline entry
   is ever added, and the mechanism retires with 1996 (2026-10-20).
-- **The adversarial cross-check runs at every tier.** It is skipped
+- **`review-pr`'s adversarial cross-check runs at every tier.** It is
+  skipped
   only for a trivial diff, and only through an explicit
   `AskUserQuestion`, never silently (2026-10-20).
 - **Lens agents are never a trim lever.** A lever that thins the
@@ -413,7 +416,8 @@ the document's state sections.
    publish the dispatchable antichain at every bootstrap; every
    hold is a visible edge.
 1. **Messaging is the event-driven backbone.** When a session owns
-   the issue, the message is the amendment; when the owning
+   the issue, the message is the amendment, within its ratified
+   body (ruling 38); when the owning
    session is gone, the amendment goes on the body. A peer message
    is never the operator's approval.
 1. **A budget, not a ceiling.** The fleet's size is the machine's
