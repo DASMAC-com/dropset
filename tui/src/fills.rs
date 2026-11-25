@@ -87,7 +87,15 @@ fn subscribe_and_forward(
             commitment: Some(CommitmentConfig::finalized()),
         },
     )
-    .map_err(|e| anyhow!("logs_subscribe {ws_url}: {e}"))?;
+    // Host only, and the client's own error redacted: a keyed endpoint's
+    // websocket URL carries the same key as its HTTP one.
+    .map_err(|e| {
+        let host = crate::cluster::host_of(ws_url).unwrap_or_default();
+        anyhow!(
+            "logs_subscribe {host}: {}",
+            crate::cluster::redact(&e.to_string())
+        )
+    })?;
 
     for notification in notifications {
         let logs = notification.value;

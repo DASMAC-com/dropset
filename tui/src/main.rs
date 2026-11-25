@@ -43,14 +43,28 @@ use anyhow::{anyhow, bail, Result};
 use dropset_tui::ceremony::{self, CeremonyLog};
 use dropset_tui::cluster::{self, Cluster};
 use dropset_tui::keys::{self, KeyAddresses, RoleKey};
-use dropset_tui::{action, agent_shell, app, chain, explorer, fair, publish, wallet};
+use dropset_tui::{action, agent_shell, app, chain, explorer, fair, mainnet_rpc, publish, wallet};
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::atomic::AtomicU8;
 use std::sync::{Arc, Mutex};
 
-fn main() -> Result<()> {
+/// Run the cockpit, printing a launch's error through the endpoint redaction:
+/// an error that escapes to here can carry an RPC client's message, and that
+/// can carry the keyed URL ([`cluster::redact`]).
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("Error: {}", cluster::redact(&format!("{e:?}")));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<()> {
     let args = Args::parse(std::env::args().skip(1))?;
     if args.help {
         print_help();
@@ -194,7 +208,12 @@ fn main() -> Result<()> {
         })
         .transpose()?;
 
-    let rpc_url = args.cluster.rpc_url()?;
+    // Mainnet dereferences its 1Password reference here — after the agent-shell
+    // refusal above (which `rpc_url` repeats first) and before the banner and
+    // the first frame. Only a session that can spend nothing may use the
+    // keyless public endpoint.
+    let spends_nothing = watch_only && leader.is_none() && quote.is_none() && program_key.is_none();
+    let rpc_url = args.cluster.rpc_url(spends_nothing)?;
     if args.cluster.is_mainnet() {
         args.cluster
             .verify_genesis(&chain::rpc(&rpc_url), args.rehearsal_loopback)?;
@@ -277,8 +296,11 @@ fn print_help() {
          overrides its line. The quote key is required unless watch-only, and\n    \
          pays for the ladder and re-centre.\n\n\
          MAINNET:\n    \
-         Set {} to the JSON-RPC endpoint — there is deliberately no default.\n    \
-         Entry verifies the genesis hash and requires a typed confirmation, and\n    \
+         Set {} to a 1Password reference (op://<vault>/<item>/<field>),\n    \
+         never the URL: the binary reads it with `op read`, then `op signout`\n    \
+         ({} names the account). A literal URL is refused, except a loopback\n    \
+         one for the rehearsal and the public endpoint for a watch-only\n    \
+         session; there is deliberately no default. Entry verifies the genesis hash and requires a typed confirmation, and\n    \
          every ceremony step shows its plan under its own typed confirmation.\n    \
          --rehearsal-loopback instead admits only a 127.0.0.1 or localhost\n    \
          endpoint whose genesis is NOT mainnet-beta, and needs its own\n    \
@@ -298,6 +320,7 @@ fn print_help() {
         keys::QUOTE_VAR,
         keys::PROGRAM_KEY_VAR,
         cluster::MAINNET_RPC_ENV,
+        mainnet_rpc::OP_ACCOUNT_ENV,
         fair::DATABASE_URL_ENV,
         fair::READER_ROLE
     );

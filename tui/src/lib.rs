@@ -28,6 +28,7 @@ pub mod fills;
 pub mod job;
 pub mod keys;
 pub mod leader;
+pub mod mainnet_rpc;
 pub mod market;
 pub mod naming;
 pub mod outside;

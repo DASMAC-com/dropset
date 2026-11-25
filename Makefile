@@ -522,7 +522,14 @@ endef
 #     ceremony signs against RPC reads verified with the same compiled-in
 #     roots. Never clear a failure by disabling certificate verification.
 #
-# The endpoint has no default on purpose: a wrong-but-present URL fails
+# DROPSET_MAINNET_RPC_URL holds a 1Password reference (op://<vault>/<item>/
+# <field>), exported once in the profile — never the URL, which carries the
+# provider's key. The binary reads it itself with `op read`, then `op
+# signout`, and refuses a literal URL without echoing it (a loopback one for
+# the rehearsal excepted); DROPSET_OP_ACCOUNT, from the collectors' enclave
+# file below, is passed through when set so `op` knows which account to read.
+# See docs/conventions/local-integrations.md, "The cockpit's mainnet RPC URL".
+# The variable has no default on purpose: a wrong-but-present endpoint fails
 # silently, while an absent one fails here with a message. The binary then
 # verifies the endpoint's genesis hash really is mainnet-beta's and requires a
 # typed confirmation before drawing a frame.
@@ -544,7 +551,9 @@ endef
 # default is shared (see `tui`).
 TUI_KEYS_FILE ?= tui/private-keys.env
 TUI_MAINNET_ARGS ?=
-MAINNET_RPC_HINT := mainnet mode has no default endpoint; set it explicitly
+MAINNET_RPC_HINT := export it in your profile as a 1Password reference \
+	(op://<vault>/<item>/<field>) and never as the URL; see \
+	docs/conventions/local-integrations.md
 AGENT_SHELL_REFUSAL := Refused: CLAUDECODE is set, which marks this as an \
 	agent's shell (Claude Code sets it in every shell it opens). An agent \
 	shell, sub-agents included, never runs mainnet operations. Do not run \
@@ -556,28 +565,33 @@ define refuse-agent-shell
 	exit 1; \
 fi
 endef
+# The account assignment, empty when no account is named.
+TUI_OP_ACCOUNT = $(if $(DROPSET_OP_ACCOUNT), \
+	DROPSET_OP_ACCOUNT='$(DROPSET_OP_ACCOUNT)')
 .PHONY: tui-mainnet
 tui-mainnet:
 	$(refuse-agent-shell)
 	$(call require-env,DROPSET_MAINNET_RPC_URL,$(MAINNET_RPC_HINT))
-	DROPSET_TUI_DATABASE_URL='$(TUI_DATABASE_URL)' \
+	$(TUI_OP_ACCOUNT) DROPSET_TUI_DATABASE_URL='$(TUI_DATABASE_URL)' \
 		cargo run -p dropset-tui -- --cluster mainnet --keys-file '$(TUI_KEYS_FILE)' \
 		$(TUI_MAINNET_ARGS)
 
 # Film-the-startup variant of `tui-mainnet`: the same cockpit, with the two
 # things it insists on filled in so it launches with no arguments. The RPC
-# is an exported `DROPSET_MAINNET_RPC_URL` when there is one, else the public
-# mainnet-beta endpoint (enough for the genesis check; a provider keeps the
-# live panes fed), and `--wallet ephemeral` is a fresh keypair generated in
-# memory and never written anywhere. That wallet is unfunded and there is no
-# `--leader`, so nothing in the session can spend — it exists to show the
-# real-funds banner and the panel coming up, not to run the ceremony. Its
-# ceremony record goes to a scratch path rather than the operator's real one.
+# is always the public mainnet-beta endpoint (enough for the genesis check),
+# overriding any exported DROPSET_MAINNET_RPC_URL: that export is the
+# 1Password reference to the keyed URL, and the watch-only demo must never
+# dereference it. `--wallet ephemeral` is a fresh keypair generated in memory
+# and never written anywhere. That wallet is unfunded and there is no
+# `--leader`, quote or program key, so nothing in the session can spend — the
+# one case where the binary admits the public endpoint as a literal. It
+# exists to show the real-funds banner and the panel coming up, not to run
+# the ceremony. Its ceremony record goes to a scratch path rather than the
+# operator's real one.
 PUBLIC_MAINNET_RPC := https://api.mainnet-beta.solana.com
-MAINNET_DEMO_RPC_URL ?= $(or $(DROPSET_MAINNET_RPC_URL),$(PUBLIC_MAINNET_RPC))
 .PHONY: mainnet-demo
 mainnet-demo:
-	DROPSET_MAINNET_RPC_URL='$(MAINNET_DEMO_RPC_URL)' \
+	DROPSET_MAINNET_RPC_URL='$(PUBLIC_MAINNET_RPC)' \
 		DROPSET_TUI_DATABASE_URL='$(TUI_DATABASE_URL)' \
 		cargo run -p dropset-tui -- --cluster mainnet --wallet ephemeral \
 		--ceremony-log "$${TMPDIR:-/tmp}/dropset-mainnet-demo.log"

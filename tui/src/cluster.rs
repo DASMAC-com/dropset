@@ -45,13 +45,13 @@
 //! mainnet): the spawn returns as soon as the child is launched, with no
 //! readiness check, so nothing else would notice.
 
-use crate::chain;
-use crate::validator;
+use crate::{agent_shell, chain, mainnet_rpc, validator};
 use anyhow::{anyhow, bail, Result};
 use dropset_sdk::cluster::Deployment;
 use solana_client::rpc_client::RpcClient;
 use solana_pubkey::Pubkey;
 use std::io::{IsTerminal, Write};
+use std::sync::OnceLock;
 
 /// Solana mainnet-beta's genesis hash — the chain's permanent identity, and
 /// the only cluster this crate hard-codes. Verified against
@@ -59,12 +59,14 @@ use std::io::{IsTerminal, Write};
 /// memory.
 pub const MAINNET_GENESIS_HASH: &str = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
 
-/// Environment variable naming the mainnet JSON-RPC endpoint.
+/// Environment variable holding the **1Password reference** to the mainnet
+/// JSON-RPC endpoint — a pointer the binary dereferences itself, never the
+/// URL (see [`crate::mainnet_rpc`] for its four treatments).
 ///
-/// Deliberately has **no default**. A default would be a URL the operator
-/// never typed, which is the one thing a real-funds entry point must not
-/// have: the failure mode of a wrong-but-present endpoint is silent, while
-/// the failure mode of an absent one is an error message at launch. The
+/// Deliberately has **no default**. A default would be an endpoint the
+/// operator never chose, which is the one thing a real-funds entry point must
+/// not have: the failure mode of a wrong-but-present endpoint is silent,
+/// while the failure mode of an absent one is an error message at launch. The
 /// public `api.mainnet-beta.solana.com` in particular is rate-limited to the
 /// point of being useless for a ceremony, so defaulting to it would trade a
 /// clear error for a confusing one.
@@ -148,20 +150,26 @@ impl Cluster {
     ///
     /// Localnet's is a constant because the process spawns that validator
     /// itself, so the URL is never operator-supplied and cannot be wrong.
-    /// Mainnet's comes from [`MAINNET_RPC_ENV`] with no fallback — see that
-    /// constant for why an absent value is the better failure.
-    pub fn rpc_url(self) -> Result<String> {
-        match self {
-            Cluster::Localnet => Ok(validator::DEFAULT_RPC_URL.to_string()),
-            Cluster::Mainnet => match std::env::var(MAINNET_RPC_ENV) {
-                Ok(url) if !url.trim().is_empty() => Ok(url.trim().to_string()),
-                _ => bail!(
-                    "mainnet mode needs {MAINNET_RPC_ENV} set to a JSON-RPC endpoint \
-                     (there is deliberately no default — the public endpoint is rate-limited \
-                     well below what a ceremony needs)"
-                ),
-            },
-        }
+    /// Mainnet's is dereferenced from the 1Password reference in
+    /// [`MAINNET_RPC_ENV`] with no fallback — the agent-shell refusal first,
+    /// then `op read` and `op signout` ([`crate::mainnet_rpc::resolve`]).
+    /// `spends_nothing` admits the keyless public endpoint for a watch-only
+    /// session, and nothing else.
+    ///
+    /// The resolved URL is registered for [`redact`], so every sink that
+    /// renders text strips it from then on.
+    pub fn rpc_url(self, spends_nothing: bool) -> Result<String> {
+        let url = match self {
+            Cluster::Localnet => validator::DEFAULT_RPC_URL.to_string(),
+            Cluster::Mainnet => mainnet_rpc::resolve(
+                &mainnet_rpc::Inputs::from_env(spends_nothing),
+                agent_shell::refuse_agent_shell,
+                mainnet_rpc::run_op,
+                |line| eprintln!("{line}"),
+            )?,
+        };
+        register_rpc_url(&url);
+        Ok(url)
     }
 
     /// Confirm the endpoint really is the chain this session claims.
@@ -268,7 +276,7 @@ fn check_rehearsal(rpc_url: &str, genesis: impl FnOnce() -> Result<String>) -> R
 /// disagree the client wins. `http://evil.com\@127.0.0.1` reads as loopback to `host_of`
 /// but the client takes `\` for `/` and connects to `evil.com`. Any userinfo,
 /// backslash, query or other punctuation in the authority refuses here.
-fn is_rehearsal_loopback(rpc_url: &str) -> bool {
+pub(crate) fn is_rehearsal_loopback(rpc_url: &str) -> bool {
     let Some(rest) = rpc_url
         .strip_prefix("http://")
         .or_else(|| rpc_url.strip_prefix("https://"))
@@ -382,6 +390,124 @@ pub fn host_of(rpc_url: &str) -> Option<String> {
         None => host_port.split_once(':').map_or(host_port, |(h, _)| h),
     };
     (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+/// The session's endpoint once resolved, for [`redact`]. Set once, by
+/// [`Cluster::rpc_url`]; a localnet URL carries nothing to strip.
+static SESSION_RPC_URL: OnceLock<String> = OnceLock::new();
+
+/// Register `rpc_url` as the endpoint [`redact`] strips. The first call wins:
+/// a session has one endpoint.
+pub fn register_rpc_url(rpc_url: &str) {
+    let _ = SESSION_RPC_URL.set(rpc_url.to_string());
+}
+
+/// `text` with the session's endpoint reduced to its host — the one
+/// redaction every sink that renders text goes through (the log pane and its
+/// file, the vault view, the launch's error exit).
+///
+/// The sinks rather than the error sites, because the sites are many and the
+/// leak is in a dependency's formatting: an HTTP client error commonly prints
+/// the request URL, and a paid provider's URL carries its key in the path or
+/// query string. Before an endpoint is registered this is the identity.
+pub fn redact(text: &str) -> String {
+    match SESSION_RPC_URL.get() {
+        Some(rpc_url) => redact_with(text, rpc_url),
+        None => text.to_string(),
+    }
+}
+
+/// [`redact`] over an explicit `rpc_url`, so it is testable without the
+/// process-wide registration.
+///
+/// Two passes, because a client may reformat the URL it prints (a trailing
+/// slash added, a scheme swapped to `wss://`): every URL in `text` whose
+/// [`host_of`] is the endpoint's host is rewritten to `scheme://host`, then
+/// any remaining copy of the endpoint's secret-bearing parts — userinfo,
+/// path, query, fragment — is replaced outright.
+pub fn redact_with(text: &str, rpc_url: &str) -> String {
+    let Some(host) = host_of(rpc_url) else {
+        return text.to_string();
+    };
+    let secrets = secret_parts(rpc_url);
+    if secrets.is_empty() {
+        return text.to_string();
+    }
+    let mut out = rewrite_urls(text, &host);
+    for secret in secrets {
+        out = out.replace(&secret, "…");
+    }
+    out
+}
+
+/// Every part of `rpc_url` beyond its scheme, host and port that is long
+/// enough to be a key, longest first so a whole part goes before its pieces.
+fn secret_parts(rpc_url: &str) -> Vec<String> {
+    let after_scheme = rpc_url.split_once("://").map_or(rpc_url, |(_, rest)| rest);
+    let end = after_scheme
+        .find(['/', '?', '#'])
+        .unwrap_or(after_scheme.len());
+    let (authority, rest) = after_scheme.split_at(end);
+    let (before_fragment, fragment) = rest.split_once('#').unwrap_or((rest, ""));
+    let (path, query) = before_fragment
+        .split_once('?')
+        .unwrap_or((before_fragment, ""));
+    let mut parts: Vec<&str> = vec![rest, path.trim_matches('/'), query, fragment];
+    if let Some((userinfo, _)) = authority.rsplit_once('@') {
+        parts.push(userinfo);
+        parts.extend(userinfo.split(':'));
+    }
+    parts.extend(path.split('/'));
+    // A query parameter's value alone survives a client reordering the pairs.
+    parts.extend(
+        query
+            .split('&')
+            .filter_map(|pair| pair.split_once('=').map(|(_, v)| v)),
+    );
+    let mut secrets: Vec<String> = parts
+        .into_iter()
+        .filter(|p| p.len() >= MIN_SECRET_LEN)
+        .map(str::to_string)
+        .collect();
+    secrets.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    secrets.dedup();
+    secrets
+}
+
+/// The shortest part [`secret_parts`] strips — shorter is a route like `/v1`,
+/// not a key, and replacing it would mangle unrelated text.
+const MIN_SECRET_LEN: usize = 8;
+
+/// `text` with every URL on `host` cut down to `scheme://host`, keeping a
+/// `/…` marker where something followed the host.
+fn rewrite_urls(text: &str, host: &str) -> String {
+    let is_scheme_char = |c: char| c.is_ascii_alphanumeric() || "+.-".contains(c);
+    let ends_url = |c: char| c.is_whitespace() || "()<>\"'`,".contains(c);
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(sep) = rest.find("://") {
+        let start = rest[..sep]
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| !is_scheme_char(c))
+            .map_or(0, |(i, c)| i + c.len_utf8());
+        let tail = &rest[sep + 3..];
+        let len = tail.find(ends_url).unwrap_or(tail.len());
+        let url = &rest[start..sep + 3 + len];
+        out.push_str(&rest[..start]);
+        if host_of(url).as_deref() == Some(host) {
+            out.push_str(&rest[start..sep + 3]);
+            out.push_str(host);
+            if tail[..len].contains(['/', '?', '#', '@']) {
+                out.push_str("/…");
+            }
+        } else {
+            out.push_str(url);
+        }
+        rest = &rest[sep + 3 + len..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Block on the operator typing `yes` before continuing.
@@ -531,7 +657,7 @@ mod tests {
 
     #[test]
     fn localnet_rpc_url_is_the_spawned_validator() {
-        let url = Cluster::Localnet.rpc_url().unwrap();
+        let url = Cluster::Localnet.rpc_url(false).unwrap();
         assert_eq!(url, validator::DEFAULT_RPC_URL);
         // The localnet URL is this process's own, so it must classify local —
         // the property `verify_genesis` relies on to skip its check.
@@ -657,6 +783,73 @@ mod tests {
         let local = Identity::of_local(&Ok("SomeFreshTestValidatorGenesis1111111111111".into()));
         assert_eq!(local, Identity::Verified);
         assert_eq!(local.write_refusal(), None);
+    }
+
+    const KEY: &str = "SUPERSECRET0123";
+
+    #[test]
+    fn an_rpc_error_from_a_keyed_url_renders_only_its_host() {
+        // A real client error, not a hand-built string: the leak is in the
+        // HTTP layer's formatting, so the test drives it. Port 1 refuses.
+        let keyed = format!("http://127.0.0.1:1/?api-key={KEY}");
+        let err = chain::rpc(&keyed).get_genesis_hash().unwrap_err();
+        let forms = [
+            format!("{err}"),
+            format!("{err:?}"),
+            format!("{:#}", anyhow!(err)),
+        ];
+        // The leak is real: before redaction the client's error carries the key.
+        assert!(forms.iter().any(|f| f.contains(KEY)), "{forms:?}");
+        for rendered in forms {
+            let redacted = redact_with(&rendered, &keyed);
+            assert!(!redacted.contains(KEY), "leaked the key: {redacted}");
+            assert!(
+                !redacted.contains("api-key"),
+                "leaked the query: {redacted}"
+            );
+        }
+    }
+
+    #[test]
+    fn redaction_keeps_the_host_and_strips_every_keyed_part() {
+        let cases = [
+            (
+                format!("https://rpc.example.com/?api-key={KEY}"),
+                "https://rpc.example.com/…",
+            ),
+            (
+                format!("https://rpc.example.com/{KEY}/"),
+                "https://rpc.example.com/…",
+            ),
+            (
+                format!("https://user:{KEY}@rpc.example.com"),
+                "https://rpc.example.com/…",
+            ),
+        ];
+        for (url, host_only) in cases {
+            // The client may reformat what it prints: a slash added, the
+            // websocket scheme, pairs reordered, or no URL around the key.
+            let reformatted = url.replace("https://", "wss://");
+            for text in [
+                format!("error sending request for url ({url}): refused"),
+                format!("logs_subscribe {reformatted}: closed"),
+                format!("stray {KEY} in a body"),
+            ] {
+                let redacted = redact_with(&text, &url);
+                assert!(!redacted.contains(KEY), "{url}: {redacted}");
+            }
+            let redacted = redact_with(&format!("url ({url}) failed"), &url);
+            assert_eq!(redacted, format!("url ({host_only}) failed"));
+        }
+    }
+
+    #[test]
+    fn redaction_leaves_a_keyless_endpoint_and_other_hosts_alone() {
+        let text = "fetch http://127.0.0.1:8899/ and https://explorer.solana.com/tx/abc12345";
+        assert_eq!(redact_with(text, "http://127.0.0.1:8899"), text);
+        let keyed = format!("https://rpc.example.com/?api-key={KEY}");
+        let other = "see https://explorer.solana.com/tx/5xY5s1Vd7z9Kq2Rp8 (ok)";
+        assert_eq!(redact_with(other, &keyed), other);
     }
 
     #[test]
