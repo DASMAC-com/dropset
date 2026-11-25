@@ -359,10 +359,11 @@ def adopt_session(
     path.
 
     The ``<id>/`` **sidecar** directory (sub-agent transcripts, persisted tool
-    results) is **symlinked** beside the link, so a cost reader resolving the
-    worktree-slug name finds every sub-agent, and the ones the resumed session
-    spawns land in the same directory as the ones before it. A sidecar already
-    under the worktree's slug is left alone.
+    results) is **symlinked** beside the link (created first when the session
+    has none yet), so a cost reader resolving either name finds every
+    sub-agent, and the ones the resumed session spawns land in the same
+    directory as the ones before it. A sidecar already under the worktree's
+    slug is left alone.
     """
     if not worktree.is_dir():
         return "refused", refusal(session_id, worktree, f"no worktree at {worktree}")
@@ -395,8 +396,11 @@ def adopt_session(
         )
     sidecar = source.parent / session_id
     sidecar_target = target.parent / session_id
-    if sidecar.is_dir() and not os.path.lexists(sidecar_target):
+    if not os.path.lexists(sidecar_target):
         try:
+            # Created when absent, so the sub-agents the resumed session
+            # spawns land beside any earlier ones under BOTH names.
+            sidecar.mkdir(exist_ok=True)
             sidecar_target.symlink_to(sidecar, target_is_directory=True)
         except OSError:
             # Best-effort: the transcript is reachable, which is the resume;

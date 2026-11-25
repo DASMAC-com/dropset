@@ -1980,6 +1980,12 @@ _ds_task_resume() {
   # so `resume` runs from the worktree. A link that failed is `refuse`, its
   # instruction already on stderr: launch nothing rather than reopen in base.
   [[ "$mode" == refuse ]] && return 1
+  # A worktree pruned between the resolve and here must not fall through to
+  # the base-checkout `cd` below with a resume-by-id.
+  if [[ "$mode" == resume ]] && ! cd "$run_from"; then
+    print -u2 "dropset: $run_from is gone — not resuming $sid in the base."
+    return 1
+  fi
 
   # Fall back to the base repo rather than returning: `${...:-}` guards an EMPTY
   # run_from, not a STALE one. A transcript's cwd stamps outlive the worktree
