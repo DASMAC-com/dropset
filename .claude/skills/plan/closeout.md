@@ -18,6 +18,10 @@ curator gets one `SendMessage`, "closing for the day", and its
 `curate` stop tail ends in `CLEAR TO CLOSE`. Do not wait for an
 answer. None live: report `curator: not live`.
 
+**A `cycle` skips this gate and the curator stop** — the day
+goes on under the relaunched session — and runs only the
+section-patched write below.
+
 ## The deliverable: the whole document, section-patched
 
 **The close-out deliverable is the whole document, brought** to
