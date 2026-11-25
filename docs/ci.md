@@ -373,18 +373,17 @@ them. The job runs `make test-postgres`, which runs only the crates its
 `postgres-ci-wiring` lint hook, fails when a crate gains such a test without
 being named there.
 
-The old stack's Postgres-backed tests in feeds, indexer, market-data and the
-schema crate were deleted on 2026-11-24. Its code stays until the node is
-deployed, and with those tests gone a change that breaks the old database code
+The Postgres-backed tests in feeds, indexer, market-data and the schema crate
+were deleted; their code stays, so a change that breaks that database code
 shows up only on `make demo`. The variable is empty, so the target prints a
 line and succeeds. The job keeps its required-check name, so the ruleset was
 not edited. With nothing to build, the job is just a checkout and that one
 step: no toolchain, no nextest and no Rust cache. The `rust-postgres` cache
 entry is no longer saved.
 
-The node's migration tests will name their crates in the variable. The same
-change puts the Rust toolchain, nextest and a rust-cache step back into the
-job, since the empty target needs none of them.
+A crate added to the variable needs the Rust toolchain, nextest and a
+rust-cache step put back into the job in the same change, since the empty
+target needs none of them.
 
 ## 7. Racing local against CI
 

@@ -20,13 +20,13 @@ hand-kept list, which would only catch a regression of today's line:
 * the workflow must still run ``make test-postgres``, so the owner is the
   thing CI actually executes.
 
-The list is **empty** today: the old stack's Postgres tests were deleted, and
-the node's migration tests have not landed. An empty gated set is therefore a
-legitimate state, not a failure. What guards the attribute's spelling instead
-is the container library itself: a tracked ``.rs`` file naming
-``testcontainers`` that carries no gate attribute is reported, since it is a
-container-backed test this guard cannot see. That bound is stated plainly: a
-test reaching Postgres some other way, ungated, is invisible here.
+The list is **empty** today: the old stack's Postgres tests were deleted. An
+empty gated set is therefore a legitimate state, not a failure. What guards
+the attribute's spelling instead is the container library itself: a tracked
+``.rs`` file naming ``testcontainers`` that carries no gate attribute is
+reported, since it is a container-backed test this guard cannot see. That
+bound is stated plainly: a test reaching Postgres some other way, ungated, is
+invisible here.
 
 Extra crates in the list are fine — the selection may also exist for
 feature-gated unit tests that a plain run leaves off.

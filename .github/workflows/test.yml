@@ -549,9 +549,9 @@ jobs:
   # required-check name while it holds none. The old stack's Postgres tests
   # were deleted, so `make test-postgres` selects no crate and succeeds
   # without building anything; this job therefore installs no toolchain and
-  # restores or saves no Rust cache. The node's migration tests fill the
-  # target's crate list later, and that change puts the toolchain, nextest
-  # and cache steps back here (docs/ci.md, "Tests (Postgres)").
+  # restores or saves no Rust cache. A crate added to the target's list
+  # needs the toolchain, nextest and cache steps back here in the same change
+  # (docs/ci.md, "Tests (Postgres)").
   test-postgres:
     name: 'Tests (Postgres)'
     needs: 'changes'

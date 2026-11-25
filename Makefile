@@ -321,9 +321,9 @@ test-parity: check-nextest program-parity
 # `postgres_ci_wiring.py` (a lint hook) fails when a crate gains a Docker-gated
 # test without being named in POSTGRES_TEST_CRATES.
 #
-# The list is empty: the old stack's Postgres tests were deleted, and the
-# node's migration tests have not landed yet. An empty list runs nothing and
-# succeeds, since nextest given no test to run exits non-zero. A crate added
+# The list is empty: the old stack's Postgres tests were deleted. An empty
+# list runs nothing and succeeds, rather than calling nextest, which exits
+# non-zero when given no test to run. A crate added
 # here runs under nextest, in one invocation so the shared dependency graph
 # compiles once; the CI job then needs its toolchain steps back too
 # (docs/ci.md, "Tests (Postgres)").
