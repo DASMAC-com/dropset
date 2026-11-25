@@ -8,7 +8,7 @@ the book actually moves and the maker (`bots/maker-bot`) takes fills — the
 demand side of the localnet demo described in `docs/market-making.md`.
 
 This is the benign flow taker. The **adversarial** strategy-hardening taker
-is a separate, deferred effort; this bot is not it.
+is a separate effort, not built; this bot is not it.
 
 ## The model
 

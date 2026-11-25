@@ -2252,14 +2252,11 @@ running because it might be needed. The shared database is the **one
 deliberate always-on exception**, because a gap in collection is
 unrecoverable in a way an idle compute stack never is.
 
-Its placement is staged:
-
-1. **EC2 running the compose stack, with scheduled dumps to S3.** Cheap,
-   identical to the local shape, and enough to start recording.
-1. **Aurora Serverless v2** once recording-for-real starts, with S3 as
-   the archival tier. The store sink targets a `PgPool`, so this is a
-   connection-string change and a restore — one engine, one `sqlx` and
-   migration toolchain, no dialect port.
+It runs on **EC2 as the compose stack, with scheduled dumps to S3** —
+cheap, and identical to the local shape. The store sink targets a
+`PgPool`, so moving it to a managed Postgres is a connection-string
+change and a restore — one engine, one `sqlx` and migration toolchain,
+no dialect port.
 
 **A hosted collector gets environment variables, not files.** ECS supplies
 configuration as environment variables (and secrets as references resolved
@@ -2617,9 +2614,7 @@ ______________________________________________________________________
 
   **Still open: the other 11 currencies.** BRL, CHF, GBP, IDR, JPY, MXN,
   MYR, NGN, SGD, TRY and ZAR are unverified on both vendors, so the
-  upper-bound caveat in §9 stands for them unchanged. It is tracked as
-  its own post-validation issue rather than deferred inside this one, and
-  under the lean-MVP posture it is deliberately not on the critical path.
+  upper-bound caveat in §9 stands for them unchanged.
   Pyth's column of that matrix is measured and complete above as
   *published* coverage rather than as collected data — the feed itself
   currently collects nothing (§9); MYR and

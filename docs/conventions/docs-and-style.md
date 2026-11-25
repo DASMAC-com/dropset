@@ -16,6 +16,24 @@ about **prose only** — the env-var-resolved assignee / filing-destination
 ids (`LINEAR_ASSIGNEE_ID`, etc.) are configuration, not prose, and are
 unaffected.
 
+## No roadmap in the repo
+
+**The repo specifies what exists or is about to be coded, and nothing
+else.** Checkpoints, milestones, dated plans, phase plans, statements of
+what gets built later and when, and commercial or business-development
+reasoning are never committed — in docs, READMEs, skills or code
+comments. They live in Linear and the Planning document, where a plan
+can change without leaving a stale claim behind in version control.
+Where a sentence carries both a plan and a current fact, keep only the
+fact. The company's location is not stated either.
+
+Two uses are not roadmap and stay: the **process** vocabulary of these
+conventions (a commit checkpoint, a Linear parking milestone such as
+`Session pending`), and a recorded operator ruling that binds current
+behavior. A committed artifact whose subject is itself commercial (a
+pitch deck and its spec) is a specification of that artifact; if it is
+ever retired, that is a code change, not a trim under this rule.
+
 ## Line length
 
 Docs and Markdown wrap at **80 columns** (MD013), and code at the

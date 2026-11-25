@@ -348,7 +348,7 @@ adapters differ), and only the first is the indexer's to serve.
 | **Jupiter**                           | Off-chain **quoting Rust adapter (B1)** implementing the `Amm` trait                                                                                                                                 | **on-chain state**       | Ours (SDK) + Jupiter onboarding                       | slippage-bounded take ix + stable account metas                            |
 | **DFlow**                             | Routing venue (aggregator); same off-chain-quote + on-chain-swap shape                                                                                                                               | **on-chain state**       | Ours (SDK) + DFlow BD                                 | same as Jupiter                                                            |
 | **Titan**                             | Meta-aggregator — inherits via Jupiter                                                                                                                                                               | via Jupiter              | via Jupiter                                           | nothing direct                                                             |
-| **beethoven (B2)**                    | CPI taker-swap composability. **Post-MVP, blocked on an upstream swap-context extension** (named owner + fallback). **Does not gate B1.**                                                            | on-chain CPI             | External dependency                                   | swap-context extension (named owner + fallback)                            |
+| **beethoven (B2)**                    | CPI taker-swap composability. **Not built; blocked on an upstream swap-context extension** (named owner + fallback). **Does not gate B1.**                                                           | on-chain CPI             | External dependency                                   | swap-context extension (named owner + fallback)                            |
 | **Dropset frontend**                  | Consumes `/v1` (vaults, positions, prices).                                                                                                                                                          | **`/v1`**                | Ours                                                  | —                                                                          |
 | **MM bots** (incl. the reference bot) | Read book / vault / fill state from `/v1`; drive quoting via the SDK.                                                                                                                                | **`/v1`** + SDK          | Ours / community                                      | —                                                                          |
 
@@ -631,8 +631,8 @@ from the fixture, and the primary market deliberately gives sector 0 the
 
 On-chain CPI builders (instruction builders + account layouts for a `no_std`,
 entrypoint-free CPI parser, shared with the engine and any router doing an
-on-chain integration) remain a separate future concern; the SDK above is the
-off-chain artifact and CPIs do not live there.
+on-chain integration) are not built and are out of the SDK's scope; the SDK
+above is the off-chain artifact and CPIs do not live there.
 
 ______________________________________________________________________
 

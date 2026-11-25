@@ -306,8 +306,7 @@ impl Default for FairValueConfig {
                 // source. Anyone who verifies it against the published TARGET
                 // calendar can tighten back toward six days with evidence.
                 //
-                // Recalibratable; post-validation analytics owns the real
-                // number.
+                // Recalibratable.
                 reference: Duration::from_secs(7 * 24 * 60 * 60),
             },
             // Placeholder: a slow, minutes-scale smoothing so the demo basis

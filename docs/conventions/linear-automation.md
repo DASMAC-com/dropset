@@ -758,9 +758,9 @@ curator asks one operator item per ask until none is left or the
 operator says "stop for today".
 The curator's own `Curator pending` mark keeps a task in the pool (see
 "The curator marks its batch" below).
-`Session pending` (another session's review),
-`Audit findings` (the scheduler promotes them while the lane drains) and
-`Post-validation` (the operator's deferral) are out of the pool.
+`Session pending` (another session's review) and
+`Audit findings` (the scheduler promotes them while the lane drains)
+are out of the pool.
 
 **The in-tab tick is the operator's move.** The curator walks the pool
 four tasks at a time, one checkbox per task with the `ratify-staged`
@@ -772,8 +772,7 @@ waiting for the whole pool would hold every approval behind the
 slowest comment. Either way the move executes the operator's answer,
 never the session's judgment. A ticked task with a thread is folded by
 the fold protocol and carried to the next batch; a comment asking to
-drop it cancels it, and a deferral goes to `Post-validation` only when
-the comment names that milestone.
+drop it cancels it, and a deferral leaves it in the pool.
 
 **Retitle on the tick.** A batch member whose title is shorthand, or
 no longer matches its body after a fold, gets a proposal on its

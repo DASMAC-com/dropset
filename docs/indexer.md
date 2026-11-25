@@ -153,7 +153,6 @@ port for the prototype.
 subscription filters on Dropset's `__event_authority` PDA."* Geyser
 (Yellowstone gRPC) delivers inner instructions directly, is the
 production-faithful path, and is the one the earlier prototype proved.
-The prototype targets geyser.
 
 Because `emit_cpi!` events ride **inner instructions, not logs**, the
 lighter `logsSubscribe` path the maker-bot uses needs a follow-up
@@ -164,12 +163,12 @@ for a first bring-up), behind the same decode + store seam. This
 poll-at-`finalized` shape is a proven production pattern for Solana
 order-book indexers, not a toy.
 
-**Built first: the RPC poll.** The prototype implemented this poll
-itself; it now comes from the shared ingestion framework's
-`RpcPollSource` (`feeds/src/rpc.rs`), which keeps the dependency tree to
-the same solana 3.x line as the maker-bot and needs no validator plugin.
-Geyser is the documented next step behind the same `Source` shape — it
-supplies inner instructions directly and the true per-block
+**Built: the RPC poll.** The prototype implemented this poll itself;
+it now comes from the shared ingestion framework's `RpcPollSource`
+(`feeds/src/rpc.rs`), which keeps the dependency tree to the same
+solana 3.x line as the maker-bot and needs no validator plugin. A
+geyser source is not built; it would sit behind the same `Source`
+shape and supply inner instructions directly and the true per-block
 transaction index (the RPC path leaves `txn_index` at `0`, which is
 safe because the globally-unique signature already keys the row).
 
@@ -266,10 +265,9 @@ consumers yet, which is what makes now the cheapest moment to fix the
 format. A consumer written against this API must tolerate both shapes
 on any pre-2026-09-02 row. Every
 write is an idempotent `INSERT … ON CONFLICT DO NOTHING`, so a replayed
-slot is a no-op — the PK *is* the dedup contract, end to end. Promoting
-the cold events out of the JSONB `events` table into their own typed
-tables is the natural next step; the generic table keeps full fidelity
-meanwhile.
+slot is a no-op — the PK *is* the dedup contract, end to end. The cold
+events stay in the generic JSONB `events` table, which keeps full
+fidelity; they have no typed tables of their own.
 
 ### Tier 2 — derived rollups
 
@@ -309,9 +307,9 @@ folded `(slot, txn_index, event_ordinal, signature)`), then for each
 touched `(signature, txn_index)` re-reads that take's **full** leg set
 and recomputes its row — so the upsert is a full recompute and
 re-running converges on the same value, idempotent without a per-leg
-ledger. Wrapping the pass in a `repeatable read` transaction and adding
-an `aggregated_events` ledger are later hardening; the prototype relies
-on the cursor plus idempotent recompute.
+ledger. The pass runs in no `repeatable read` transaction and keeps no
+`aggregated_events` ledger; the prototype relies on the cursor plus
+idempotent recompute.
 
 The **per-leg → take** grouping is the load-bearing case: group the
 raw `fill_events` of one transaction by `(signature, txn_index)`, sum
@@ -452,8 +450,8 @@ event indexers; how far this prototype takes each:
   `ON CONFLICT` writes, and **derived rollups** folded by a watermarked
   worker, never at query time. *Adopted* — though the raw tier is one
   typed `fill_events` table plus a generic JSONB `events` table (full
-  table-per-event, and an `aggregated_events` ledger, are the next
-  step, not yet built; idempotent recompute stands in, §6).
+  table-per-event and an `aggregated_events` ledger are not built;
+  idempotent recompute stands in, §6).
 - The **candlestick fold** (`open=COALESCE(first)`, `high=GREATEST`,
   `low=LEAST`, `close=EXCLUDED`, `volume=volume+EXCLUDED`) as the
   template for the deferred OHLCV rollup. *Deferred.*
@@ -485,5 +483,5 @@ need is a **pre-existing deferral** now tied to a concrete consumer:
 - **de-washed `dailyVolume` + `dailyFees`** — the wash-clustering
   pipeline (§1) feeding the already-reserved `market_stats` columns (§5).
 
-None sit on the prototype's critical path; the crawler and router
-vendors add **no** `/v1` surface at all (see interface.md §4).
+None of these is built; the crawler and router vendors add **no**
+`/v1` surface at all (see interface.md §4).

@@ -271,7 +271,7 @@ export const sortByVolumeDesc = <T extends { mint: string }>(
 
 // Warm and keep-warm the Jupiter token-info cache for `mints`: the swap pair
 // on /swap, the whole catalogue on /currencies and in an open picker; /vaults
-// mounts no consumer and requests nothing. The keyless API rate-limits per IP, which a conference crowd shares, so the
+// mounts no consumer and requests nothing. The keyless API rate-limits per IP, which a crowd on one network shares, so the
 // swap page never refreshes mints it isn't showing. Ticks skip while the
 // tab is hidden.
 export const useTokenInfoRefresh = (mints: readonly string[]): void => {
