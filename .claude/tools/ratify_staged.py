@@ -670,9 +670,10 @@ def _number(issue: dict) -> int:
 # letters. It matches the list the operator reads in the Linear app: their
 # 2026-11-23 batch showed `indexer: two-sided …` before `indexer+frontend: …`,
 # the reverse of byte order, which puts `+` before `:`. Linear's GraphQL
-# `sort: title` is NOT this order: it ignores punctuation and spaces (it put
-# that `indexer+frontend` title first), so never re-derive the key from an
-# API read — the app's list is the one the dialog sits beside.
+# `sort: title` is NOT this order: it behaves as if punctuation and spaces
+# were ignored (it put that `indexer+frontend` title first), so never
+# re-derive the key from an API read — the app's list is the one the dialog
+# sits beside.
 _COLLATION = " _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789abcdefghijklmnopqrstuvwxyz"
 _RANK = {c: i for i, c in enumerate(_COLLATION)}
 _DASHES = str.maketrans({"–": "-", "—": "-"})
@@ -706,10 +707,10 @@ def build_ask(
     question, then any proposals as further questions.
 
     The order is the operator's, never the caller's (operator direction,
-    2026-11-23): the operator reviews the batch in a Linear list beside the
-    dialog, ordered by title, which cannot be ordered by issue number, so
-    both run by title. A ranking or a carried task shows in its note, not
-    its position."""
+    2026-11-23): the operator reviews the batch beside the dialog in a
+    Linear list ordered by title (the list cannot be ordered by issue
+    number), so both run by title. A ranking or a carried task shows in its
+    note, not its position."""
     notes = notes or {}
     issues = sorted(issues, key=_title_key)
     options = [
