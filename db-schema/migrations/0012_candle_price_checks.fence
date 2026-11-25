@@ -1,7 +1,7 @@
 # Relations this migration declares, parsed and paired with its migration by
 # db-schema/tests/schema_fence.rs. No test checks them against a database:
-# the container tests named below were deleted with the old stack's
-# Postgres tests, so their claims are history, not current coverage.
+# any container test a comment below names was deleted, so its claim is
+# history, not current coverage.
 #
 # A CHECK constraint creates no relation, so the existence probe is blind to
 # this migration's whole payload by construction — and unlike the deferred

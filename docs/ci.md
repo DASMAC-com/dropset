@@ -383,7 +383,13 @@ entry is no longer saved.
 
 A crate added to the variable needs the Rust toolchain, nextest and a
 rust-cache step put back into the job in the same change, since the empty
-target needs none of them.
+target needs none of them. The target runs with `--run-ignored all`, so it also
+runs every `#[ignore]`d test a listed crate has. A crate with an ignored test
+that needs a network or a credential, such as market-data's `oanda_direction`
+or feeds' `tls_distrust`, needs that binary filtered out with
+`-E 'not binary_id(...)'`. A required check must not depend on a live
+third-party host. Feeds also needs its transport features named, since a `-p`
+selection enables none.
 
 ## 7. Racing local against CI
 

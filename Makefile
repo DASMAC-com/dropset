@@ -322,10 +322,14 @@ test-parity: check-nextest program-parity
 # test without being named in POSTGRES_TEST_CRATES.
 #
 # An empty list runs nothing and succeeds, rather than calling nextest, which
-# exits non-zero when given no test to run. A crate added
-# here runs under nextest, in one invocation so the shared dependency graph
-# compiles once; the CI job then needs its toolchain steps back too
-# (docs/ci.md, "Tests (Postgres)").
+# exits non-zero when given no test to run. A crate added here runs under
+# nextest, in one invocation so the shared dependency graph compiles once; the
+# CI job then needs its toolchain steps back too. `--run-ignored all` also runs
+# every #[ignore]d test the crate has, so a crate whose ignored tests need a
+# network or a credential (market-data's `oanda_direction`, feeds'
+# `tls_distrust`) needs a `-E 'not binary_id(...)'` filter for them, and feeds
+# needs its transport features named, since `-p` enables none (docs/ci.md,
+# "Tests (Postgres)").
 POSTGRES_TEST_CRATES :=
 
 .PHONY: test-postgres

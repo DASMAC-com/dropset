@@ -25,8 +25,11 @@ What guards the attribute's spelling instead is the container library itself:
 a tracked ``.rs`` file that holds a test and names ``testcontainers`` but
 carries no gate attribute is reported, since it is a container-backed test
 this guard cannot see. A shared harness module with no test of its own (a
-``tests/common/mod.rs``) is not. That bound is stated plainly: a test reaching
-Postgres some other way, ungated, is invisible here.
+``tests/common/mod.rs``) is not. The bound, stated plainly: a test that
+reaches the container only through such a harness never names the library
+itself, so a misspelled gate on it is invisible here, as is a test reaching
+Postgres any other way, or one under an attribute other than ``#[test]`` /
+``#[tokio::test]``. The drift check narrows the gap; it does not close it.
 
 Extra crates in the list are fine; the guard checks only that no gated crate
 is missing.

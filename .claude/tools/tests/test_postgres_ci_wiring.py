@@ -3,9 +3,10 @@
 
 The load-bearing assertions are the bug class itself — a crate that gains a
 Docker-gated test without joining the job's selection fails — and the drift
-check: a test using the container library with no gate attribute is reported,
-so a drifted attribute spelling cannot make the guard approve everything. Run
-via the repo's ``make tools-tests``.
+check: a test naming the container library with no gate attribute is
+reported, so a drifted attribute spelling on such a test is caught. A test that
+reaches the container only through a harness module is outside it, as the
+guard's docstring states. Run via the repo's ``make tools-tests``.
 """
 
 from __future__ import annotations
