@@ -2,9 +2,11 @@
 # cspell:word getppid
 """Drive iTerm2 through its Python API. The one owner of iTerm automation.
 
-Two callers, and both now want the same thing: `session_dispatch.py` (open a tab
+Two tab openers, and both now want the same thing: `session_dispatch.py` (open a tab
 per dispatched verb and type it) and `fleet_resume.py` (open one tab per
-in-flight issue and type a resume verb into each). Both used to reach for
+in-flight issue and type a resume verb into each). A third caller signals a
+parked tab rather than opening one: `close_session.py --park` in-process, and
+the handed-off chore through the `--signal-parked` CLI. The openers used to reach for
 AppleScript; this retires it from the toolbox entirely, which was the point of
 consolidating them here rather than letting the second caller grow its own copy.
 

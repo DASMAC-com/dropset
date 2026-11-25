@@ -841,6 +841,17 @@ class BriefVerdictTests(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, "needs a resume brief"):
             close_session.brief_verdict("spec only\n", None)
 
+    def test_no_pr_refuses_a_brief_that_is_not_last(self):
+        # An earlier park's brief, its cost line after it; or spec prose.
+        for body in (
+            "**Resume brief**: PR #600 waits\n\ncost $1.20\n",
+            "The stand-down appends a resume brief.\n\n## History\n\nfiled\n",
+        ):
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(Refusal, "last paragraph"):
+                    close_session.brief_verdict(body, None)
+        close_session.brief_verdict("spec\n\n**Resume brief**: next step\n\n", None)
+
 
 class SignalTabTests(unittest.TestCase):
     def test_the_signal_runs_and_a_failure_is_swallowed(self):

@@ -113,4 +113,6 @@ sessions: temporary worktree, no PR".
    branch later. There is no worktree to keep or remove, so `close_session.py`
    (which refuses the base checkout) is not the close. A fleet
    wind-down message is a pause: append the next step as a resume
-   brief, then this tab signal (`docs/conventions/fleet-winddown.md`).
+   brief, print and message the scheduler "Standing down; ready to
+   resume tomorrow.", then this tab signal
+   (`docs/conventions/fleet-winddown.md`).

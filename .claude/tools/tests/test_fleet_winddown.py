@@ -75,6 +75,9 @@ class Rows(unittest.TestCase):
         row = fw.rows([issue(5, "In Review")], {"5"}, None)[0]
         self.assertEqual((row["mergeable"], row["merge_state"]), ("?", "?"))
         self.assertFalse(row["doomed"])
+        # An unread branch claims neither "no PR" nor "PR merged".
+        self.assertIn("| PR ?", fw.line(row))
+        self.assertNotIn("no PR", fw.line(row))
 
 
 class Summary(unittest.TestCase):
@@ -85,7 +88,8 @@ class Summary(unittest.TestCase):
             {"1": [pr(9, mergeable="CONFLICTING")], "2": []},
         )
         text = "\n".join(fw.summary(listed, None))
-        self.assertIn("2 in flight | 1 live | 1 parked | 1 doomed", text)
+        self.assertIn("2 in flight | 1 tab(s) open | 1 no tab | 1 doomed", text)
+        self.assertIn("1 [In Review] tab open |", text)
         self.assertIn("PR #9 CONFLICTING/CLEAN DOOMED", text)
         self.assertIn(fw.FINISH_MESSAGE, text)
         self.assertIn(fw.PAUSE_MESSAGE, text)

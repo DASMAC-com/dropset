@@ -9,14 +9,16 @@ off at the queue), **pause** for everything else, In Progress and chores
 included — and prints the two message texts the scheduler sends, one
 ``SendMessage`` per live session.
 
-Each row carries whether the session is **live** (its iTerm session name is
-the tag, as ``fleet_resume.live_tags`` reads it) and, from one GraphQL call
+Each row carries whether the session's **tab is open** (its iTerm session name
+is the tag, as ``fleet_resume.live_tags`` reads it) and, from one GraphQL call
 over every branch, its open PR's ``mergeable``, ``mergeStateStatus`` and merge
-queue entry. A re-run after the messages is therefore the roll-call: who has
-parked (no longer live), who is live, and which live finisher is already
+queue entry, so a re-run after the messages shows which open finisher is already
 **doomed** — its path to merge is no longer linear, so the message's rule
-stands it down at once. Nothing polls; the scheduler re-runs the listing when a
-stand-down message arrives.
+stands it down at once. An open tab is not proof of a live client: a parked
+tab stays open, green and leftmost, until the operator closes it, and nothing
+here can tell whether its client has exited. The park signal is each session's
+stand-down message, which the scheduler counts; the listing is re-run when one
+arrives, and nothing polls.
 
 The rule and the stand-down act live in ``docs/conventions/fleet-winddown.md``;
 the message texts below carry them whole, since an explore session's skill
@@ -139,10 +141,12 @@ def line(row: dict) -> str:
         pr = f"PR #{row['pr']} {row['mergeable']}/{row['merge_state']}"
         if row["queue"]:
             pr += f" queue {row['queue']}"
+    elif row["mergeable"] == "?":
+        pr = "PR ?"  # the read failed: claim nothing about the branch
     else:
         pr = "PR merged" if row["merged"] else "no PR"
     flag = " DOOMED: stands down at once" if row["doomed"] else ""
-    where = "live" if row["live"] else "parked"
+    where = "tab open" if row["live"] else "no tab"
     return f"  {row['tag']} [{row['state']}] {where} | {pr}{flag}"
 
 
@@ -150,8 +154,8 @@ def summary(listed: list[dict], note: str | None) -> list[str]:
     """The ranked roll-call, then the message texts."""
     live = [r for r in listed if r["live"]]
     head = (
-        f"fleet-down | {len(listed)} in flight | {len(live)} live | "
-        f"{len(listed) - len(live)} parked | "
+        f"fleet-down | {len(listed)} in flight | {len(live)} tab(s) open | "
+        f"{len(listed) - len(live)} no tab | "
         f"{sum(r['doomed'] for r in listed)} doomed"
     )
     out = [head]

@@ -148,7 +148,7 @@ def branch_prs(tags: list[str], gh=None) -> dict[str, list[dict]]:
     run is dropped, never interpolated. Raises :class:`FleetResumeError` on a
     failed or unreadable call; callers treat that as best-effort.
     """
-    tags = [t for t in tags if t.isdigit()]
+    tags = [t for t in tags if t.isascii() and t.isdigit()]
     if not tags:
         return {}
     fields = " ".join(_BRANCH_PRS_FIELD.format(tag=t) for t in tags)

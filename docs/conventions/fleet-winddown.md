@@ -19,14 +19,19 @@ reopens) and splits it with **no time argument**:
 - **pause**: everything else, In Progress and chores included,
   however close the session thinks it is.
 
-Each row says whether the session is **live** (its iTerm session name
-is the tag) and, from one GraphQL call over every branch, its open
-PR's `mergeable`, `mergeStateStatus` and merge-queue entry. A live
-finisher whose PR already needs a rebase (`CONFLICTING` or `DIRTY`)
-is flagged **doomed**. The tool prints both message texts after the
-listing. A re-run after the messages is the roll-call: who has
-parked, who is live, which live PR is doomed. Nothing polls; the
-scheduler re-runs the listing when a stand-down message arrives.
+Each row says whether the session's **tab is open** (its iTerm
+session name is the tag) and, from one GraphQL call over every
+branch, its open PR's `mergeable`, `mergeStateStatus` and merge-queue
+entry. A finisher with an open tab whose PR already needs a rebase
+(`CONFLICTING` or `DIRTY`) is flagged **doomed**. The tool prints both
+message texts after the listing.
+
+An open tab is not a live client: a parked tab stays open until the
+operator closes it, and the listing cannot tell whether its client
+exited. **The roll-call is the stand-down messages**: the scheduler
+counts each `Standing down; ready to resume tomorrow.` against the
+sessions it messaged, and re-runs the listing when one arrives, for
+the doomed flags. Nothing polls.
 
 ## The messages
 
@@ -66,8 +71,8 @@ brief. It starts nothing new.
 
 ## The stand-down act
 
-Every worker (`task`, `chore`, `curate`, `explore`, `architect`)
-stands down the same way:
+Every worktree worker (`task`, `explore`, `architect`) stands down
+the same way:
 
 1. Append a **Resume brief** on the issue naming the next step, and
    the PR when one is open (`linear_issue.py append`).
@@ -77,21 +82,28 @@ stands down the same way:
 1. Run `close_session.py --park --session-id <id>` as the last tool
    call.
 
-Park writes no state, keeps the worktree and branch, appends the cost
-line and dismisses no PR thread. It refuses on a dirty or unpushed
-tree, a missing resume brief, a brief that does not name the open PR
-when there is one, or a worktree lock this session does not hold. A
-pauser with no PR parks on the brief alone. Its last acts mark the
-tab green, move it to the leftmost position in its window
-(best-effort, silent on failure) and end the client, so the operator
-sees one green tab at the left edge per parked session and closes it.
-No tool closes a tab.
+Park writes no state, keeps the worktree and branch, appends the cost line and
+dismisses no PR thread. It refuses on a dirty or unpushed tree, a missing resume
+brief, a brief that does not name the open PR when there is one, or a worktree
+lock this session does not hold. A pauser with no PR parks on the brief alone,
+which must then be the issue body's last paragraph (there is no PR number to tie
+it to). Its last acts mark the tab green, move it to the leftmost position in
+its window (best-effort, silent on failure) and end the client, so the operator
+sees one green tab at the left edge per parked session and closes it. No tool
+closes a tab.
 
-A chore runs in the base checkout, which `close_session.py` refuses,
-so its stand-down is the resume brief, the printed line and
-`python3 .claude/tools/iterm_api.py --signal-parked`, with the tab
-left for the operator to close. The same call is the handed-off
-chore's exit tail.
+The two base-checkout sessions cannot park (`close_session.py`
+refuses the base checkout):
+
+- **A chore** stands down with the resume brief, the printed line and
+  its message to the scheduler, then
+  `python3 .claude/tools/iterm_api.py --signal-parked`, the tab left
+  for the operator to close. The same call is the handed-off chore's
+  exit tail.
+- **The curator** stands down through its own stop: the scheduler's
+  close-out sends it "closing for the day", and its stop tail ends in
+  `CLEAR TO CLOSE`. It carries no resume brief; tomorrow's curator is
+  a fresh session.
 
 ## The morning resume
 
@@ -123,9 +135,9 @@ Two numbers and a list, not a narrative. Then the close-out proper.
 - A park refused on an unpushed commit or a brief missing the PR
   number is fixed and retried. A push that cannot happen leaves the
   one residual manual tab.
-- A worker listed live that has exited is messaged anyway. No reply
-  by the next listing re-run counts as parked, and the day report
-  says `N listed as live, unreachable`.
+- A worker whose tab is open but whose client has exited is messaged
+  anyway. No stand-down reply by the next listing re-run counts as
+  parked, and the day report says `N listed as live, unreachable`.
 - A pause message to a session mid-build leaves its lane lock held
   until the build ends, which is why the message asks for the first
   safe point.

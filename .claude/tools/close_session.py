@@ -42,7 +42,8 @@ clean and pushed (the same check as below), and the issue body carries a
 resume brief. When the branch has an open PR, the paragraph holding the last
 ``resume brief`` mention must name that PR after it (``#N``, ``PR N`` or a
 ``/pull/N`` link), so a brief left by an earlier park of another PR does not
-count; with none open, the brief's presence is the gate. Each refuses with
+count; with none open, the brief must be the body's last paragraph, so a
+stale one cannot vouch. Each refuses with
 the missing precondition named. The open-PR refusal
 is unchanged for every other mode, Done and Canceled included.
 
@@ -355,8 +356,10 @@ def brief_verdict(body: str, number: int | None) -> None:
     — the paragraph holding the last ``resume brief`` mention names PR
     ``number`` after it, as ``#N``, ``PR N`` or a ``/pull/N`` link, so a
     stored autolink still reads. Bounded at the next blank line, so a later
-    checklist naming the PR cannot vouch for a stale brief. With no PR the
-    brief's presence is the whole gate: it carries the next step."""
+    checklist naming the PR cannot vouch for a stale brief. With no PR there
+    is no number to bind the brief to, so it must be the body's **last**
+    paragraph — the one just appended — or an earlier park's brief (followed
+    by its cost line) or spec prose mentioning a resume brief would pass."""
     marks = list(BRIEF_RE.finditer(body))
     if not marks:
         raise Refusal(
@@ -364,10 +367,15 @@ def brief_verdict(body: str, number: int | None) -> None:
             "a '**Resume brief**: …' naming the next step, and the PR when "
             "one is open)"
         )
-    if number is None:
-        return
     start = marks[-1].start()
     end = body.find("\n\n", start)
+    if number is None:
+        if end != -1 and body[end:].strip():
+            raise Refusal(
+                "with no open PR, the resume brief must be the issue body's "
+                "last paragraph — append a fresh one naming the next step"
+            )
+        return
     brief = body[start : end if end != -1 else len(body)]
     if not re.search(rf"(?:#|\bPR |/pull/){number}\b", brief):
         raise Refusal(f"the issue's resume brief does not name PR #{number}")

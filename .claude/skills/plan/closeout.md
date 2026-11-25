@@ -19,10 +19,11 @@ curator gets one `SendMessage`, "closing for the day", and its
 answer. None live: report `curator: not live`.
 
 **Then wind the fleet down** (`docs/conventions/fleet-winddown.md`):
-run `fleet down`, send each live session its message, re-run it on
-each stand-down until none is live, dismiss the settled PRs'
-notifications (below) and print the day report; then the close-out
-proper.
+run `fleet down`, send each open-tab session its message, and count
+the stand-down replies (re-running the listing on each) until every
+session messaged has stood down or gone unreachable; dismiss the
+settled PRs' notifications (below), then print the day report and
+append it under `Session-metrics state`; then the close-out proper.
 
 **A `cycle` skips this gate, the curator stop and the wind-down** — the day goes
 on under the relaunched session — and runs only the section-patched write below.
