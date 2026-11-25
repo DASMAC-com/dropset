@@ -166,6 +166,9 @@ pub struct SelfCpiAccountMismatch {
     pub found: Pubkey,
 }
 
+/// Each message opens with the panicking builders' `assert_eq!` message for
+/// the same account (emitted by `sdk/codama/generate.mjs`), so the two
+/// refusals read alike; edit them together.
 impl fmt::Display for SelfCpiAccountMismatch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (deployment, expected, found) = (self.deployment, self.expected, self.found);

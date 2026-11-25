@@ -355,6 +355,8 @@ function selfCpiAccountsFromDeployment(file, client) {
   const defaulted = client
     .replace('self.event_authority.expect("event_authority is not set")', eventAuthorityDefault)
     .replace('self.program.expect("program is not set")', programDefault);
+  // These messages open `SelfCpiAccountMismatch`'s Display in
+  // sdk/rs/src/cluster.rs; edit them together.
   const checked = defaulted.replace(
     /(pub fn instruction_with_remaining_accounts\(&self, deployment: crate::Deployment,[^{]*\{)/,
     `$1
